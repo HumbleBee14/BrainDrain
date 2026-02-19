@@ -1,0 +1,119 @@
+use axum::extract::multipart::Multipart;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use bytes::BytesMut;
+use uuid::Uuid;
+
+use platform_shared::constants::MAX_UPLOAD_SIZE_BYTES;
+
+use crate::app_state::AppState;
+use crate::auth::AuthenticatedUser;
+use crate::dto::common::{PaginatedResponse, PaginationParams};
+use crate::dto::document::{DocumentResponse, UploadResponse};
+use crate::error::{AppError, AppResult};
+use crate::services::document_service::DocumentService;
+
+/// Document routes nested under projects.
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/projects/{project_id}/documents", post(upload_document))
+        .route("/projects/{project_id}/documents", get(list_documents))
+        .route("/documents/{id}", get(get_document))
+}
+
+async fn upload_document(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> AppResult<(StatusCode, Json<Vec<UploadResponse>>)> {
+    let mut uploads = Vec::new();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest {
+            message: format!("Invalid multipart data: {e}"),
+        })?
+    {
+        let filename = field
+            .file_name()
+            .map(|s| s.to_string())
+            .ok_or(AppError::BadRequest {
+                message: "File field must have a filename".to_string(),
+            })?;
+
+        let content_type = field
+            .content_type()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        // Read file data into memory (with size limit)
+        let mut data = BytesMut::new();
+        let mut field = field;
+
+        // Read chunks manually to enforce size limit
+        while let Some(chunk) = field.chunk().await.map_err(|e| AppError::BadRequest {
+            message: format!("Failed to read upload data: {e}"),
+        })? {
+            data.extend_from_slice(&chunk);
+            if data.len() as u64 > MAX_UPLOAD_SIZE_BYTES {
+                return Err(AppError::BadRequest {
+                    message: format!(
+                        "File exceeds maximum size of {} MB",
+                        MAX_UPLOAD_SIZE_BYTES / 1024 / 1024
+                    ),
+                });
+            }
+        }
+
+        let result = DocumentService::upload(
+            state.db(),
+            state.storage(),
+            user.tenant_id,
+            project_id,
+            &filename,
+            &content_type,
+            data.freeze(),
+        )
+        .await?;
+
+        uploads.push(result);
+    }
+
+    if uploads.is_empty() {
+        return Err(AppError::BadRequest {
+            message: "No files provided".to_string(),
+        });
+    }
+
+    Ok((StatusCode::CREATED, Json(uploads)))
+}
+
+async fn list_documents(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<Json<PaginatedResponse<DocumentResponse>>> {
+    let result = DocumentService::list(
+        state.db(),
+        user.tenant_id,
+        project_id,
+        params.offset,
+        params.limit,
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+async fn get_document(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<DocumentResponse>> {
+    let doc = DocumentService::get(state.db(), user.tenant_id, id).await?;
+    Ok(Json(doc))
+}

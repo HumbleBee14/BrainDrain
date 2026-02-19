@@ -48,3 +48,5 @@ htmlcov/
 .coverage
 lcov.info
 tarpaulin-report.html
+/.claude
+CLAUDE.md
