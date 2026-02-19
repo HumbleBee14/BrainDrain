@@ -15,10 +15,10 @@ with workflow.unsafe.imports_passed_through():
         build_dataset,
         deploy_model,
     )
+    from src.workflows.evaluate import EvaluateWorkflow
     from src.workflows.ingest import IngestWorkflow
     from src.workflows.refine import RefineWorkflow
     from src.workflows.train import TrainWorkflow
-    from src.workflows.evaluate import EvaluateWorkflow
 
 
 @workflow.defn

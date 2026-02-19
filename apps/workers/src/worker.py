@@ -10,20 +10,20 @@ import logging
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from src.config import WorkerSettings
 from src.activities.stubs import (
-    parse_document,
-    generate_synthetic_pairs,
     build_dataset,
-    start_training,
-    run_evaluation,
     deploy_model,
+    generate_synthetic_pairs,
+    parse_document,
+    run_evaluation,
+    start_training,
 )
+from src.config import WorkerSettings
+from src.workflows.evaluate import EvaluateWorkflow
+from src.workflows.full_pipeline import FullPipelineWorkflow
 from src.workflows.ingest import IngestWorkflow
 from src.workflows.refine import RefineWorkflow
 from src.workflows.train import TrainWorkflow
-from src.workflows.evaluate import EvaluateWorkflow
-from src.workflows.full_pipeline import FullPipelineWorkflow
 
 
 async def main() -> None:
