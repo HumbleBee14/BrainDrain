@@ -1,4 +1,4 @@
-# BrainDrain — System Architecture (February 2026)
+# BrainDrain — System Architecture & Learning Notes (February 2026)
 
 ## Table of Contents
 
@@ -26,9 +26,9 @@
 
 ## 1. System Overview
 
-BrainDrain is an end-to-end platform that transforms raw documents into deployed, fine-tuned LLMs — without requiring any technical knowledge from the user.
+BrainDrain is a personal learning project that explores the full pipeline of transforming raw documents into deployed, fine-tuned LLMs. The goal is to learn production Rust, ML training pipelines, and systems engineering by building every stage end-to-end.
 
-### The Promise
+### The Goal
 
 ```
 User uploads documents → Answers 3-5 questions → Gets a trained, deployed model
@@ -152,7 +152,7 @@ We use **Rust for all infrastructure** and **Python only where ML libraries forc
 | **Binary deployment** | Single static binary, no runtime | Single binary, no runtime | Requires Python runtime + venv |
 | **100 instances cost** | ~1.5 GB total memory | ~5 GB total memory | ~20 GB total memory |
 
-**Verdict:** Go's only advantage is faster development speed. No unique capability Rust lacks. For BrainDrain's scale-to-hundreds requirement, Rust's memory and cold start advantages compound into real cost savings.
+**Verdict:** Go's only advantage is faster development speed. No unique capability Rust lacks. For a system that could scale to hundreds of instances, Rust's memory and cold start advantages compound into real savings. Plus, learning Rust deeply is a primary goal of this project.
 
 #### Language Split Across System
 
@@ -385,9 +385,9 @@ Parsed Document
 
 **Tech Stack:** Custom Python chunking library built on `tiktoken` (tokenizer), `sentence-transformers` (semantic similarity), MinerU/Docling section metadata.
 
-### 5.2 Synthesis Engine (The Core Differentiator)
+### 5.2 Synthesis Engine (The Hardest Part)
 
-This is the most complex and valuable component. It transforms document chunks into training data.
+This is the most complex component — and the most interesting to build. It transforms document chunks into training data.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -903,8 +903,8 @@ One H100 80GB running vLLM:
 ├─ Throughput: ~2,000 tokens/sec
 ├─ Concurrent users: ~50-100 (depending on load)
 ├─ Monthly cost: ~$2,850
-├─ Cost per user (100 users): ~$28.50/month
-└─ Cost per user (200 users): ~$14.25/month
+├─ Cost per adapter (100 adapters): ~$28.50/month
+└─ Cost per adapter (200 adapters): ~$14.25/month
 ```
 
 ### Performance Targets
@@ -1126,7 +1126,7 @@ Coordinate all pipeline stages, handle failures, manage state, and provide durab
 │  │  PAGE: Dashboard                                             │        │
 │  │  ├─ Project list with status indicators                     │        │
 │  │  ├─ Quick stats (models trained, tokens served)             │        │
-│  │  └─ Usage & billing summary                                 │        │
+│  │  └─ Usage summary                                            │        │
 │  │                                                              │        │
 │  │  PAGE: New Project Wizard                                    │        │
 │  │  ├─ Step 1: Upload documents (drag & drop)                  │        │
@@ -1482,7 +1482,7 @@ Format: PDF                   Format: JSON                     Format: JSONL
 │  ├── GPU: utilization, VRAM, cost/hr            │
 │  ├── Inference: latency, throughput, errors      │
 │  ├── Quality: parse scores, synth quality        │
-│  └── Business: users, models trained, revenue    │
+│  └── Usage: models trained, tokens served         │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -1515,14 +1515,15 @@ Format: PDF                   Format: JSON                     Format: JSONL
 | Monitoring (Grafana Cloud) | $50 | Free tier initially |
 | **Total fixed cost** | **~$3,500/month** | Serving 100 users |
 
-### Pricing Strategy (Suggestions)
+### Cost Tiers (Reference)
 
-| Tier | Price/month | Includes | Target |
-|------|-------------|----------|--------|
-| Starter | $49 | 2 models, 1K pairs each, managed API | Individuals |
-| Growth | $199 | 10 models, 10K pairs each, managed API | Small teams |
-| Pro | $499 | Unlimited models, 50K pairs, dedicated endpoints | Business |
-| Enterprise | Custom | Custom SLAs, self-hosted, priority GPU | Enterprise |
+If this were offered as a service, here's roughly how the economics would break down:
+
+| Tier | Est. Cost/month | Scope | Use Case |
+|------|----------------|-------|----------|
+| Personal | ~$49 | 2 models, 1K pairs each, managed API | Personal projects |
+| Small Team | ~$199 | 10 models, 10K pairs each, managed API | Team experimentation |
+| Heavy Use | ~$499 | Unlimited models, 50K pairs, dedicated endpoints | Larger workloads |
 
 ---
 
@@ -1711,24 +1712,23 @@ Performance gate: <200ms TTFT, 30+ tok/s, 99.9% uptime
 ### Phase 6: Polish & Scale (Weeks 31-36)
 
 ```
-Goal: Production-grade, scalable, billing-ready
+Goal: Production-grade, scalable, polished
 ────────────────────────────────────────────────
 
 Tasks:
-├── Billing integration (Stripe)
-├── Usage-based pricing implementation
+├── Usage tracking and metering
+├── Cost estimation per operation
 ├── RunPod integration (cost optimization)
 ├── GRPO training mode (reasoning)
 ├── Iterative training mode (active learning)
 ├── Webhook system
 ├── Multi-model base support (Llama, Qwen, Mistral, DeepSeek)
 ├── Advanced evaluation (custom benchmarks)
-├── SOC 2 compliance preparation
-├── Load testing (1000+ concurrent users)
+├── Load testing
 ├── Documentation (API docs, guides)
-└── Beta launch preparation
+└── Final polish and cleanup
 
-Deliverable: Production-ready platform
+Deliverable: Fully functional end-to-end system
 ```
 
 ### Timeline Summary
@@ -1822,7 +1822,7 @@ Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 | Airflow | DAG-based, good for data pipelines | Not designed for long-running interactive workflows |
 | Prefect | Modern, Python-native | Less mature for long-running GPU workflows |
 
-**Rationale:** BrainDrain pipelines are long-running (hours), require human-in-the-loop pauses (data review, cost approval), and must survive crashes (GPU jobs are expensive). Temporal is purpose-built for exactly this pattern.
+**Rationale:** These pipelines are long-running (hours), require human-in-the-loop pauses (data review, cost approval), and must survive crashes (GPU jobs are expensive). Temporal is purpose-built for exactly this pattern.
 
 ### TDR-002: Training Framework — Unsloth vs Alternatives
 
@@ -1835,7 +1835,7 @@ Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 | LLaMA-Factory | Zero-code, web UI | Hard to customize, less programmatic control |
 | Axolotl | YAML config, multi-GPU | Less maintained, slower development |
 
-**Rationale:** For BrainDrain's use case (single-GPU QLoRA for 7B-70B models), Unsloth's speed and VRAM savings directly translate to lower costs for users. TRL as fallback for multi-GPU or unsupported models.
+**Rationale:** For single-GPU QLoRA fine-tuning (7B-70B models), Unsloth's speed and VRAM savings directly translate to lower compute costs. TRL as fallback for multi-GPU or unsupported models.
 
 ### TDR-003: GPU Provider — Modal vs RunPod
 
@@ -1848,7 +1848,7 @@ Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 | CoreWeave | InfiniBand, enterprise | Expensive, overkill for MVP |
 | Lambda Labs | Cheap reserved | Availability issues, less flexible |
 
-**Rationale:** Modal lets us ship fast with near-zero infrastructure code. Once economics matter (>100 users), migrate GPU-heavy workloads to RunPod for 30-40% cost savings.
+**Rationale:** Modal lets you ship fast with near-zero infrastructure code. For larger scale, RunPod offers 30-40% cost savings with more setup.
 
 ### TDR-004: Serving — vLLM vs Alternatives
 
@@ -1933,7 +1933,7 @@ Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 | **Dev speed** | Slower initially | **Fastest** | Fast |
 | **ML ecosystem** | None | None | **Dominant** |
 
-**Rationale:** Performance is BrainDrain's non-negotiable requirement. When scaling to 100s of instances:
+**Rationale:** Performance is a core goal (and learning Rust is half the point of this project). When scaling to 100s of instances:
 - Rust uses **13x less memory** than Python (1.5 GB vs 20 GB for 100 instances)
 - Rust cold starts are **100-400x faster** than Python (2ms vs 500-2000ms)
 - Go's only advantage over Rust is faster development speed — no unique capability Rust lacks
@@ -1995,4 +1995,4 @@ TypeScript   → Frontend (Next.js)
 
 ---
 
-*Architecture designed February 2026. Updated with Rust-first infrastructure decision. Based on research compiled in RESEARCH.md. All technology choices are production-ready as of this date. Architecture will evolve as the platform scales.*
+*Architecture designed February 2026. Updated with Rust-first infrastructure decision. Based on research compiled in RESEARCH.md. All technology choices are production-ready as of this date. Architecture will evolve as the project progresses and I learn more.*

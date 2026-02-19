@@ -1,7 +1,7 @@
-# BrainDrain — Deep Research & Reality Check (February 2026)
+# BrainDrain — Deep Research & Technical Notes (February 2026)
 
-## Vision
-Build a platform where **anyone** can train/fine-tune any model **without any technical jargon** — upload documents, answer a few questions, and we handle everything: data curation, cleaning, structuring, training, evaluation, and deployment.
+## Project Goal
+A learning project to explore the full pipeline of fine-tuning LLMs end-to-end — from raw document ingestion through data curation, training, evaluation, and deployment. The goal is to deeply understand each stage by building it: Rust for infrastructure, Python for ML, and everything in between.
 
 ---
 
@@ -108,13 +108,13 @@ This is the entry point of the entire pipeline. The landscape has matured signif
 
 ### Google LangExtract (New, 2025)
 
-Not a PDF parser — sits on top of parsed text. Extracts **structured information with precise source grounding** (exact character offsets back to source). Schema-enforced output. Supports multi-model backends (Gemini, Azure OpenAI, Ollama). Use case for BrainDrain: **hallucination firewall** — verify that generated Q&A pairs trace back to exact document spans.
+Not a PDF parser — sits on top of parsed text. Extracts **structured information with precise source grounding** (exact character offsets back to source). Schema-enforced output. Supports multi-model backends (Gemini, Azure OpenAI, Ollama). Useful as a **hallucination firewall** — verify that generated Q&A pairs trace back to exact document spans.
 
 ### Critical Finding
 
 **Domain matters more than parser choice.** An Applied AI study of 800+ docs found accuracy variation of 55+ percentage points by document type: legal contracts hit 95%, academic papers struggle at 40-60%.
 
-**Recommendation for BrainDrain:** MinerU 2.5 (primary) + Docling (CPU fallback) + Nougat (academic). Auto-detect document type and route to best parser.
+**Approach for this project:** MinerU 2.5 (primary) + Docling (CPU fallback) + Nougat (academic). Auto-detect document type and route to best parser.
 
 ## 2.2 Chunking Strategies
 
@@ -174,7 +174,7 @@ Not a PDF parser — sits on top of parsed text. Extracts **structured informati
 - 100+ subcategories for diversity
 - Does NOT require seed prompts — uses raw documents as seeds
 - Results: 40% improvement on AGIEval, 54% on GSM8K, 45% on AlpacaEval
-- **Most directly relevant to BrainDrain's "documents to training data" vision**
+- **Most relevant to a "documents to training data" pipeline**
 
 ### Production Frameworks
 
@@ -213,7 +213,7 @@ By April 2025, **over 74% of new webpages contained AI-generated text**. Trainin
 
 ### Key Insight
 
-Paper: *"Supervised Fine-Tuning on Curated Data is Reinforcement Learning"* (2025) — demonstrates that **data curation IS the training signal**. The quality of curation directly determines model quality. **This validates BrainDrain's entire premise.**
+Paper: *"Supervised Fine-Tuning on Curated Data is Reinforcement Learning"* (2025) — demonstrates that **data curation IS the training signal**. The quality of curation directly determines model quality. This is a key insight for anyone building fine-tuning pipelines.
 
 ## 2.5 Dataset Formats
 
@@ -233,9 +233,9 @@ File format: JSONL is universal. Parquet preferred for large datasets (columnar,
 
 **Recommendation:** Generate ChatML/JSONL as canonical output. Provide conversion to Alpaca/ShareGPT. Parquet export for datasets >1GB.
 
-## 2.6 The "Data Flywheel" Problem — What Nobody Has Automated
+## 2.6 The "Data Flywheel" Problem — What's Still Manual
 
-The typical enterprise journey from "we have docs" to "we have a model":
+The typical journey from "we have docs" to "we have a model":
 
 ```
 Raw Documents (10TB)
@@ -252,7 +252,7 @@ Raw Documents (10TB)
   → Rinse and repeat
 ```
 
-### What's NOT automated (BrainDrain's Opportunity):
+### What's still largely manual (interesting areas to automate):
 
 1. **Document Triage & Routing** — Deciding which docs are relevant, which parser to use. Currently: human decisions.
 2. **Parser Quality Verification** — Checking if tables/math came through. Currently: visual inspection.
@@ -310,7 +310,7 @@ The shortage has **largely resolved**:
 | 13B QLoRA, 50K examples | A100 | 8-16 hrs | **$10-22** |
 | 70B QLoRA, 50K examples | A100 | 1-3 days | **$35-200** |
 
-**Key insight:** The sweet spot for most users is **7B-14B QLoRA, costing $3-35 per run**. This is where BrainDrain delivers massive value.
+**Key insight:** The sweet spot for most use cases is **7B-14B QLoRA, costing $3-35 per run**. This makes fine-tuning very accessible for personal and small-scale projects.
 
 ## 3.5 Model Serving & LoRA Adapter Serving
 
@@ -324,19 +324,19 @@ The shortage has **largely resolved**:
 | **TensorRT-LLM** | Maximum throughput on Nvidia | Limited |
 | **llama.cpp / Ollama** | Local/edge inference | Basic |
 
-### Multi-Tenant LoRA Serving (Critical for BrainDrain)
+### Multi-Tenant LoRA Serving
 
-**vLLM with S-LoRA** or **LoRAX**: Load ONE base model (~14GB for 7B), serve HUNDREDS of user-specific LoRA adapters (~10-50MB each) from the same GPU. This is the only economically viable approach.
+**vLLM with S-LoRA** or **LoRAX**: Load ONE base model (~14GB for 7B), serve HUNDREDS of LoRA adapters (~10-50MB each) from the same GPU. This is how multi-adapter serving works economically.
 
-Cost: One H100 running vLLM = **~$3,000/month** serving 100+ users = **~$30/user/month** infra cost.
+Cost: One H100 running vLLM = **~$3,000/month** serving 100+ adapters = **~$30/adapter/month** infra cost.
 
 ## 3.6 Deployment Options for End Users
 
 | Option | Cold Start | Monthly Cost | Best For |
 |--------|-----------|-------------|----------|
-| **Multi-tenant serverless** (shared vLLM) | <100ms (warm) | $5-50/user | Default tier |
-| **Dedicated serverless** (scale-to-zero) | 2-30 sec | $50-200/user | Pro tier |
-| **Dedicated always-on** | None | $420-2,850 | Enterprise |
+| **Multi-tenant serverless** (shared vLLM) | <100ms (warm) | $5-50/adapter | Shared inference |
+| **Dedicated serverless** (scale-to-zero) | 2-30 sec | $50-200/model | Dedicated inference |
+| **Dedicated always-on** | None | $420-2,850 | Always-on inference |
 | **Edge download (GGUF/ONNX)** | Local | One-time fee | Self-hosted |
 
 ## 3.7 RLHF/DPO for Non-Technical Users
@@ -354,63 +354,63 @@ No reward model. No RL complexity. Just binary feedback.
 
 ---
 
-# PART 4: COMPETITIVE LANDSCAPE
+# PART 4: EXISTING TOOLS & PLATFORMS
 
-## 4.1 Direct Competitors — Fine-Tuning Platforms
+## 4.1 Fine-Tuning Platforms (What's Already Out There)
 
 ### OpenAI Fine-Tuning API
 - **What:** API-only fine-tuning for GPT-4o, GPT-4o-mini, GPT-3.5-turbo
 - **Pricing:** $25/M training tokens (GPT-4o), $3/M (GPT-4o-mini)
-- **Gaps:** No data curation. No synthetic data. No evaluation. Locked to OpenAI models only. No open-source model support. Black box.
+- **Limitations:** No data curation. No synthetic data. No evaluation. Locked to OpenAI models only. No open-source model support. Black box.
 
 ### Google Vertex AI Model Tuning
 - **What:** Fine-tune Gemini models via Google Cloud
-- **Gaps:** Locked to Google ecosystem. No data curation. Enterprise-heavy pricing.
+- **Limitations:** Locked to Google ecosystem. No data curation. Enterprise-heavy pricing.
 
 ### Amazon Bedrock Custom Models
 - **What:** Fine-tune Llama, Mistral, etc. on AWS
-- **Gaps:** Complex setup. No data curation pipeline. AWS lock-in.
+- **Limitations:** Complex setup. No data curation pipeline. AWS lock-in.
 
 ### Together AI
 - **What:** Fine-tuning API + inference. $0.48/M tokens (LoRA <=16B)
-- **Gaps:** API-only, no UI for data prep. Assumes clean JSONL input.
+- **Limitations:** API-only, no UI for data prep. Assumes clean JSONL input.
 
 ### Fireworks AI
 - **What:** Fast inference + fine-tuning API
-- **Gaps:** Developer-focused, no data curation, no evaluation suite.
+- **Limitations:** Developer-focused, no data curation, no evaluation suite.
 
 ### H2O LLM Studio
 - **What:** GUI for fine-tuning with hyperparameter tuning
-- **Gaps:** Feels like Excel for Data Scientists. No agentic data cleaning. Assumes you already have clean data. Does NOT ingest raw documents.
+- **Limitations:** Feels like Excel for Data Scientists. No agentic data cleaning. Assumes you already have clean data. Does NOT ingest raw documents.
 
 ### Predibase / Ludwig
 - **What:** Declarative ML with LoRAX multi-tenant serving
 - **Strengths:** Best multi-LoRA serving (60+ adapters on one GPU)
-- **Gaps:** Developer-focused. No document ingestion. No synthetic data.
+- **Limitations:** Developer-focused. No document ingestion. No synthetic data.
 
 ### MonsterAPI
 - **What:** No-code fine-tuning with pre-built templates
-- **Gaps:** Limited model selection. Basic evaluation. No data curation.
+- **Limitations:** Limited model selection. Basic evaluation. No data curation.
 
 ### Lamini
 - **What:** Enterprise fine-tuning platform
-- **Gaps:** Focused on enterprise contracts. No self-serve data pipeline.
+- **Limitations:** Focused on enterprise contracts. No self-serve data pipeline.
 
 ### LLaMA-Factory (Open Source)
 - **What:** Zero-code web UI for fine-tuning 100+ models
 - **Strengths:** Broadest model support, YAML/web config
-- **Gaps:** No data curation. No document ingestion. No deployment. Just the training step.
+- **Limitations:** No data curation. No document ingestion. No deployment. Just the training step.
 
 ### HuggingFace AutoTrain
 - **What:** Automated training with minimal config
-- **Gaps:** No data curation. Limited evaluation. Basic UI.
+- **Limitations:** No data curation. Limited evaluation. Basic UI.
 
 ## 4.2 Entry Point AI
 
 - **What:** No-code fine-tuning platform across multiple providers (OpenAI, AI21, Replicate, Anthropic, Groq, Gemini)
 - **Pricing:** $490/yr (Starter, 5K examples) → $990/yr (Growth, 25K) → $2,490/yr (Pro, 100K)
 - **Strengths:** Unified interface across providers. Templating engine. Some synthetic data generation. Single-click deployment.
-- **Gaps:**
+- **Limitations:**
   - Does NOT handle raw document ingestion (expects structured data input)
   - Synthetic data generation is basic (not agentic, no AgentInstruct-style workflows)
   - No automated data quality scoring / hallucination detection
@@ -421,26 +421,26 @@ No reward model. No RL complexity. Just binary feedback.
   - No RLHF/DPO support visible
   - Small team, limited scale
 
-**EntryPoint AI is the closest competitor to BrainDrain's vision**, but it's essentially a **UI wrapper around provider fine-tuning APIs** rather than an end-to-end data engine. It doesn't solve the hard problem (raw docs → quality training data).
+EntryPoint AI is the closest thing to an end-to-end fine-tuning UI, but it's essentially a **UI wrapper around provider fine-tuning APIs** rather than a full data pipeline. It doesn't handle the hard part (raw docs → quality training data).
 
 ## 4.3 Data Curation Tools
 
 ### Scale AI / Labelbox
 - **What:** Human-in-the-loop annotation at scale
-- **Gap:** Slow, expensive, data leaves your infrastructure, not automated
+- **Limitation:** Slow, expensive, data leaves your infrastructure, not automated
 
 ### Argilla
 - **What:** Open-source data curation for NLP/LLMs
 - **Strength:** Best human feedback collection tool. Integrates with distilabel.
-- **Gap:** Not an end-to-end platform. Just the annotation layer.
+- **Limitation:** Not an end-to-end platform. Just the annotation layer.
 
 ### LabelStudio
 - **What:** Open-source data labeling
-- **Gap:** General-purpose labeling, not specialized for LLM fine-tuning
+- **Limitation:** General-purpose labeling, not specialized for LLM fine-tuning
 
 ### Lilac (Google)
 - **What:** Dataset exploration and curation
-- **Gap:** Visualization tool, not a pipeline
+- **Limitation:** Visualization tool, not a pipeline
 
 ## 4.4 MLOps Platforms
 
@@ -453,19 +453,9 @@ No reward model. No RL complexity. Just binary feedback.
 
 **None of these are end-to-end fine-tuning platforms.** They're monitoring/tracking tools.
 
-## 4.5 THE CRITICAL GAP
+## 4.5 Coverage Comparison — What Each Tool Handles
 
-### Is there ANY product that provides the full pipeline?
-
-```
-Upload raw documents → Automated data curation → Synthetic data generation
-  → Training → Evaluation → Deployment
-  → All with ZERO technical knowledge?
-```
-
-### Answer: **NO.**
-
-**Nobody does this end-to-end.** Here's what gets close:
+Here's how existing tools cover the full pipeline. This helps understand which stages are well-served and which are still DIY:
 
 | Platform | Ingestion | Data Curation | Synthetic Data | Training | Evaluation | Deployment |
 |----------|-----------|--------------|----------------|----------|------------|------------|
@@ -476,18 +466,9 @@ Upload raw documents → Automated data curation → Synthetic data generation
 | Scale AI | - | Yes (human) | - | - | - | - |
 | NVIDIA NeMo | - | Yes (GPU) | Yes | Yes | Yes | Yes |
 | Databricks | - | Partial | - | Yes | Partial | Yes |
-| **BrainDrain (Target)** | **Yes** | **Yes (Agentic)** | **Yes (AgentInstruct)** | **Yes** | **Yes (LLM-as-Judge)** | **Yes** |
+| **BrainDrain (this project)** | **Yes** | **Yes (Agentic)** | **Yes (AgentInstruct)** | **Yes** | **Yes (LLM-as-Judge)** | **Yes** |
 
-**NVIDIA NeMo comes closest** but requires NVIDIA infrastructure buy-in, a team of ML engineers, and is enterprise-heavy. **Databricks** requires a data engineering team.
-
-**The gap is real. Nobody has built the "Stripe for model training" — dead simple, handles everything, accessible to non-technical users.**
-
-## 4.6 Market Size
-
-- LLM fine-tuning market growing at **20-37% CAGR**
-- Nearly **half of enterprises** plan to invest in custom LLMs
-- Custom model market projected to reach **$10B+ by 2028**
-- The "data preparation" segment is the fastest-growing sub-market
+NVIDIA NeMo comes closest to full coverage but requires NVIDIA infrastructure buy-in and a team of ML engineers. Databricks requires a data engineering team. The document ingestion → data curation → training pipeline is where the most manual work remains across all tools.
 
 ---
 
@@ -503,45 +484,45 @@ Fine-tuning on domain-specific data **reliably degrades general capabilities**. 
 - RL-based post-training (GRPO/PPO) forgets significantly less than SFT
 - Mixing domain data with general instruction data (70/30 or 80/20 ratio)
 
-**BrainDrain opportunity:** Auto-mix domain data with general instruction data. Run before/after benchmark comparisons. Warn users when general capability drops.
+**What I want to explore:** Auto-mix domain data with general instruction data. Run before/after benchmark comparisons. Warn users when general capability drops.
 
 ## 5.2 Data Quality — The Unsexy Bottleneck
 
 The LIMA paper proved **1,000 high-quality examples can match GPT-3 performance**. Data quality >>> quantity. Most fine-tuning failures trace back to bad data, not bad hyperparameters.
 
-**BrainDrain opportunity:** Automated quality scoring (perplexity filtering, LLM-as-judge, source grounding verification). This alone is a massive differentiator.
+**What I want to explore:** Automated quality scoring (perplexity filtering, LLM-as-judge, source grounding verification). This is one of the most impactful parts of the pipeline to automate.
 
 ## 5.3 Evaluation — Nobody Agrees How to Measure
 
 Standard benchmarks (MMLU, HellaSwag) often don't correlate with real-world task performance. LLM-as-judge is becoming standard but expensive and has biases.
 
-**BrainDrain opportunity:** Domain-specific evaluation suites. A/B testing (base vs fine-tuned). Regression detection. Style alignment scoring.
+**What I want to explore:** Domain-specific evaluation suites. A/B testing (base vs fine-tuned). Regression detection. Style alignment scoring.
 
 ## 5.4 Hyperparameter Sensitivity
 
 Learning rate, LoRA rank, alpha, target modules, warmup ratio — all interact non-linearly. Small changes can dramatically affect results.
 
-**BrainDrain opportunity:** Auto-select hyperparameters based on model size, dataset size, and use case. Use community-proven recipes as defaults.
+**What I want to explore:** Auto-select hyperparameters based on model size, dataset size, and use case. Use community-proven recipes as defaults.
 
 ## 5.5 Model Collapse from Synthetic Data
 
 Training on synthetic data recursively causes output drift. As little as 10% contamination causes measurable degradation.
 
-**BrainDrain opportunity:** Always anchor on real data. Track synthetic data ratios. Use diverse teacher models. Watermark synthetic data.
+**What I want to explore:** Always anchor on real data. Track synthetic data ratios. Use diverse teacher models. Watermark synthetic data.
 
 ---
 
 # PART 6: RECENT BREAKTHROUGHS (2025-2026)
 
-| Breakthrough | Impact | Relevance to BrainDrain |
-|-------------|--------|------------------------|
-| **GRPO (DeepSeek)** | RL training without critic model, 50% less compute than PPO | Can offer reasoning fine-tuning to users |
-| **Unsloth Triton Kernels** | 3x faster, 30% less VRAM, zero accuracy loss | Training backbone — cheaper runs for users |
-| **AgentInstruct (Microsoft)** | Multi-agent synthetic data from raw docs, 40-54% improvement | Core of BrainDrain's data pipeline |
+| Breakthrough | Impact | How I Plan to Use It |
+|-------------|--------|----------------------|
+| **GRPO (DeepSeek)** | RL training without critic model, 50% less compute than PPO | Implement reasoning fine-tuning mode |
+| **Unsloth Triton Kernels** | 3x faster, 30% less VRAM, zero accuracy loss | Training backend — faster, cheaper runs |
+| **AgentInstruct (Microsoft)** | Multi-agent synthetic data from raw docs, 40-54% improvement | Core of the data synthesis pipeline |
 | **SimPO** | Outperforms DPO by 6.4 pts, simpler, cheaper | Default alignment method |
-| **GaLore** | Full-parameter learning on consumer GPUs | Future: offer full fine-tuning at LoRA cost |
-| **MIT Self-Distillation** | Preserves prior knowledge during fine-tuning | Solve catastrophic forgetting |
-| **"SFT on Curated Data = RL" paper** | Data curation IS the training signal | Validates BrainDrain's entire premise |
+| **GaLore** | Full-parameter learning on consumer GPUs | Explore full fine-tuning at LoRA cost |
+| **MIT Self-Distillation** | Preserves prior knowledge during fine-tuning | Address catastrophic forgetting |
+| **"SFT on Curated Data = RL" paper** | Data curation IS the training signal | Key motivation for building the data pipeline |
 | **MinerU 2.5** | 1.2B model, 90.67 on OmniDocBench, 2.12 pages/sec | Best document parser for ingestion |
 | **Active Synthetic Data Gen (Dec 2025)** | Iterative, closed-loop generation guided by student model | Automate the "retrain on weak areas" loop |
 
@@ -549,7 +530,7 @@ Training on synthetic data recursively causes output drift. As little as 10% con
 
 # PART 7: ARCHITECTURAL IMPLICATIONS
 
-Based on all research, here are the key architectural decisions for BrainDrain:
+Based on all research, here are the key architectural decisions for this project:
 
 ## The Pipeline (What We Build)
 
@@ -593,31 +574,70 @@ Based on all research, here are the key architectural decisions for BrainDrain:
 
 ---
 
-# PART 8: THE VERDICT
+# PART 8: WHY THIS IS A GREAT LEARNING PROJECT
 
-## Is This Worth Building?
+## What Makes This Worth Building
 
-**YES.** Here's why:
+1. **Covers the full stack.** Raw document ingestion, data curation, synthetic data generation, model training, evaluation, and deployment — every stage teaches different skills and tools.
 
-1. **The gap is real and validated.** No product does end-to-end from raw documents to deployed model without technical expertise. The closest (Entry Point AI, H2O LLM Studio) skip the hardest part — data curation.
+2. **The timing is right.** GPU costs have collapsed. Training frameworks are mature. The bottleneck has shifted to data quality, which is the most interesting and under-explored part of the pipeline.
 
-2. **The timing is right.** GPU costs have collapsed. Training frameworks are mature. The bottleneck has shifted entirely to data quality — exactly what BrainDrain solves.
+3. **Solid research foundation.** The 2025 paper proving "SFT on curated data = RL" means data curation pipelines are where the real learning happens. AgentInstruct proves multi-agent synthetic data from raw docs works at scale.
 
-3. **The research backs it.** The 2025 paper proving "SFT on curated data = RL" means whoever owns the data curation pipeline owns the training quality. AgentInstruct proves multi-agent synthetic data from raw docs works at scale.
+4. **The engineering is challenging but achievable.** Rust for infrastructure, Temporal for orchestration, Unsloth for training, vLLM for serving — all production-ready building blocks. The challenge is in the **integration and end-to-end automation**.
 
-4. **The market is growing.** 20-37% CAGR, half of enterprises want custom models, $10B+ projected market.
+5. **Teaches production Rust.** Building the API gateway, storage layer, and infrastructure in Rust provides deep systems programming experience with async, concurrency, and real-world service architecture.
 
-5. **The engineering is hardcore but achievable.** Rust for parsing, Temporal for orchestration, Unsloth for training, vLLM for serving — all production-ready building blocks. The innovation is in the **integration and automation**, not inventing new algorithms.
+## What This Project Aims to Implement
 
-## What Makes BrainDrain Different
+- **Start from raw documents** (not pre-cleaned JSONL)
+- **Agentic data curation** pipeline (multi-agent synthesis)
+- **Source-grounded quality verification** (hallucination detection)
+- **Auto-hyperparameter selection** (no manual tuning needed)
+- **Multi-tenant LoRA serving** (efficient adapter management)
+- **Catastrophic forgetting detection** (before/after benchmarking)
+- **Simple UX** even for non-technical use cases (personal digital twin, email assistant, etc.)
 
-- **Only platform that starts from raw documents** (not JSONL)
-- **Agentic data curation** (not human annotation)
-- **Source-grounded quality verification** (not vibes)
-- **Auto-hyperparameter selection** (not manual tuning)
-- **Multi-tenant LoRA serving** (not one-model-per-user)
-- **Catastrophic forgetting detection** (nobody else does this)
-- **Dead simple UX** for non-technical users
+---
+
+# PART 9: LEARNING OBJECTIVES
+
+## What I'm Learning By Building This
+
+### Rust (Production-Grade Infrastructure)
+- Async Rust with Tokio runtime and Axum web framework
+- Compile-time checked SQL with SQLx
+- Zero-copy file streaming and backpressure handling
+- Building production REST APIs with middleware, auth, rate limiting
+- Working with aws-sdk-rust, redis-rs, and other async ecosystem crates
+- Single-binary deployment and minimal memory footprint at scale
+
+### ML / Fine-Tuning Pipeline
+- How LoRA, QLoRA, and adapter-based fine-tuning actually work under the hood
+- SFT, DPO, GRPO — different training paradigms and when to use each
+- Synthetic data generation using multi-agent pipelines (AgentInstruct patterns)
+- Data quality scoring: perplexity filtering, LLM-as-Judge, deduplication (MinHash)
+- Document parsing at scale (MinerU, Docling, Nougat)
+- Chunking strategies and how they affect training data quality
+
+### Model Serving & Deployment
+- vLLM internals, S-LoRA for multi-adapter serving
+- GGUF quantization and edge model export
+- OpenAI-compatible API proxy design
+- Streaming inference with SSE
+
+### Systems Engineering
+- Temporal.io for durable, long-running workflow orchestration
+- Event-driven architecture with Redis Streams
+- Multi-tenant isolation patterns (RLS, prefix isolation, collection-per-project)
+- GPU provisioning and ephemeral compute (Modal, RunPod)
+- Observability: Prometheus, Grafana, OpenTelemetry
+
+### Personal Use Cases I Want to Build With This
+- A digital twin that answers messages in my writing style
+- An email assistant trained on my past emails
+- Domain-specific Q&A models from personal knowledge bases
+- Experimenting with reasoning fine-tuning (GRPO) on custom tasks
 
 ---
 
