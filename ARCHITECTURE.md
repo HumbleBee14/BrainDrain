@@ -92,7 +92,7 @@ User uploads documents → Answers 3-5 questions → Gets a trained, deployed mo
                                           │
                             ┌─────────────▼───────────────┐
                             │      API GATEWAY            │
-                            │      FastAPI + Auth          │
+                            │      Rust (Axum) + Auth      │
                             │      Rate Limiting           │
                             │      Request Routing         │
                             └─────────────┬───────────────┘
@@ -135,17 +135,53 @@ User uploads documents → Answers 3-5 questions → Gets a trained, deployed mo
     └─────────────────────────────────────────────────────────────┘
 ```
 
+### Language Decision: Performance-First Architecture
+
+We use **Rust for all infrastructure** and **Python only where ML libraries force it**. When scaling to 100s of instances, cold starts, memory footprint, and throughput compound — Rust wins everywhere it's applicable.
+
+#### Language Comparison (Why Rust Over Python/Go for Infrastructure)
+
+| Metric | Rust (Tokio + Axum) | Go (net/http) | Python (FastAPI) |
+|--------|---------------------|---------------|------------------|
+| **HTTP throughput** | #1 in TechEmpower benchmarks | ~30-50% behind Rust | ~10-20x behind Rust |
+| **Memory per instance** | ~5-15 MB baseline | ~25-50 MB baseline | ~80-200 MB baseline |
+| **Cold start time** | ~2-5 ms | ~10-20 ms | ~500-2000 ms |
+| **Concurrency model** | Zero-cost futures, millions of tasks | Goroutines, good but higher mem/task | asyncio, GIL limits true parallelism |
+| **S3/DB/Redis clients** | Mature async: `aws-sdk-rust`, `sqlx`, `redis-rs` | Mature | Mature |
+| **Type safety** | Compile-time, zero runtime errors | Good (static types) | Runtime only (Pydantic helps) |
+| **Binary deployment** | Single static binary, no runtime | Single binary, no runtime | Requires Python runtime + venv |
+| **100 instances cost** | ~1.5 GB total memory | ~5 GB total memory | ~20 GB total memory |
+
+**Verdict:** Go's only advantage is faster development speed. No unique capability Rust lacks. For BrainDrain's scale-to-hundreds requirement, Rust's memory and cold start advantages compound into real cost savings.
+
+#### Language Split Across System
+
+| Component | Language | Rationale |
+|-----------|----------|-----------|
+| API Gateway | **Rust (Axum)** | Fastest HTTP, minimal memory, instant cold starts |
+| File upload/streaming | **Rust** | Zero-copy streaming to S3, backpressure |
+| Database layer | **Rust (SQLx)** | Compile-time checked SQL, async, connection pooling |
+| Redis/cache | **Rust (redis-rs)** | Async, connection pooling |
+| S3/storage client | **Rust (aws-sdk-rust)** | Official AWS SDK, streaming |
+| Auth (Clerk JWT) | **Rust (jsonwebtoken)** | JWT verification, JWKS |
+| Message bus | **Rust** | Redis Streams pub/sub |
+| ML Training | **Python (Unsloth/TRL)** | ML ecosystem is Python-only |
+| Synthetic data gen | **Python (distilabel)** | ML pipeline, LLM API calls |
+| Document parsing | **Python (MinerU/Docling)** | Parsers are Python-native |
+| Temporal ML workers | **Python (temporalio)** | Workers run ML code, must be Python |
+| Frontend | **TypeScript (Next.js)** | React ecosystem |
+
 ### Component Registry
 
 | Component | Technology | Why This Choice |
 |-----------|-----------|-----------------|
-| API Gateway | FastAPI (Python) | Async, fast, auto-docs, ML ecosystem native |
+| API Gateway | **Rust (Axum)** | #1 performance, zero-cost async, single-binary deployment |
 | Message Bus | Redis Streams (MVP) → NATS JetStream (scale) | Redis already needed for cache; NATS for scale |
 | Orchestration | Temporal.io | Durable execution, built for long-running workflows |
 | Object Storage | Cloudflare R2 (MVP) → S3 (scale) | Zero egress fees; S3 API compatible |
-| Metadata DB | PostgreSQL 16 | JSONB for flexible schemas, battle-tested |
+| Metadata DB | PostgreSQL 16 + SQLx | Compile-time checked queries, JSONB flexibility |
 | Vector DB | Qdrant | Rust-native, filtering, multi-tenancy support |
-| Cache | Redis | Session, rate limiting, job state, pub/sub |
+| Cache | Redis (redis-rs) | Sub-ms latency, async Rust client |
 | GPU Compute | Modal (MVP) → RunPod (scale) | Modal: best DX; RunPod: cheapest at scale |
 | Serving | vLLM + S-LoRA | Multi-tenant, 2000+ adapters, OpenAI-compatible |
 
@@ -1023,7 +1059,7 @@ Coordinate all pipeline stages, handle failures, manage state, and provide durab
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                         API GATEWAY                                      │
-│                         FastAPI                                          │
+│                         Rust (Axum)                                      │
 │                                                                          │
 │  Authentication:  Clerk / Auth.js (JWT)                                 │
 │  Rate Limiting:   Redis-based sliding window                            │
@@ -1730,8 +1766,9 @@ What you need to learn for each domain, organized by priority.
 
 | Domain | What to Learn | Resources |
 |--------|--------------|-----------|
+| **Rust + Axum** | Async Rust, Tokio runtime, Axum routing/extractors/middleware, Tower layers | Rust Book, Axum docs, Tokio tutorial |
+| **SQLx** | Compile-time checked queries, async PostgreSQL, migrations | SQLx docs, examples |
 | **Temporal.io** | Workflows, Activities, Signals, Workers, Python SDK | Temporal docs, Python SDK tutorials |
-| **FastAPI** | Async patterns, dependency injection, WebSocket, middleware | FastAPI docs, Starlette internals |
 | **LoRA/QLoRA** | How adapter training works, rank, alpha, target modules | HuggingFace PEFT docs, LoRA paper |
 | **Unsloth** | API, model loading, training loop, saving adapters | Unsloth GitHub, examples |
 | **TRL** | SFTTrainer, DPOTrainer configuration | HuggingFace TRL docs |
@@ -1762,11 +1799,12 @@ What you need to learn for each domain, organized by priority.
 ### Recommended Learning Order
 
 ```
-Week 1-2:  FastAPI + Temporal.io (read docs, build toy workflow)
-Week 3-4:  LoRA/QLoRA theory + Unsloth hands-on (fine-tune a 7B model)
-Week 5-6:  vLLM setup + S-LoRA (serve a model with adapters)
-Week 7-8:  Modal (deploy training to cloud GPU)
-Week 9+:   MinerU, distilabel, prompt engineering (build as you learn)
+Week 1-2:  Rust + Axum + Tokio (async Rust, build a REST API)
+Week 3-4:  SQLx + PostgreSQL (compile-time queries, migrations)
+Week 5-6:  LoRA/QLoRA theory + Unsloth hands-on (fine-tune a 7B model)
+Week 7-8:  vLLM setup + S-LoRA (serve a model with adapters)
+Week 9-10: Temporal.io + Modal (workflows + cloud GPU)
+Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 ```
 
 ---
@@ -1878,6 +1916,36 @@ Week 9+:   MinerU, distilabel, prompt engineering (build as you learn)
 
 **Rationale:** Next.js gives us SSR for landing/docs pages, streaming for real-time updates, and the React ecosystem for charting libraries (Recharts) and component libraries (shadcn/ui). The ML/AI tooling ecosystem is React-first.
 
+### TDR-009: Infrastructure Language — Rust vs Python vs Go
+
+**Decision:** Rust for all infrastructure; Python only for ML-specific code
+
+| Criteria | Rust (Axum + Tokio) | Go (Fiber/Chi) | Python (FastAPI) |
+|----------|---------------------|-----------------|------------------|
+| **HTTP throughput** | **#1** (TechEmpower) | ~30-50% behind | ~10-20x behind |
+| **Memory/instance** | **~5-15 MB** | ~25-50 MB | ~80-200 MB |
+| **Cold start** | **~2-5 ms** | ~10-20 ms | ~500-2000 ms |
+| **100 instances RAM** | **~1.5 GB** | ~5 GB | ~20 GB |
+| **Concurrency** | **Zero-cost futures** | Goroutines (good) | asyncio + GIL |
+| **Type safety** | **Compile-time** | Static types | Runtime only |
+| **Deployment** | **Single static binary** | Single binary | Runtime + venv |
+| **S3/DB/Redis** | Mature async clients | Mature | Mature |
+| **Dev speed** | Slower initially | **Fastest** | Fast |
+| **ML ecosystem** | None | None | **Dominant** |
+
+**Rationale:** Performance is BrainDrain's non-negotiable requirement. When scaling to 100s of instances:
+- Rust uses **13x less memory** than Python (1.5 GB vs 20 GB for 100 instances)
+- Rust cold starts are **100-400x faster** than Python (2ms vs 500-2000ms)
+- Go's only advantage over Rust is faster development speed — no unique capability Rust lacks
+- Python is kept **exclusively** for ML code where the ecosystem (Unsloth, TRL, distilabel, MinerU) has no Rust/Go equivalent
+
+**Language boundary:**
+```
+Rust (Axum)  → API Gateway, file upload, DB queries, Redis, S3, auth, middleware
+Python       → Training (Unsloth/TRL), synthesis (distilabel), parsing (MinerU), Temporal ML workers
+TypeScript   → Frontend (Next.js)
+```
+
 ---
 
 ## Summary: The Stack at a Glance
@@ -1886,25 +1954,39 @@ Week 9+:   MinerU, distilabel, prompt engineering (build as you learn)
 ┌─────────────────────────────────────────────────────────────┐
 │                    BRAINDRAIN STACK                          │
 │                                                              │
-│  Frontend:     Next.js 15 + React 19 + Tailwind + shadcn   │
-│  API:          FastAPI (Python 3.12+)                       │
-│  Auth:         Clerk                                         │
-│  Orchestration:Temporal.io                                   │
-│  Message Bus:  Redis Streams → NATS JetStream               │
+│  ── INFRASTRUCTURE (Rust) ──                                │
+│  API Gateway:  Rust (Axum + Tokio + Tower)                  │
+│  Database:     SQLx (compile-time checked, async)           │
+│  Cache:        redis-rs (async)                             │
+│  Storage:      aws-sdk-rust (S3/R2/MinIO)                   │
+│  Auth:         jsonwebtoken (Clerk JWT verification)        │
+│  Logging:      tracing + tracing-subscriber                 │
 │                                                              │
+│  ── ML PIPELINE (Python) ──                                 │
 │  Parsing:      MinerU 2.5 + Docling + Nougat                │
 │  Chunking:     Custom (structure-aware + semantic)           │
 │  Synthesis:    distilabel (AgentInstruct-style agents)       │
 │  Quality:      LLM-as-Judge + MinHash + perplexity          │
 │  Training:     Unsloth + TRL (SFT, DPO, GRPO)              │
-│  GPU:          Modal (MVP) → RunPod (scale)                 │
+│  Workers:      Temporal.io (Python SDK for ML activities)   │
+│                                                              │
+│  ── SERVING & INFRA ──                                      │
 │  Serving:      vLLM + S-LoRA                                │
+│  GPU:          Modal (MVP) → RunPod (scale)                 │
 │  Export:       GGUF (llama.cpp) + ONNX                      │
 │                                                              │
-│  Storage:      S3/R2 + PostgreSQL + Qdrant + Redis          │
+│  ── FRONTEND (TypeScript) ──                                │
+│  UI:           Next.js 15 + React 19 + Tailwind + shadcn   │
+│  Auth:         @clerk/nextjs                                │
+│  Data:         TanStack React Query                         │
+│                                                              │
+│  ── SHARED INFRASTRUCTURE ──                                │
+│  Storage:      S3/R2 + PostgreSQL 16 + Qdrant + Redis 7    │
+│  Orchestration:Temporal.io                                   │
+│  Message Bus:  Redis Streams → NATS JetStream               │
 │  Monitoring:   Prometheus + Grafana + OpenTelemetry          │
 │  CI/CD:        GitHub Actions                                │
-│  Monorepo:     Turborepo                                     │
+│  Monorepo:     Cargo workspace (Rust) + Turborepo (TS)      │
 │                                                              │
 │  LLM Backends: Claude Sonnet (quality) / GPT-4o-mini        │
 │                (balanced) / Qwen-72B (self-hosted volume)   │
@@ -1913,4 +1995,4 @@ Week 9+:   MinerU, distilabel, prompt engineering (build as you learn)
 
 ---
 
-*Architecture designed February 2026. Based on research compiled in RESEARCH.md. All technology choices are production-ready as of this date. Architecture will evolve as the platform scales.*
+*Architecture designed February 2026. Updated with Rust-first infrastructure decision. Based on research compiled in RESEARCH.md. All technology choices are production-ready as of this date. Architecture will evolve as the platform scales.*
