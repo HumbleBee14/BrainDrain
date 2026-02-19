@@ -26,6 +26,12 @@ COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY apps/web/ apps/web/
 COPY packages/shared-types/ packages/shared-types/
 
+# Clerk requires NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY at build time for page prerendering.
+# Pass the real key via --build-arg for production builds.
+# The placeholder allows CI validation builds to succeed without secrets.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_placeholder
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
 RUN pnpm --filter web build
 
 # ── Stage 3: Runtime ──

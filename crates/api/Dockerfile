@@ -5,29 +5,9 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 
 WORKDIR /app
 
-# Copy workspace manifests first for layer caching
+# Copy entire workspace (BuildKit layer caching + CI gha cache handle efficiency)
 COPY Cargo.toml Cargo.lock ./
-COPY crates/shared/Cargo.toml crates/shared/Cargo.toml
-COPY crates/db/Cargo.toml crates/db/Cargo.toml
-COPY crates/storage/Cargo.toml crates/storage/Cargo.toml
-COPY crates/api/Cargo.toml crates/api/Cargo.toml
-
-# Create dummy source files to cache dependency compilation
-RUN mkdir -p crates/shared/src crates/db/src crates/storage/src crates/api/src && \
-    echo "pub fn _dummy() {}" > crates/shared/src/lib.rs && \
-    echo "pub fn _dummy() {}" > crates/db/src/lib.rs && \
-    echo "fn main() {}" > crates/db/src/migrate.rs && \
-    echo "pub fn _dummy() {}" > crates/storage/src/lib.rs && \
-    echo "fn main() {}" > crates/api/src/main.rs
-
-RUN cargo build --release --bin platform-api && \
-    rm -rf crates/
-
-# Copy real source code
 COPY crates/ crates/
-
-# Touch source files to invalidate cache for the actual build
-RUN touch crates/shared/src/lib.rs crates/db/src/lib.rs crates/storage/src/lib.rs crates/api/src/main.rs
 
 RUN cargo build --release --bin platform-api
 
