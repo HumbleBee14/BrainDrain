@@ -54,6 +54,8 @@ jobs:
           file: ./apps/web/Dockerfile
           push: false
           tags: platform-web:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

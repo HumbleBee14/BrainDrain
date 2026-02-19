@@ -32,13 +32,13 @@ dev-workers:
 # Run all tests
 test:
 	cargo test --workspace
-	cd apps/web && pnpm test 2>/dev/null || true
+	-cd apps/web && pnpm test
 
 # Lint everything
 lint:
 	cargo clippy --workspace -- -D warnings
 	cargo fmt --all -- --check
-	cd apps/web && pnpm lint 2>/dev/null || true
+	-cd apps/web && pnpm lint
 
 # Build all
 build:
