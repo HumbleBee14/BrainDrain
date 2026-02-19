@@ -1,0 +1,14 @@
+{
+  "name": "platform",
+  "private": true,
+  "scripts": {
+    "dev:web": "turbo dev --filter=@platform/web",
+    "build:web": "turbo build --filter=@platform/web",
+    "lint:web": "turbo lint --filter=@platform/web",
+    "type-check": "turbo type-check"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

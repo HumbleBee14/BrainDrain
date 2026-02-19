@@ -1,0 +1,50 @@
+[package]
+name = "platform-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Redis
+redis = { workspace = true }
+
+# Auth
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Types
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Config
+dotenvy = { workspace = true }
+envy = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+futures = { workspace = true }
+
+# Internal crates
+platform-shared = { workspace = true }
+platform-db = { workspace = true }
+platform-storage = { workspace = true }

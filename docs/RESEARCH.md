@@ -1,4 +1,4 @@
-# BrainDrain — Deep Research & Technical Notes (February 2026)
+# Platform — Deep Research & Technical Notes (February 2026)
 
 ## Project Goal
 A learning project to explore the full pipeline of fine-tuning LLMs end-to-end — from raw document ingestion through data curation, training, evaluation, and deployment. The goal is to deeply understand each stage by building it: Rust for infrastructure, Python for ML, and everything in between.
@@ -466,7 +466,7 @@ Here's how existing tools cover the full pipeline. This helps understand which s
 | Scale AI | - | Yes (human) | - | - | - | - |
 | NVIDIA NeMo | - | Yes (GPU) | Yes | Yes | Yes | Yes |
 | Databricks | - | Partial | - | Yes | Partial | Yes |
-| **BrainDrain (this project)** | **Yes** | **Yes (Agentic)** | **Yes (AgentInstruct)** | **Yes** | **Yes (LLM-as-Judge)** | **Yes** |
+| **Platform (this project)** | **Yes** | **Yes (Agentic)** | **Yes (AgentInstruct)** | **Yes** | **Yes (LLM-as-Judge)** | **Yes** |
 
 NVIDIA NeMo comes closest to full coverage but requires NVIDIA infrastructure buy-in and a team of ML engineers. Databricks requires a data engineering team. The document ingestion → data curation → training pipeline is where the most manual work remains across all tools.
 

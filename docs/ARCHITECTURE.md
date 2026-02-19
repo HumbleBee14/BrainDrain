@@ -1,4 +1,4 @@
-# BrainDrain — System Architecture & Learning Notes (February 2026)
+# Platform — System Architecture & Learning Notes (February 2026)
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@
 
 ## 1. System Overview
 
-BrainDrain is a personal learning project that explores the full pipeline of transforming raw documents into deployed, fine-tuned LLMs. The goal is to learn production Rust, ML training pipelines, and systems engineering by building every stage end-to-end.
+Platform is a personal learning project that explores the full pipeline of transforming raw documents into deployed, fine-tuned LLMs. The goal is to learn production Rust, ML training pipelines, and systems engineering by building every stage end-to-end.
 
 ### The Goal
 
@@ -1316,7 +1316,7 @@ Format: PDF                   Format: JSON                     Format: JSONL
 │  ┌─────────────────────────────────────────────┐                        │
 │  │  OBJECT STORAGE (S3 / Cloudflare R2)        │                        │
 │  │                                              │                        │
-│  │  braindrain-{env}/                          │                        │
+│  │  platform-{env}/                          │                        │
 │  │  ├── uploads/                               │                        │
 │  │  │   └── {tenant_id}/{project_id}/          │                        │
 │  │  │       └── {file_id}.{ext}                │                        │
@@ -1952,7 +1952,7 @@ TypeScript   → Frontend (Next.js)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    BRAINDRAIN STACK                          │
+│                    PLATFORM STACK                          │
 │                                                              │
 │  ── INFRASTRUCTURE (Rust) ──                                │
 │  API Gateway:  Rust (Axum + Tokio + Tower)                  │

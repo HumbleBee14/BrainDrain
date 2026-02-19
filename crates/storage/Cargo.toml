@@ -1,0 +1,15 @@
+[package]
+name = "platform-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aws-sdk-s3 = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
