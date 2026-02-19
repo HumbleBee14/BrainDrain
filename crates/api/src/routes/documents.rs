@@ -18,14 +18,8 @@ use crate::services::document_service::DocumentService;
 /// Document routes nested under projects.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route(
-            "/projects/{project_id}/documents",
-            post(upload_document),
-        )
-        .route(
-            "/projects/{project_id}/documents",
-            get(list_documents),
-        )
+        .route("/projects/{project_id}/documents", post(upload_document))
+        .route("/projects/{project_id}/documents", get(list_documents))
         .route("/documents/{id}", get(get_document))
 }
 

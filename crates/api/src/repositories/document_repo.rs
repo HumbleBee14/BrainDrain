@@ -83,6 +83,7 @@ impl DocumentRepo {
     }
 
     /// Update document status.
+    #[allow(dead_code)]
     pub async fn update_status(
         db: &PgPool,
         tenant_id: Uuid,

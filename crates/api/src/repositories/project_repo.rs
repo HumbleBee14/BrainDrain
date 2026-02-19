@@ -124,11 +124,7 @@ impl ProjectRepo {
     }
 
     /// Soft-delete a project.
-    pub async fn delete(
-        db: &PgPool,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> Result<bool, AppError> {
+    pub async fn delete(db: &PgPool, tenant_id: Uuid, project_id: Uuid) -> Result<bool, AppError> {
         let result = sqlx::query(
             r#"
             UPDATE projects

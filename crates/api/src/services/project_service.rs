@@ -42,11 +42,7 @@ impl ProjectService {
         Ok(project.into())
     }
 
-    pub async fn get(
-        db: &PgPool,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> AppResult<ProjectResponse> {
+    pub async fn get(db: &PgPool, tenant_id: Uuid, project_id: Uuid) -> AppResult<ProjectResponse> {
         let project = ProjectRepo::get_by_id(db, tenant_id, project_id)
             .await?
             .ok_or(AppError::NotFound {

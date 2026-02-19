@@ -5,10 +5,7 @@ use tower_http::trace::TraceLayer;
 
 /// Build the CORS middleware from allowed origins.
 pub fn cors_layer(origins: &[String]) -> CorsLayer {
-    let origins: Vec<HeaderValue> = origins
-        .iter()
-        .filter_map(|o| o.parse().ok())
-        .collect();
+    let origins: Vec<HeaderValue> = origins.iter().filter_map(|o| o.parse().ok()).collect();
 
     CorsLayer::new()
         .allow_origin(origins)
@@ -29,10 +26,7 @@ pub fn cors_layer(origins: &[String]) -> CorsLayer {
 }
 
 /// Generates and propagates X-Request-Id headers.
-pub fn request_id_layers() -> (
-    SetRequestIdLayer<MakeRequestUuid>,
-    PropagateRequestIdLayer,
-) {
+pub fn request_id_layers() -> (SetRequestIdLayer<MakeRequestUuid>, PropagateRequestIdLayer) {
     let header_name = axum::http::HeaderName::from_static("x-request-id");
     (
         SetRequestIdLayer::new(header_name.clone(), MakeRequestUuid),
@@ -41,6 +35,8 @@ pub fn request_id_layers() -> (
 }
 
 /// HTTP request/response tracing layer.
-pub fn trace_layer() -> TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>> {
+pub fn trace_layer()
+-> TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>>
+{
     TraceLayer::new_for_http()
 }

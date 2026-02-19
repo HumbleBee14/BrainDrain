@@ -28,11 +28,7 @@ impl DocumentService {
         data: Bytes,
     ) -> AppResult<UploadResponse> {
         // Validate file extension
-        let ext = filename
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_lowercase();
+        let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
         if !SUPPORTED_EXTENSIONS.contains(&ext.as_str()) {
             return Err(AppError::BadRequest {
@@ -58,7 +54,7 @@ impl DocumentService {
         storage
             .put(&storage_path, data, content_type)
             .await
-            .map_err(|e| AppError::Storage(e))?;
+            .map_err(AppError::Storage)?;
 
         // Create DB record
         let doc = DocumentRepo::create(

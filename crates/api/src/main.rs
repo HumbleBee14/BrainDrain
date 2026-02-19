@@ -22,8 +22,8 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(|e| anyhow::anyhow!("Config error: {e}"))?;
 
     // Initialize structured logging
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
 
     if config.is_dev() {
         tracing_subscriber::fmt()

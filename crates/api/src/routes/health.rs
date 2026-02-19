@@ -36,10 +36,7 @@ async fn health() -> Json<HealthResponse> {
 
 /// Readiness check — verifies database and Redis connectivity.
 async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, StatusCode> {
-    let db_ok = sqlx::query("SELECT 1")
-        .execute(state.db())
-        .await
-        .is_ok();
+    let db_ok = sqlx::query("SELECT 1").execute(state.db()).await.is_ok();
 
     let redis_ok = redis::cmd("PING")
         .query_async::<String>(&mut state.redis())
@@ -47,7 +44,11 @@ async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, Sta
         .is_ok();
 
     let response = ReadyResponse {
-        status: if db_ok && redis_ok { "ready" } else { "degraded" },
+        status: if db_ok && redis_ok {
+            "ready"
+        } else {
+            "degraded"
+        },
         database: db_ok,
         redis: redis_ok,
     };

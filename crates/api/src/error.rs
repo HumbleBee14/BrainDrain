@@ -20,12 +20,15 @@ pub enum AppError {
     #[error("{message}")]
     Forbidden { message: String },
 
+    #[allow(dead_code)]
     #[error("{message}")]
     Conflict { message: String },
 
+    #[allow(dead_code)]
     #[error("Rate limit exceeded")]
     RateLimited,
 
+    #[allow(dead_code)]
     #[error("Not implemented")]
     NotImplemented,
 

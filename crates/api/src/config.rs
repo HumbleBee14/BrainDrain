@@ -21,6 +21,7 @@ pub struct Config {
 
     /// API server bind host.
     #[serde(default = "default_host")]
+    #[allow(dead_code)]
     pub api_host: String,
 
     /// API server bind port.
@@ -65,15 +66,18 @@ pub struct Config {
 
     /// Clerk secret key (for server-side API calls).
     #[serde(default)]
+    #[allow(dead_code)]
     pub clerk_secret_key: String,
 
     // ── Temporal ──
     /// Temporal server host:port.
     #[serde(default = "default_temporal_host")]
+    #[allow(dead_code)]
     pub temporal_host: String,
 
     /// Temporal namespace.
     #[serde(default = "default_temporal_namespace")]
+    #[allow(dead_code)]
     pub temporal_namespace: String,
 
     // ── CORS ──

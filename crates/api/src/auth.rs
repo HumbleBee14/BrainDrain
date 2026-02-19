@@ -1,6 +1,6 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use jsonwebtoken::{decode, DecodingKey, TokenData, Validation};
+use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -50,10 +50,10 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .ok_or(AppError::Unauthorized)?;
 
         // In development mode, accept a simple dev token format: "dev_{tenant_id}_{user_id}"
-        if state.config().is_dev() {
-            if let Some(dev_user) = parse_dev_token(token) {
-                return Ok(dev_user);
-            }
+        if state.config().is_dev()
+            && let Some(dev_user) = parse_dev_token(token)
+        {
+            return Ok(dev_user);
         }
 
         // Verify JWT with Clerk's JWKS
@@ -120,22 +120,19 @@ async fn verify_clerk_jwt(token: &str, jwks_url: &str) -> Result<ClerkClaims, Ap
     let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
     validation.validate_exp = true;
 
-    let TokenData { claims, .. } =
-        decode::<ClerkClaims>(token, &decoding_key, &validation)
-            .map_err(|_| AppError::Unauthorized)?;
+    let TokenData { claims, .. } = decode::<ClerkClaims>(token, &decoding_key, &validation)
+        .map_err(|_| AppError::Unauthorized)?;
 
     Ok(claims)
 }
 
 /// Look up tenant_id by Clerk organization ID.
 async fn resolve_tenant_id(db: &sqlx::PgPool, clerk_org_id: &str) -> Result<Uuid, AppError> {
-    let row = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM tenants WHERE clerk_org_id = $1",
-    )
-    .bind(clerk_org_id)
-    .fetch_optional(db)
-    .await
-    .map_err(AppError::Database)?;
+    let row = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants WHERE clerk_org_id = $1")
+        .bind(clerk_org_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)?;
 
     row.ok_or_else(|| AppError::Forbidden {
         message: "Organization not found. Please set up your workspace first.".to_string(),
@@ -143,18 +140,13 @@ async fn resolve_tenant_id(db: &sqlx::PgPool, clerk_org_id: &str) -> Result<Uuid
 }
 
 /// For users without an org, resolve their personal tenant.
-async fn resolve_personal_tenant(
-    db: &sqlx::PgPool,
-    clerk_user_id: &str,
-) -> Result<Uuid, AppError> {
+async fn resolve_personal_tenant(db: &sqlx::PgPool, clerk_user_id: &str) -> Result<Uuid, AppError> {
     // Personal tenants use the user ID as the clerk_org_id
-    let row = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM tenants WHERE clerk_org_id = $1",
-    )
-    .bind(clerk_user_id)
-    .fetch_optional(db)
-    .await
-    .map_err(AppError::Database)?;
+    let row = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants WHERE clerk_org_id = $1")
+        .bind(clerk_user_id)
+        .fetch_optional(db)
+        .await
+        .map_err(AppError::Database)?;
 
     row.ok_or_else(|| AppError::Forbidden {
         message: "Tenant not found. Please complete onboarding.".to_string(),

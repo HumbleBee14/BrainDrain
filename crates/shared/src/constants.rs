@@ -28,8 +28,8 @@ pub const MAX_BATCH_UPLOAD_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 /// Supported file extensions for document upload.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "pdf", "docx", "doc", "txt", "html", "htm", "epub", "md", "csv", "png", "jpg", "jpeg",
-    "tiff", "bmp",
+    "pdf", "docx", "doc", "txt", "html", "htm", "epub", "md", "csv", "png", "jpg", "jpeg", "tiff",
+    "bmp",
 ];
 
 /// Maximum pages for document parsing before chunking.
