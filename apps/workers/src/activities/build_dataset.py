@@ -1,0 +1,188 @@
+"""Build dataset activity — assembles pairs into a training-ready dataset.
+
+Applies quality filtering, formats into ChatML, creates train/val split.
+"""
+
+import hashlib
+import json
+import logging
+from dataclasses import dataclass
+
+from temporalio import activity
+
+from src import clients, s3_paths
+
+logger = logging.getLogger("platform.dataset")
+
+
+@dataclass
+class BuildDatasetInput:
+    tenant_id: str
+    project_id: str
+    dataset_id: str
+    pairs_storage_path: str
+    system_prompt: str = ""
+
+
+@dataclass
+class BuildDatasetOutput:
+    pair_count: int
+    storage_path: str
+
+
+@activity.defn
+async def build_dataset(input: BuildDatasetInput) -> BuildDatasetOutput:
+    """Build a ChatML-formatted dataset from generated pairs."""
+    s3 = clients.get_s3()
+    bucket = clients.get_s3_bucket()
+    db = await clients.get_db()
+
+    if not input.pairs_storage_path:
+        return BuildDatasetOutput(pair_count=0, storage_path="")
+
+    # Download raw pairs
+    response = s3.get_object(Bucket=bucket, Key=input.pairs_storage_path)
+    raw_data = response["Body"].read().decode("utf-8")
+    pairs = [json.loads(line) for line in raw_data.strip().split("\n") if line.strip()]
+
+    if not pairs:
+        return BuildDatasetOutput(pair_count=0, storage_path="")
+
+    # Quality filtering
+    filtered = _filter_pairs(pairs)
+
+    # Deduplicate
+    filtered = _deduplicate(filtered)
+
+    if not filtered:
+        return BuildDatasetOutput(pair_count=0, storage_path="")
+
+    # Format into ChatML
+    system_prompt = input.system_prompt or "You are a helpful assistant."
+    chat_records = []
+    for pair in filtered:
+        instruction = pair.get("instruction", "").strip()
+        response_text = pair.get("response", "").strip()
+        if not instruction or not response_text:
+            continue
+
+        record = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": instruction},
+                {"role": "assistant", "content": response_text},
+            ],
+            "metadata": {
+                "doc_id": pair.get("doc_id"),
+                "chunk_id": pair.get("chunk_id"),
+                "task_type": pair.get("task_type"),
+            },
+        }
+        chat_records.append(record)
+
+    if not chat_records:
+        return BuildDatasetOutput(pair_count=0, storage_path="")
+
+    # Train/val split (90/10)
+    split_idx = max(1, int(len(chat_records) * 0.9))
+    train_records = chat_records[:split_idx]
+    val_records = chat_records[split_idx:]
+
+    # Upload dataset
+    dataset_key = s3_paths.dataset_path(input.tenant_id, input.project_id, input.dataset_id)
+
+    # Main dataset (train)
+    train_lines = [json.dumps(r, ensure_ascii=False) for r in train_records]
+    s3.put_object(
+        Bucket=bucket,
+        Key=dataset_key,
+        Body="\n".join(train_lines).encode("utf-8"),
+        ContentType="application/jsonl",
+    )
+
+    # Validation split
+    if val_records:
+        val_key = dataset_key.replace(".jsonl", "_val.jsonl")
+        val_lines = [json.dumps(r, ensure_ascii=False) for r in val_records]
+        s3.put_object(
+            Bucket=bucket,
+            Key=val_key,
+            Body="\n".join(val_lines).encode("utf-8"),
+            ContentType="application/jsonl",
+        )
+
+    # Create/update dataset record in DB
+    await db.execute(
+        """
+        INSERT INTO datasets (id, tenant_id, project_id, name, format, storage_path,
+                              status, pair_count, stats, config, created_at, updated_at)
+        VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'chatml', $5, 'review_pending',
+                $6, $7::jsonb, '{}'::jsonb, now(), now())
+        ON CONFLICT (id) DO UPDATE SET
+            pair_count = $6, storage_path = $5, status = 'review_pending',
+            stats = $7::jsonb, updated_at = now()
+        """,
+        input.dataset_id,
+        input.tenant_id,
+        input.project_id,
+        f"Dataset for {input.project_id[:8]}",
+        dataset_key,
+        len(chat_records),
+        json.dumps(
+            {
+                "total_pairs": len(chat_records),
+                "train_pairs": len(train_records),
+                "val_pairs": len(val_records),
+                "filtered_out": len(pairs) - len(filtered),
+                "deduplicated": len(filtered) - len(chat_records),
+            }
+        ),
+    )
+
+    activity.logger.info(
+        "Built dataset %s: %d train / %d val pairs (filtered %d)",
+        input.dataset_id,
+        len(train_records),
+        len(val_records),
+        len(pairs) - len(filtered),
+    )
+
+    return BuildDatasetOutput(pair_count=len(chat_records), storage_path=dataset_key)
+
+
+def _filter_pairs(pairs: list[dict]) -> list[dict]:
+    """Basic quality filtering — remove too short/long, empty pairs."""
+    filtered = []
+    for pair in pairs:
+        instruction = pair.get("instruction", "")
+        response = pair.get("response", "")
+
+        # Skip empty
+        if not instruction or not response:
+            continue
+        # Skip very short responses
+        if len(response) < 20:
+            continue
+        # Skip very long responses
+        if len(response) > 5000:
+            continue
+        # Skip very short instructions
+        if len(instruction) < 10:
+            continue
+
+        filtered.append(pair)
+
+    return filtered
+
+
+def _deduplicate(pairs: list[dict]) -> list[dict]:
+    """Remove exact duplicate pairs using content hash."""
+    seen = set()
+    unique = []
+    for pair in pairs:
+        content = pair.get("instruction", "") + "|" + pair.get("response", "")
+        h = hashlib.md5(content.encode()).hexdigest()  # noqa: S324
+        if h not in seen:
+            seen.add(h)
+            unique.append(pair)
+    return unique

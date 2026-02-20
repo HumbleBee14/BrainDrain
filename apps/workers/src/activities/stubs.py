@@ -1,91 +1,51 @@
-"""Stub activities for the ML pipeline.
+"""Stub activities for pipeline stages not yet implemented.
 
-Each activity represents a discrete unit of work. In Phase 1+, these will
-be replaced with actual implementations using Unsloth, distilabel, etc.
-All activities are designed to be idempotent — safe to retry on failure.
+Training, evaluation, and deployment are Phase 2+.
+Parsing, data generation, and dataset building have real implementations
+in their own modules (parse_document.py, generate_pairs.py, etc.).
 """
 
 from dataclasses import dataclass
 
 from temporalio import activity
 
+from src import clients
+
+# ── Document info (lightweight DB lookup for workflows) ──
+
 
 @dataclass
-class ParseDocumentInput:
-    tenant_id: str
+class DocumentInfo:
     document_id: str
+    tenant_id: str
+    project_id: str
     storage_path: str
     mime_type: str
-
-
-@dataclass
-class ParseDocumentOutput:
-    page_count: int
-    language: str | None
-    parse_quality: float
+    status: str
 
 
 @activity.defn
-async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
-    """Parse an uploaded document (PDF, DOCX, etc.) into structured text.
-
-    Phase 1 implementation: MinerU for PDF, python-docx for DOCX, etc.
-    """
-    activity.logger.info("Stub: parse_document for %s", input.document_id)
-    return ParseDocumentOutput(page_count=0, language=None, parse_quality=0.0)
-
-
-@dataclass
-class GenerateSyntheticPairsInput:
-    tenant_id: str
-    project_id: str
-    document_ids: list[str]
-    task_type: str
-    config: dict
-
-
-@dataclass
-class GenerateSyntheticPairsOutput:
-    pair_count: int
-    storage_path: str
+async def get_document_info(document_id: str) -> DocumentInfo:
+    """Fetch document metadata from DB. Used by workflows before calling parse."""
+    db = await clients.get_db()
+    row = await db.fetchrow(
+        "SELECT id, tenant_id, project_id, storage_path, mime_type, status "
+        "FROM documents WHERE id = $1",
+        document_id,
+    )
+    if row is None:
+        raise ValueError(f"Document not found: {document_id}")
+    return DocumentInfo(
+        document_id=str(row["id"]),
+        tenant_id=str(row["tenant_id"]),
+        project_id=str(row["project_id"]),
+        storage_path=row["storage_path"],
+        mime_type=row["mime_type"],
+        status=row["status"],
+    )
 
 
-@activity.defn
-async def generate_synthetic_pairs(
-    input: GenerateSyntheticPairsInput,
-) -> GenerateSyntheticPairsOutput:
-    """Generate instruction/response pairs from parsed documents.
-
-    Phase 1 implementation: distilabel pipelines with LLM-as-judge.
-    """
-    activity.logger.info("Stub: generate_synthetic_pairs for %s", input.project_id)
-    return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
-
-
-@dataclass
-class BuildDatasetInput:
-    tenant_id: str
-    project_id: str
-    dataset_id: str
-    format: str
-    config: dict
-
-
-@dataclass
-class BuildDatasetOutput:
-    pair_count: int
-    storage_path: str
-
-
-@activity.defn
-async def build_dataset(input: BuildDatasetInput) -> BuildDatasetOutput:
-    """Build a training-ready dataset from refined pairs.
-
-    Phase 1 implementation: HuggingFace datasets formatting,
-    train/val split, chat template application.
-    """
-    activity.logger.info("Stub: build_dataset for %s", input.dataset_id)
-    return BuildDatasetOutput(pair_count=0, storage_path="")
+# ── Training (Phase 2) ──
 
 
 @dataclass
@@ -109,13 +69,12 @@ class StartTrainingOutput:
 
 @activity.defn
 async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
-    """Run the fine-tuning job using Unsloth / TRL.
-
-    Phase 1 implementation: Unsloth FastModel for LoRA/QLoRA,
-    TRL SFTTrainer, W&B metrics logging.
-    """
+    """Run the fine-tuning job. Phase 2 implementation."""
     activity.logger.info("Stub: start_training for %s", input.training_job_id)
     return StartTrainingOutput(adapter_path="", adapter_size_bytes=0, metrics={})
+
+
+# ── Evaluation (Phase 3) ──
 
 
 @dataclass
@@ -136,13 +95,12 @@ class RunEvaluationOutput:
 
 @activity.defn
 async def run_evaluation(input: RunEvaluationInput) -> RunEvaluationOutput:
-    """Evaluate a fine-tuned model against held-out data.
-
-    Phase 1 implementation: LLM-as-judge evaluation,
-    task-specific metrics (BLEU, ROUGE, accuracy).
-    """
+    """Evaluate a fine-tuned model. Phase 3 implementation."""
     activity.logger.info("Stub: run_evaluation for %s", input.evaluation_id)
     return RunEvaluationOutput(scores={}, report={})
+
+
+# ── Deployment (Phase 4) ──
 
 
 @dataclass
@@ -162,9 +120,6 @@ class DeployModelOutput:
 
 @activity.defn
 async def deploy_model(input: DeployModelInput) -> DeployModelOutput:
-    """Deploy a fine-tuned model to an inference endpoint.
-
-    Phase 1 implementation: vLLM with LoRA adapter loading.
-    """
+    """Deploy a fine-tuned model. Phase 4 implementation."""
     activity.logger.info("Stub: deploy_model for %s", input.model_id)
     return DeployModelOutput(endpoint_url="", deployment_status="pending")

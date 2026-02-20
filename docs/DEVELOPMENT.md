@@ -12,8 +12,8 @@
 - [Deployment Model](#deployment-model)
 - [Phase Status](#phase-status)
 - [Phase 0: Foundation (COMPLETE)](#phase-0-foundation--complete)
-- [Phase 1: Data Pipeline (NEXT)](#phase-1-data-pipeline--next)
-- [Phase 2: Training Engine](#phase-2-training-engine)
+- [Phase 1: Data Pipeline (COMPLETE)](#phase-1-data-pipeline--complete)
+- [Phase 2: Training Engine (NEXT)](#phase-2-training-engine--next)
 - [Phase 3: Evaluation System](#phase-3-evaluation-system)
 - [Phase 4: Model Deployment](#phase-4-model-deployment)
 - [Phase 5: Product Polish](#phase-5-product-polish)
@@ -29,7 +29,11 @@ Platform/
 ├── docs/                                # ═══ DOCUMENTATION ═══
 │   ├── ARCHITECTURE.md                  #   System architecture, TDRs, component registry
 │   ├── RESEARCH.md                      #   LLM fine-tuning landscape, competitors, GPU infra
-│   └── DEVELOPMENT.md                   #   This file — development tracker
+│   ├── DEVELOPMENT.md                   #   This file — development tracker
+│   ├── phase0/
+│   │   └── PHASE0_COMPLETE.md           #   Phase 0 completion report
+│   └── phase1/
+│       └── PHASE1_COMPLETE.md           #   Phase 1 completion report
 │
 ├── Cargo.toml                           # Rust workspace root (all dep versions centralized)
 ├── package.json                         # JS workspace root (pnpm)
@@ -66,24 +70,32 @@ Platform/
 │       └── src/
 │           ├── main.rs                  #   Server startup, middleware stack, graceful shutdown
 │           ├── config.rs                #   Typed env config (envy + dotenvy)
-│           ├── app_state.rs             #   AppState: DB pool + Redis + S3 + Config
+│           ├── app_state.rs             #   AppState: DB pool + Redis + S3 + Temporal + Config
 │           ├── error.rs                 #   AppError → JSON error envelope {"error":{...}}
 │           ├── auth.rs                  #   Clerk JWT verification + dev token support
 │           ├── middleware.rs            #   CORS, request ID (X-Request-Id), tracing
+│           ├── temporal.rs              #   HTTP-based Temporal client (start workflows, get status)
 │           ├── routes/
 │           │   ├── health.rs            #     GET /health (liveness), GET /ready (readiness)
 │           │   ├── projects.rs          #     CRUD: POST/GET/PUT/DELETE /api/v1/projects
-│           │   └── documents.rs         #     Multipart upload: POST /api/v1/projects/:id/documents
+│           │   ├── documents.rs         #     Multipart upload: POST /api/v1/projects/:id/documents
+│           │   ├── pipeline.rs          #     POST parse, POST refine, GET status
+│           │   └── datasets.rs          #     GET datasets (list, get, preview, parsed content)
 │           ├── services/
 │           │   ├── project_service.rs   #     Business logic (validation, orchestration)
-│           │   └── document_service.rs  #     Upload → S3 → DB, uses ObjectStorage trait
+│           │   ├── document_service.rs  #     Upload → S3 → DB, uses ObjectStorage trait
+│           │   ├── pipeline_service.rs  #     Parse/refine triggers, pipeline status aggregation
+│           │   └── dataset_service.rs   #     Dataset CRUD, S3 preview, presigned URLs
 │           ├── repositories/
 │           │   ├── project_repo.rs      #     SQL queries (ALL require tenant_id — enforced)
-│           │   └── document_repo.rs     #     SQL queries (ALL require tenant_id — enforced)
+│           │   ├── document_repo.rs     #     SQL queries (ALL require tenant_id — enforced)
+│           │   └── dataset_repo.rs      #     Dataset SQL queries (tenant-scoped)
 │           └── dto/
 │               ├── common.rs            #     PaginationParams, PaginatedResponse<T>
 │               ├── project.rs           #     CreateProject, UpdateProject, ProjectResponse
-│               └── document.rs          #     UploadResponse, DocumentResponse
+│               ├── document.rs          #     UploadResponse, DocumentResponse
+│               ├── dataset.rs           #     DatasetResponse
+│               └── pipeline.rs          #     TriggerParse/RefineResponse, PipelineStatus
 │
 ├── apps/                                # ═══ APPLICATIONS ═══
 │   │
@@ -104,30 +116,38 @@ Platform/
 │   │       │       └── projects/
 │   │       │           ├── page.tsx     #       Project list (loading/empty/data states)
 │   │       │           ├── new/         #       Create project form (name, description, task type)
-│   │       │           └── [id]/        #       Project detail (info, doc upload, pipeline, delete)
+│   │       │           └── [id]/
+│   │       │               ├── page.tsx #       Project detail (upload, pipeline, status, actions)
+│   │       │               └── dataset/ #       Dataset review (ChatML pair preview, stats)
 │   │       ├── hooks/
-│   │       │   └── use-projects.ts      #   React Query hooks (list, get, create, delete)
+│   │       │   ├── use-projects.ts      #   React Query hooks (list, get, create, delete)
+│   │       │   ├── use-documents.ts     #   Document list + upload hooks with polling
+│   │       │   ├── use-pipeline.ts      #   Pipeline status + triggers with smart polling
+│   │       │   └── use-datasets.ts      #   Dataset list, detail, preview hooks
 │   │       └── lib/
-│   │           ├── api-client.ts        #   Typed fetch wrapper with Clerk token injection
+│   │           ├── api-client.ts        #   Typed fetch wrapper with auth (projects, docs, pipeline, datasets)
 │   │           └── utils.ts             #   cn() helper (clsx + tailwind-merge)
 │   │
 │   └── workers/                         # Python Temporal ML workers
 │       ├── Dockerfile                   #   2-stage (uv build → python:3.11-slim runtime)
-│       ├── pyproject.toml               #   temporalio, pydantic-settings; ML deps as [ml] extras
+│       ├── pyproject.toml               #   temporalio, pydantic-settings, parsing + LLM deps
 │       └── src/
-│           ├── config.py                #   Worker settings via pydantic-settings
-│           ├── worker.py                #   Temporal worker entrypoint (registers all workflows)
+│           ├── config.py                #   Worker settings (Temporal, DB, S3, Redis, LLM API)
+│           ├── worker.py                #   Temporal worker entrypoint (init clients, register all)
+│           ├── clients.py               #   Shared S3/DB/Redis clients (module-level singletons)
+│           ├── s3_paths.py              #   Tenant-scoped S3 path builders (mirrors Rust)
 │           ├── activities/
-│           │   └── stubs.py             #   6 typed activities with dataclass I/O:
-│           │                            #     parse_document, generate_synthetic_pairs,
-│           │                            #     build_dataset, start_training, run_evaluation,
-│           │                            #     deploy_model
+│           │   ├── stubs.py             #   Stub activities (train, evaluate, deploy — Phase 2+)
+│           │   ├── parse_document.py    #   Document parsing (PDF, DOCX, HTML, MD, TXT, CSV)
+│           │   ├── chunk_text.py        #   Recursive text chunking with overlap
+│           │   ├── generate_pairs.py    #   LLM-powered synthetic pair generation
+│           │   └── build_dataset.py     #   Quality filter, ChatML format, train/val split
 │           └── workflows/
-│               ├── ingest.py            #   Upload → Parse documents
-│               ├── refine.py            #   Parsed docs → Synthetic instruction pairs
-│               ├── train.py             #   Dataset → Fine-tuned LoRA adapter
-│               ├── evaluate.py          #   Model → Scores + evaluation report
-│               └── full_pipeline.py     #   Chains ALL 6 stages end-to-end
+│               ├── ingest.py            #   Upload → Parse documents (implemented)
+│               ├── refine.py            #   Chunk → Generate → Build dataset (implemented)
+│               ├── train.py             #   Dataset → Fine-tuned LoRA adapter (stub)
+│               ├── evaluate.py          #   Model → Scores + evaluation report (stub)
+│               └── full_pipeline.py     #   Chains all stages end-to-end (fixed)
 │
 ├── packages/                            # ═══ SHARED PACKAGES ═══
 │   └── shared-types/                    # TypeScript API types (mirrors Rust DTOs)
@@ -236,8 +256,8 @@ Each has its own `Dockerfile`. They share **zero runtime dependencies** — comm
 | Phase | Status | Focus |
 |---|---|---|
 | **Phase 0: Foundation** | **COMPLETE** | Infrastructure skeleton — everything below |
-| **Phase 1: Data Pipeline** | **NEXT** | Document parsing, synthetic data generation, dataset building |
-| **Phase 2: Training Engine** | PENDING | Unsloth/TRL fine-tuning, GPU orchestration |
+| **Phase 1: Data Pipeline** | **COMPLETE** | Document parsing, synthetic data generation, dataset building |
+| **Phase 2: Training Engine** | **NEXT** | Unsloth/TRL fine-tuning, GPU orchestration |
 | **Phase 3: Evaluation** | PENDING | LLM-as-judge, task-specific metrics, reporting |
 | **Phase 4: Deployment** | PENDING | vLLM inference, LoRA adapter serving, API keys |
 | **Phase 5: Product Polish** | PENDING | Billing, team management, onboarding, dashboards |
@@ -284,28 +304,35 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 
 ### API Endpoints (implemented)
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Liveness check |
-| `GET` | `/ready` | Readiness check (DB + Redis) |
-| `POST` | `/api/v1/projects` | Create project |
-| `GET` | `/api/v1/projects` | List projects (paginated) |
-| `GET` | `/api/v1/projects/:id` | Get project |
-| `PUT` | `/api/v1/projects/:id` | Update project |
-| `DELETE` | `/api/v1/projects/:id` | Soft-delete project |
-| `POST` | `/api/v1/projects/:id/documents` | Upload document (multipart → S3) |
-| `GET` | `/api/v1/projects/:id/documents` | List documents |
-| `GET` | `/api/v1/documents/:id` | Get document |
+| Method | Path | Description | Phase |
+|---|---|---|---|
+| `GET` | `/health` | Liveness check | 0 |
+| `GET` | `/ready` | Readiness check (DB + Redis) | 0 |
+| `POST` | `/api/v1/projects` | Create project | 0 |
+| `GET` | `/api/v1/projects` | List projects (paginated) | 0 |
+| `GET` | `/api/v1/projects/:id` | Get project | 0 |
+| `PUT` | `/api/v1/projects/:id` | Update project | 0 |
+| `DELETE` | `/api/v1/projects/:id` | Soft-delete project | 0 |
+| `POST` | `/api/v1/projects/:id/documents` | Upload document (multipart → S3) | 0 |
+| `GET` | `/api/v1/projects/:id/documents` | List documents | 0 |
+| `GET` | `/api/v1/documents/:id` | Get document | 0 |
+| `POST` | `/api/v1/projects/:id/parse` | Trigger IngestWorkflow | 1 |
+| `POST` | `/api/v1/projects/:id/refine` | Trigger RefineWorkflow | 1 |
+| `GET` | `/api/v1/projects/:id/status` | Aggregate pipeline status | 1 |
+| `GET` | `/api/v1/projects/:id/datasets` | List datasets (paginated) | 1 |
+| `GET` | `/api/v1/datasets/:id` | Get single dataset | 1 |
+| `GET` | `/api/v1/datasets/:id/preview` | Preview dataset rows | 1 |
+| `GET` | `/api/v1/documents/:id/parsed` | Presigned URL for parsed content | 1 |
 
-### Temporal Workflows (stubbed)
+### Temporal Workflows
 
-| Workflow | Stages | Timeout |
+| Workflow | Stages | Status |
 |---|---|---|
-| `IngestWorkflow` | parse_document (per doc) | 10 min/doc |
-| `RefineWorkflow` | generate_synthetic_pairs | 30 min |
-| `TrainWorkflow` | start_training | 6 hours |
-| `EvaluateWorkflow` | run_evaluation | 1 hour |
-| `FullPipelineWorkflow` | All 6 stages chained | Sum of above |
+| `IngestWorkflow` | get_document_info → parse_document (per doc) | Implemented (Phase 1) |
+| `RefineWorkflow` | chunk_text → generate_pairs → build_dataset | Implemented (Phase 1) |
+| `FullPipelineWorkflow` | Ingest → Refine → Train → Evaluate → Deploy | Fixed (Phase 1) |
+| `TrainWorkflow` | start_training | Stub (Phase 2) |
+| `EvaluateWorkflow` | run_evaluation | Stub (Phase 3) |
 
 ### Verification Checklist
 
@@ -319,34 +346,60 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 
 ---
 
-## Phase 1: Data Pipeline — NEXT
+## Phase 1: Data Pipeline — COMPLETE
 
-> Fill in the Temporal activity stubs with actual ML code.
+> Upload a document, parse it, generate training data, review the dataset.
 
-### Goals
+### What Was Built
 
-- Parse uploaded documents into structured text
-- Generate high-quality synthetic instruction/response pairs
-- Build training-ready datasets with proper formatting
+| Step | Component | What It Does |
+|---|---|---|
+| Worker infra | `clients.py`, `s3_paths.py` | Shared S3/DB/Redis clients, tenant-scoped path builders |
+| Document parsing | `activities/parse_document.py` | PDF (PyMuPDF), DOCX (python-docx), HTML, MD, TXT, CSV — with quality scoring + language detection |
+| IngestWorkflow | `workflows/ingest.py` | get_document_info → parse_document per doc, partial failure tolerant |
+| Temporal client | `crates/api/src/temporal.rs` | HTTP-based (no gRPC), start_ingest/start_refine/get_status |
+| API endpoints | `routes/pipeline.rs`, `routes/datasets.rs` | 7 new endpoints: parse/refine triggers, pipeline status, dataset CRUD + preview |
+| Text chunking | `activities/chunk_text.py` | Recursive splitting (paragraphs → sentences), configurable size + overlap |
+| Pair generation | `activities/generate_pairs.py` | OpenAI-compatible LLM API, 3 task types, provider-agnostic |
+| Dataset building | `activities/build_dataset.py` | Quality filtering, dedup, ChatML format, 90/10 train/val split |
+| Frontend upload | `projects/[id]/page.tsx` | Drag-drop upload, doc list with status badges, pipeline status cards |
+| Dataset review | `projects/[id]/dataset/page.tsx` | ChatML pair preview, stats grid, status badges |
+| Status polling | `use-pipeline.ts` | React Query 3s polling when active, auto-stop when idle |
 
-### Work Items
+### API Endpoints (Phase 1)
 
-| Task | File to Modify | ML Library | Status |
-|---|---|---|---|
-| PDF parsing | `activities/stubs.py` → `parse_document` | MinerU | PENDING |
-| DOCX parsing | `activities/stubs.py` → `parse_document` | python-docx | PENDING |
-| Text chunking + quality scoring | `activities/stubs.py` → `parse_document` | custom | PENDING |
-| Synthetic pair generation | `activities/stubs.py` → `generate_synthetic_pairs` | distilabel | PENDING |
-| LLM-as-judge filtering | `activities/stubs.py` → `generate_synthetic_pairs` | distilabel | PENDING |
-| Dataset formatting (chat template) | `activities/stubs.py` → `build_dataset` | HuggingFace datasets | PENDING |
-| Train/val split | `activities/stubs.py` → `build_dataset` | HuggingFace datasets | PENDING |
-| Frontend: document status tracking | `apps/web/` | — | PENDING |
-| Frontend: dataset preview UI | `apps/web/` | — | PENDING |
-| API: dataset endpoints | `crates/api/` | — | PENDING |
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/projects/:id/parse` | Trigger IngestWorkflow for unparsed docs |
+| `POST` | `/api/v1/projects/:id/refine` | Trigger RefineWorkflow for parsed docs |
+| `GET` | `/api/v1/projects/:id/status` | Aggregate pipeline status counts |
+| `GET` | `/api/v1/projects/:id/datasets` | List datasets (paginated) |
+| `GET` | `/api/v1/datasets/:id` | Get single dataset |
+| `GET` | `/api/v1/datasets/:id/preview` | Preview first N rows from JSONL |
+| `GET` | `/api/v1/documents/:id/parsed` | Presigned URL for parsed content |
+
+### Temporal Workflows (Implemented)
+
+| Workflow | Stages | Status |
+|---|---|---|
+| `IngestWorkflow` | `get_document_info` → `parse_document` per doc | Implemented |
+| `RefineWorkflow` | `chunk_text` → `generate_pairs` → `build_dataset` | Implemented |
+| `FullPipelineWorkflow` | Ingest → Refine → Train → Evaluate → Deploy | Fixed (uses RefineWorkflow result) |
+
+### Verification
+
+- [x] `cargo clippy -- -D warnings` — zero warnings
+- [x] `cargo test --workspace` — 20 tests pass
+- [x] `ruff check src/ && ruff format --check src/` — Python clean
+- [x] `tsc --noEmit && eslint src/` — Frontend clean
+- [x] All 6 document formats parse correctly
+- [x] 7 new API endpoints follow Route → Service → Repository pattern
+- [x] All new DB queries enforce `tenant_id`
+- [x] Smart polling stops automatically when pipeline is idle
 
 ---
 
-## Phase 2: Training Engine
+## Phase 2: Training Engine — NEXT
 
 ### Goals
 

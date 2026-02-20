@@ -72,12 +72,10 @@ pub struct Config {
     // ── Temporal ──
     /// Temporal server host:port.
     #[serde(default = "default_temporal_host")]
-    #[allow(dead_code)]
     pub temporal_host: String,
 
     /// Temporal namespace.
     #[serde(default = "default_temporal_namespace")]
-    #[allow(dead_code)]
     pub temporal_namespace: String,
 
     // ── CORS ──
