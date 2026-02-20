@@ -7,6 +7,7 @@ mod middleware;
 mod repositories;
 mod routes;
 mod services;
+mod temporal;
 
 use std::net::SocketAddr;
 

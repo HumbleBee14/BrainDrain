@@ -7,6 +7,18 @@ dependencies = [
     "temporalio>=1.9.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
+    # Document parsing (CPU-only)
+    "pymupdf>=1.24.0",
+    "python-docx>=1.1.0",
+    "beautifulsoup4>=4.12.0",
+    "markdown>=3.6",
+    "langdetect>=1.0.9",
+    # Infrastructure clients
+    "asyncpg>=0.29.0",
+    "boto3>=1.35.0",
+    "redis>=5.0.0",
+    # LLM API (OpenAI-compatible)
+    "httpx>=0.27.0",
 ]
 
 [dependency-groups]

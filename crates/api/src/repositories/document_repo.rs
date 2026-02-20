@@ -82,7 +82,49 @@ impl DocumentRepo {
         Ok(doc)
     }
 
-    /// Update document status.
+    /// List documents by status for a project.
+    pub async fn list_by_status(
+        db: &PgPool,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        status: &str,
+    ) -> Result<Vec<Document>, AppError> {
+        let docs = sqlx::query_as::<_, Document>(
+            r#"
+            SELECT * FROM documents
+            WHERE project_id = $1 AND tenant_id = $2 AND status = $3
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(project_id)
+        .bind(tenant_id)
+        .bind(status)
+        .fetch_all(db)
+        .await?;
+
+        Ok(docs)
+    }
+
+    /// Count documents by status for a project.
+    pub async fn count_by_status(
+        db: &PgPool,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        status: &str,
+    ) -> Result<i64, AppError> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM documents WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
+        )
+        .bind(project_id)
+        .bind(tenant_id)
+        .bind(status)
+        .fetch_one(db)
+        .await?;
+
+        Ok(count)
+    }
+
+    /// Update document status (used by pipeline workflows).
     #[allow(dead_code)]
     pub async fn update_status(
         db: &PgPool,

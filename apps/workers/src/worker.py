@@ -11,13 +11,12 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from src.activities.stubs import (
-    build_dataset,
     deploy_model,
-    generate_synthetic_pairs,
-    parse_document,
+    get_document_info,
     run_evaluation,
     start_training,
 )
+from src.clients import close_clients, init_clients
 from src.config import WorkerSettings
 from src.workflows.evaluate import EvaluateWorkflow
 from src.workflows.full_pipeline import FullPipelineWorkflow
@@ -32,11 +31,21 @@ async def main() -> None:
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger = logging.getLogger("platform.worker")
 
+    # Initialize infrastructure clients (S3, DB, Redis)
+    logger.info("Initializing infrastructure clients...")
+    await init_clients(settings)
+
     logger.info("Connecting to Temporal at %s", settings.temporal_address)
     client = await Client.connect(
         settings.temporal_address,
         namespace=settings.temporal_namespace,
     )
+
+    # Import real activity implementations
+    from src.activities.build_dataset import build_dataset
+    from src.activities.chunk_text import chunk_text
+    from src.activities.generate_pairs import generate_synthetic_pairs
+    from src.activities.parse_document import parse_document
 
     logger.info("Starting worker on queue: %s", settings.temporal_task_queue)
     worker = Worker(
@@ -52,7 +61,9 @@ async def main() -> None:
         activities=[
             parse_document,
             generate_synthetic_pairs,
+            chunk_text,
             build_dataset,
+            get_document_info,
             start_training,
             run_evaluation,
             deploy_model,
@@ -60,7 +71,10 @@ async def main() -> None:
     )
 
     logger.info("Worker started. Waiting for tasks...")
-    await worker.run()
+    try:
+        await worker.run()
+    finally:
+        await close_clients()
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ envy = { workspace = true }
 # Utilities
 bytes = { workspace = true }
 futures = { workspace = true }
+base64 = { workspace = true }
 
 # Internal crates
 platform-shared = { workspace = true }

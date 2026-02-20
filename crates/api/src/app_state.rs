@@ -3,6 +3,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::temporal::TemporalClient;
 
 /// Shared application state available to all route handlers.
 ///
@@ -18,6 +19,7 @@ struct AppStateInner {
     pub db: PgPool,
     pub redis: redis::aio::ConnectionManager,
     pub storage: S3Storage,
+    pub temporal: Option<TemporalClient>,
 }
 
 impl AppState {
@@ -55,12 +57,27 @@ impl AppState {
 
         tracing::info!("S3 client initialized (bucket: {})", &config.s3_bucket);
 
+        // Temporal (optional — API works without it, just can't trigger workflows)
+        let temporal = if !config.temporal_host.is_empty() {
+            let client = TemporalClient::new(
+                &config.temporal_host,
+                &config.temporal_namespace,
+                "ml-pipeline",
+            );
+            tracing::info!("Temporal client configured (host: {})", &config.temporal_host);
+            Some(client)
+        } else {
+            tracing::warn!("Temporal not configured — workflow triggers disabled");
+            None
+        };
+
         Ok(Self {
             inner: Arc::new(AppStateInner {
                 config,
                 db,
                 redis,
                 storage,
+                temporal,
             }),
         })
     }
@@ -79,5 +96,9 @@ impl AppState {
 
     pub fn storage(&self) -> &S3Storage {
         &self.inner.storage
+    }
+
+    pub fn temporal(&self) -> Option<&TemporalClient> {
+        self.inner.temporal.as_ref()
     }
 }
