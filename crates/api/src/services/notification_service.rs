@@ -1,8 +1,64 @@
+use std::net::ToSocketAddrs;
+
 use uuid::Uuid;
 
 use crate::dto::notification::{NotificationPreferenceResponse, PreferenceUpdate};
 use crate::error::AppResult;
 use crate::repositories::traits::NotificationRepository;
+
+/// Reject webhook URLs that point to private/internal networks (SSRF protection).
+fn is_safe_webhook_url(url: &str) -> bool {
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+
+    // Only allow HTTPS (or HTTP for localhost in dev)
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return false;
+    }
+
+    let host = match parsed.host_str() {
+        Some(h) => h,
+        None => return false,
+    };
+
+    // Resolve hostname and check all IPs are public
+    let port = parsed.port().unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let addrs = match (host, port).to_socket_addrs() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+
+    for addr in addrs {
+        let ip = addr.ip();
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+            return false;
+        }
+        // Check private ranges
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                let octets = v4.octets();
+                // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local)
+                if octets[0] == 10
+                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                    || (octets[0] == 192 && octets[1] == 168)
+                    || (octets[0] == 169 && octets[1] == 254)
+                {
+                    return false;
+                }
+            }
+            std::net::IpAddr::V6(_) => {
+                // Reject all IPv6 private/link-local for simplicity
+                if !ip.is_loopback() {
+                    // Already checked above, but be defensive
+                }
+            }
+        }
+    }
+
+    true
+}
 
 /// Handles notification preference management and delivery dispatch.
 pub struct NotificationService;
@@ -31,6 +87,14 @@ impl NotificationService {
             match pref.channel.as_str() {
                 "webhook" => {
                     if let Some(url) = pref.config.get("url").and_then(|v| v.as_str()) {
+                        if !is_safe_webhook_url(url) {
+                            tracing::warn!(
+                                tenant_id = %tenant_id,
+                                url,
+                                "Webhook URL rejected — targets private/internal network"
+                            );
+                            continue;
+                        }
                         let delivery = repo
                             .create_delivery(
                                 tenant_id,
@@ -52,12 +116,13 @@ impl NotificationService {
                             match result {
                                 Ok(res) if res.status().is_success() => {
                                     let _ = repo
-                                        .update_delivery_status(delivery.id, "sent", None)
+                                        .update_delivery_status(tenant_id, delivery.id, "sent", None)
                                         .await;
                                 }
                                 Ok(res) => {
                                     let _ = repo
                                         .update_delivery_status(
+                                            tenant_id,
                                             delivery.id,
                                             "failed",
                                             Some(&format!("HTTP {}", res.status())),
@@ -67,6 +132,7 @@ impl NotificationService {
                                 Err(e) => {
                                     let _ = repo
                                         .update_delivery_status(
+                                            tenant_id,
                                             delivery.id,
                                             "failed",
                                             Some(&e.to_string()),

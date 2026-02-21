@@ -483,11 +483,11 @@ export const api = {
         method: "DELETE",
       }),
 
-    acceptInvitation: (token: string, inviteToken: string, data: { user_id: string; email: string }) =>
+    acceptInvitation: (token: string, inviteToken: string) =>
       request<TeamMember>(`/api/v1/invitations/${inviteToken}/accept`, {
         token,
         method: "POST",
-        body: JSON.stringify(data),
+        body: JSON.stringify({}),
       }),
   },
 

@@ -164,6 +164,7 @@ impl NotificationRepository for PgNotificationRepo {
 
     fn update_delivery_status(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         status: &str,
         error: Option<&str>,
@@ -171,22 +172,20 @@ impl NotificationRepository for PgNotificationRepo {
         let status = status.to_string();
         let error = error.map(|s| s.to_string());
         Box::pin(async move {
-            let sent_at = if status == "sent" { "NOW()" } else { "sent_at" };
-
-            let query = format!(
+            sqlx::query(
                 r#"
                 UPDATE notification_deliveries
-                SET status = $2, last_error = $3, attempts = attempts + 1, sent_at = {sent_at}
-                WHERE id = $1
+                SET status = $3, last_error = $4, attempts = attempts + 1,
+                    sent_at = CASE WHEN $3 = 'sent' THEN NOW() ELSE sent_at END
+                WHERE id = $1 AND tenant_id = $2
                 "#,
-            );
-
-            sqlx::query(&query)
-                .bind(id)
-                .bind(&status)
-                .bind(error.as_deref())
-                .execute(&self.db)
-                .await?;
+            )
+            .bind(id)
+            .bind(tenant_id)
+            .bind(&status)
+            .bind(error.as_deref())
+            .execute(&self.db)
+            .await?;
 
             Ok(())
         })

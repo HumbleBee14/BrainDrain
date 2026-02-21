@@ -73,6 +73,14 @@ fn verify_stripe_signature(payload: &[u8], signature_header: &str, secret: &str)
     let timestamp = timestamp.ok_or(())?;
     let expected_sig = expected_sig.ok_or(())?;
 
+    // Reject events older than 5 minutes to prevent replay attacks.
+    let ts = timestamp.parse::<i64>().map_err(|_| ())?;
+    let now = chrono::Utc::now().timestamp();
+    if (now - ts).abs() > 300 {
+        tracing::warn!("Stripe webhook timestamp too old (replay protection)");
+        return Err(());
+    }
+
     // Build signed payload: "{timestamp}.{body}"
     let mut signed_payload = Vec::with_capacity(timestamp.len() + 1 + payload.len());
     signed_payload.extend_from_slice(timestamp.as_bytes());

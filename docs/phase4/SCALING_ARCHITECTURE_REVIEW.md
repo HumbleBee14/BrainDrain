@@ -32,7 +32,19 @@ The system is remarkably disciplined, showcasing a distributed design treating A
 
 ---
 
-## 3. Scaling to Millions of Users
+## 3. Review of Phase 4b/c (Core Product & UX)
+
+Phase 4b/c successfully transitioned the backend from a raw ML pipeline to a production-ready SaaS. The engineering discipline applied here is exceptional. 
+
+### What Was Engineered Perfectly:
+1. **Raw HTTP Stripe Integration:** Dropping the gigantic `stripe-rust` crate dependency to manually verify the HMAC-SHA256 headers using the `hmac` and `sha2` crates is brilliant. It makes cold-start and compile times significantly faster, while the constant-time comparison (`mac.verify_slice`) remains cryptographically secure against timing attacks.
+2. **RBAC via `require_role()` Middleware Guard:** Placing a simple `require_role(&user, TeamRole::Admin)?` right inside the Axum route handler is the cleanest way to do authorization in Rust. Running it *before* the service logic keeps the core testing decoupled from HTTP routing.
+3. **`tokio::try_join!` for the Dashboard:** Using `try_join!` to run 7 `COUNT(*)` SQL queries in parallel is incredibly idiomatic. This prevents N+1 query patterns and drastically lowers dashboard render latency compared to awaiting them sequentially.
+4. **Best-Effort "Fire-and-Forget" Notifications:** By treating webhook/email delivery as truly async, it prevents transient errors (like a customer's webhook receiver being offline) from crashing your core training engine workflow.
+
+---
+
+## 4. Scaling to Millions of Users
 
 The underlying architecture is fundamentally sound for hyperscale, but true web-scale uncovers bottlenecks that need foresight.
 
@@ -51,7 +63,7 @@ Here are the specific areas that will break under the load of millions of users,
 *   Instead of calling `.create()` per request, send the billing payload down a `tokio::sync::mpsc::Sender`.
 *   Implement a background worker task in `main.rs` that reads from the `Receiver`.
 *   Let the receiver aggregate events in memory into a `Vec<BillingEvent>`.
-*   Every 5 seconds (or when the `Vec` reaches 1,000 items), perform a **bulk insert** (`INSERT INTO billing_events (...) VALUES (...), (...), (...)`). This reduces Postgres transaction volume from 10,000/minute to just 12 bulk inserts per minute. *(Note: This area is currently under development in Phase 4b).*
+*   Every 5 seconds (or when the `Vec` reaches 1,000 items), perform a **bulk insert** (`INSERT INTO billing_events (...) VALUES (...), (...), (...)`). This reduces Postgres transaction volume from 10,000/minute to just 12 bulk inserts per minute. *(Note: This remains unaddressed after Phase 4b/c and is a critical priority for Phase 5 Infrastructure Hardening).*
 
 #### B. The Missing ML Protocols (Python side)
 **Status:** *Completely Fixed in Codebase.*
@@ -83,10 +95,18 @@ Here are the specific areas that will break under the load of millions of users,
 *   **ClickHouse** (an **OLAP** - Online Analytical Processing database) should take over all telemetry. `billing_events`, LLM traces, token usage, and evaluation logs should be streamed into ClickHouse. 
 *   *Industry Precedent:* This exact architectural shift was recently executed by **Langfuse** (the leading open-source LLM observability platform), which migrated its entire backend in v3 from PostgreSQL to ClickHouse to successfully handle billions of LLM traces with low latency. By introducing ClickHouse, BrainDrain can offer users real-time dashboards of their inference costs and token usage over time without adding CPU load to the core PostgreSQL application database.
 
+#### G. Concurrency Limits on `try_join!` (Dashboard Spikes)
+**The Problem:** While `try_join!` is excellent for reducing sequential latency, spinning up 7 parallel queries means 1 HTTP request immediately demands **7 available connections** from the `PgPool`. If 100 users load the dashboard simultaneously (e.g., during a spike), they will demand 700 DB connections instantly. If `sqlx` `max_connections` is 50, requests will deadlock or time out waiting for connection blocks.
+**The Solution:** Implement a Redis cache for dashboard stats with a ~30-second TTL. The first request does the `try_join!`, stores the result in Redis, and subsequent requests within the TTL read from memory instead of the database.
+
+#### H. Stripe Webhook Resiliency for One-Off Payments
+**The Problem:** In `stripe_webhooks.rs`, the `checkout.session.completed` handler currently requires a `subscription` field on the event object. If you ever sell "One-time" credits (e.g., $50 for a batch of extra GPU time) rather than a recurring subscription, the `subscription` string will be `null` and your webhook will fast-fail with a `BAD_REQUEST`.
+**The Solution:** Make the `subscription_id` lookup optional or explicitly match on the checkout session's `mode` (`subscription` vs `payment`) to safely bypass subscription logic for one-off charges.
+
 ---
 
 ## Conclusion
 
-The architecture heading into Phase 4b is remarkably robust. By decoupling the control plane (Rust) from the execution logic (Python), and abstracting ML framework complexities behind Protocols, the application is beautifully separated by domain. 
+The architecture exiting Phase 4c is remarkably robust. By decoupling the control plane (Rust) from the execution logic (Python), securely integrating subscriptions (Stripe/HMAC), and intelligently organizing permissions (RBAC), the application is beautifully separated by domain. 
 
-If the **Bulk DB Inserts for Billing** (currently under development), a **Rust Circuit Breaker for vLLM proxying**, and an eventual graduation to **ClickHouse for telemetry** are finalized, this backend will functionally cap out at the limits of its hardware, rather than its software constraints. This system represents a scaling-ready, enterprise-grade architecture.
+If the **Bulk DB Inserts for Billing**, a **Rust Circuit Breaker for vLLM proxying**, mitigating **try_join! DB spikes**, and an eventual graduation to **ClickHouse for telemetry** are finalized in Phase 5, this backend will functionally cap out at the limits of its hardware, rather than its software constraints. This system represents a scaling-ready, enterprise-grade architecture.

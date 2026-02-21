@@ -532,6 +532,7 @@ pub trait NotificationRepository: Send + Sync {
 
     fn update_delivery_status(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         status: &str,
         error: Option<&str>,

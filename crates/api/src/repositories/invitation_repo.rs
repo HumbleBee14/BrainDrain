@@ -71,6 +71,7 @@ impl InvitationRepository for PgInvitationRepo {
                 SELECT * FROM invitations
                 WHERE tenant_id = $1
                 ORDER BY created_at DESC
+                LIMIT 1000
                 "#,
             )
             .bind(tenant_id)

@@ -28,7 +28,7 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   view_results: "View your trained model",
 };
 
-const STORAGE_KEY = "braindrain_onboarding";
+const STORAGE_KEY = "platform_onboarding";
 
 interface OnboardingState {
   completedSteps: OnboardingStep[];

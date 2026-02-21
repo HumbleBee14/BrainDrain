@@ -25,7 +25,9 @@ pub fn router() -> Router<AppState> {
         .route("/team/members/{user_id}", delete(remove_member))
 }
 
-/// Public route for accepting invitations (mounted separately, no auth required).
+/// Route for accepting invitations (mounted separately — requires auth to
+/// prevent impersonation, but no RBAC role check since the user may not yet
+/// be a team member).
 pub fn public_router() -> Router<AppState> {
     Router::new().route("/invitations/{token}/accept", post(accept_invitation))
 }
@@ -103,15 +105,18 @@ async fn revoke_invitation(
 
 async fn accept_invitation(
     State(state): State<AppState>,
+    user: AuthenticatedUser,
     Path(token): Path<String>,
-    Json(body): Json<AcceptInvitationRequest>,
 ) -> AppResult<(StatusCode, Json<TeamMemberResponse>)> {
+    // user_id comes from the auth token, not the request body —
+    // prevents impersonation attacks where an attacker accepts
+    // an invitation as a different user.
     let member = TeamService::accept_invitation(
         state.team_member_repo(),
         state.invitation_repo(),
         &token,
-        &body.user_id,
-        &body.email,
+        &user.user_id,
+        "", // email not available from JWT — updated on next profile sync
     )
     .await?;
 
@@ -167,9 +172,3 @@ async fn remove_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Request body for accepting an invitation (public endpoint).
-#[derive(Debug, serde::Deserialize)]
-struct AcceptInvitationRequest {
-    user_id: String,
-    email: String,
-}

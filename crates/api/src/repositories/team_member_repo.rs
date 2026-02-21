@@ -105,6 +105,7 @@ impl TeamMemberRepository for PgTeamMemberRepo {
                 SELECT * FROM team_members
                 WHERE tenant_id = $1
                 ORDER BY joined_at ASC
+                LIMIT 1000
                 "#,
             )
             .bind(tenant_id)
@@ -145,11 +146,29 @@ impl TeamMemberRepository for PgTeamMemberRepo {
     fn remove(&self, tenant_id: Uuid, user_id: &str) -> BoxFuture<'_, AppResult<()>> {
         let user_id = user_id.to_string();
         Box::pin(async move {
-            sqlx::query("DELETE FROM team_members WHERE tenant_id = $1 AND user_id = $2")
-                .bind(tenant_id)
-                .bind(&user_id)
-                .execute(&self.db)
-                .await?;
+            // Atomic check: only delete if the member is NOT the last owner.
+            // The subquery prevents TOCTOU races where concurrent requests
+            // both pass the owner check and remove the last owner.
+            let result = sqlx::query(
+                r#"
+                DELETE FROM team_members
+                WHERE tenant_id = $1 AND user_id = $2
+                  AND NOT (
+                    role = 'owner'
+                    AND (SELECT COUNT(*) FROM team_members WHERE tenant_id = $1 AND role = 'owner') <= 1
+                  )
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(&user_id)
+            .execute(&self.db)
+            .await?;
+
+            if result.rows_affected() == 0 {
+                return Err(crate::error::AppError::BadRequest {
+                    message: "Member not found or cannot remove the last owner".to_string(),
+                });
+            }
 
             Ok(())
         })

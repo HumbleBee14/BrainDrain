@@ -88,7 +88,7 @@ BrainDrain/
 | `crates/api/src/repositories/model_repo.rs` | Added `count_by_tenant()` and `count_by_tenant_deployment_status()` |
 | `crates/api/src/repositories/evaluation_repo.rs` | Added `count_by_tenant()` |
 | `crates/api/src/app_state.rs` | Wired `team_member_repo`, `invitation_repo`, `tenant_repo`, `notification_repo`, `billing_provider` (all `Arc<dyn Trait>`) |
-| `crates/api/src/auth.rs` | Added `role: TeamRole` to `AuthenticatedUser`; Redis-cached role lookup (5-min TTL) in `FromRequestParts` |
+| `crates/api/src/auth.rs` | Added `role: TeamRole` to `AuthenticatedUser`; DB role lookup + owner auto-bootstrap in `FromRequestParts` |
 | `crates/api/src/config.rs` | Added 5 Stripe config fields (`stripe_secret_key`, `stripe_webhook_secret`, `stripe_price_*`) |
 | `crates/api/src/main.rs` | Registered `rbac` module |
 | `crates/api/src/routes/mod.rs` | Registered `dashboard`, `notifications`, `stripe_webhooks`, `team` modules; `stripe_webhooks` merged at top level |
@@ -234,15 +234,18 @@ pub fn require_role(user: &AuthenticatedUser, minimum: TeamRole) -> AppResult<()
 
 All GET / list endpoints are implicitly available to Viewer and above (no `require_role` needed since auth middleware enforces team membership).
 
-### Role Lookup + Redis Caching
+### Role Lookup + Owner Auto-Bootstrap
 
 In `auth.rs`, `AuthenticatedUser::from_request_parts()` was extended:
 
 1. Extract JWT → get `user_id` + `tenant_id`
-2. Look up `team_role:{tenant_id}:{user_id}` in Redis
-3. Cache miss → query `team_members` table → cache for 5 minutes
-4. No team_member row + zero members for tenant → auto-bootstrap as Owner
-5. No team_member row + members exist → `Forbidden`
+2. Query `team_members` table via `get_role(tenant_id, user_id)` for the user's role
+3. Role found → parse and assign to `user.role`
+4. No team_member row + `count_by_tenant() == 0` → auto-create as Owner (first user bootstrap)
+5. No team_member row + members exist → `Forbidden` ("Ask an admin for an invitation")
+6. Dev tokens (`dev_{tenant}_{user}`) skip lookup entirely and keep `Owner` role
+
+The DB query runs on every request. A future optimization would add Redis caching with a short TTL (e.g., `team_role:{tenant_id}:{user_id}` → role string, 5-min expiry) to avoid per-request DB hits — listed in Known Limitations.
 
 ### Team Service Business Rules
 
@@ -330,7 +333,7 @@ pub struct PlanLimits {
 }
 ```
 
-Enforced before resource creation via `PlanService::check_limit()`. Returns `AppError::PaymentRequired` (402) when limit exceeded.
+Enforced before resource creation via `PlanService::check_limit()`. Returns `AppError::Forbidden` (403) with a descriptive message ("Plan limit reached: maximum N resources on your current plan") when limit exceeded. A future improvement could add an `AppError::PaymentRequired` (402) variant for clearer frontend handling.
 
 ### Configuration
 
@@ -630,7 +633,7 @@ Pages call `markStepComplete()` after successful actions:
 
 1. **RBAC in route handlers via `require_role()`** — One-line guard at the top of each handler. Keeps services role-agnostic (testable without auth context). Role checked after auth middleware extracts the user, before any business logic runs.
 
-2. **Redis-cached role lookup (5-min TTL)** — Role is fetched from `team_members` table on first request, then cached at `team_role:{tenant_id}:{user_id}`. Avoids a DB query on every API call. Cache is short-lived enough that role changes take effect within minutes.
+2. **Direct DB role lookup per request** — Role is fetched from `team_members` table via `get_role()` on every authenticated request. Simple and correct. A Redis cache with short TTL is a future optimization if role lookups become a bottleneck — listed in Known Limitations.
 
 3. **Owner bootstrap on first request** — When `count_by_tenant() == 0`, the first authenticated user is auto-created as Owner. Uses `ON CONFLICT DO NOTHING` to handle race conditions when multiple requests arrive simultaneously for a new tenant.
 
@@ -679,7 +682,7 @@ Pages call `markStepComplete()` after successful actions:
 | Area | Current State | Future Improvement |
 |---|---|---|
 | **Email notifications** | Stubbed (`tracing::info!`) | Integrate Resend/SendGrid behind `EmailSender` trait |
-| **Role cache invalidation** | 5-min TTL only | Publish role change events to Redis pub/sub for instant cache invalidation |
+| **Role lookup caching** | Direct DB query per request | Add Redis cache with short TTL (`team_role:{tenant_id}:{user_id}`) to avoid per-request DB hits |
 | **Invitation emails** | Token returned in API response | Send actual email with invite link on creation |
 | **Webhook retries** | Single attempt, failure logged | Background retry queue with exponential backoff |
 | **Plan limit enforcement** | Checked on resource creation | Also enforce at upload (storage quota) and inference (token quota) |

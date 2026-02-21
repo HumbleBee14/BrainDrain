@@ -19,10 +19,7 @@ export default function AcceptInvitePage() {
     try {
       const authToken = await getToken();
       if (!authToken) throw new Error("Not authenticated");
-      await api.team.acceptInvitation(authToken, token, {
-        user_id: user.id,
-        email: user.primaryEmailAddress?.emailAddress || "",
-      });
+      await api.team.acceptInvitation(authToken, token);
       setStatus("success");
       setTimeout(() => router.push("/dashboard"), 2000);
     } catch (e) {
