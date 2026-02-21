@@ -41,6 +41,12 @@ pub const API_KEY_PREFIX: &str = "pl_sk_";
 /// Default rate limit per API key (requests per minute).
 pub const DEFAULT_RATE_LIMIT_RPM: u32 = 60;
 
+/// Redis key prefix for IP-based rate limiting.
+pub const REDIS_IP_RATE_LIMIT_PREFIX: &str = "ip_rl:";
+
+/// Default rate limit per IP address (requests per minute).
+pub const DEFAULT_IP_RATE_LIMIT_RPM: u32 = 200;
+
 /// GPU hourly rates (USD) for training cost estimation.
 /// These are approximate market rates as of early 2026.
 /// Order matches `GpuClass` enum variants.

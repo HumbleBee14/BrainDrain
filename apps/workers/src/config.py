@@ -36,6 +36,7 @@ class WorkerSettings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    log_format: str = "json"  # "json" (production) | "text" (local dev)
 
     # Observability (OTEL)
     otel_enabled: bool = False

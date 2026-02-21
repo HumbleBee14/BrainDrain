@@ -1,13 +1,15 @@
+use std::net::SocketAddr;
 use std::time::Instant;
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::header::{
     CONTENT_SECURITY_POLICY, REFERRER_POLICY, STRICT_TRANSPORT_SECURITY, X_CONTENT_TYPE_OPTIONS,
     X_FRAME_OPTIONS,
 };
 use axum::http::{HeaderName, HeaderValue, Request, Response};
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
@@ -177,6 +179,149 @@ pub async fn http_metrics(
     response
 }
 
+// -- IP Rate Limiting --
+
+/// Configuration for IP-based rate limiting.
+/// Constructed once at startup, passed to the middleware via State.
+#[derive(Clone)]
+pub struct IpRateLimiter {
+    redis: redis::aio::ConnectionManager,
+    rpm: u32,
+    enabled: bool,
+}
+
+impl IpRateLimiter {
+    pub fn new(redis: redis::aio::ConnectionManager, config: &Config) -> Self {
+        Self {
+            redis,
+            rpm: config.rate_limit_rpm,
+            enabled: config.rate_limit_enabled,
+        }
+    }
+}
+
+/// Extract the client IP address from the request.
+///
+/// Priority: X-Forwarded-For (first IP) > X-Real-IP > peer socket address > "unknown".
+fn extract_client_ip(request: &Request<Body>) -> String {
+    // X-Forwarded-For: client, proxy1, proxy2
+    if let Some(xff) = request.headers().get("x-forwarded-for")
+        && let Ok(value) = xff.to_str()
+        && let Some(first_ip) = value.split(',').next()
+    {
+        let ip = first_ip.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
+
+    // X-Real-IP (single IP, set by nginx)
+    if let Some(real_ip) = request.headers().get("x-real-ip")
+        && let Ok(value) = real_ip.to_str()
+    {
+        let ip = value.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
+
+    // Fallback: peer socket address from ConnectInfo
+    if let Some(connect_info) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
+        return connect_info.0.ip().to_string();
+    }
+
+    "unknown".to_string()
+}
+
+/// Middleware that enforces per-IP rate limiting using Redis.
+///
+/// Uses the same INCR + EXPIRE sliding window pattern as API key rate limiting.
+/// Best-effort: if Redis is unreachable, the request is allowed through.
+pub async fn ip_rate_limit(
+    State(limiter): State<IpRateLimiter>,
+    request: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    if !limiter.enabled {
+        return next.run(request).await;
+    }
+
+    let client_ip = extract_client_ip(&request);
+
+    // Build Redis key: ip_rl:{ip}:{YYYYMMDDHHMM}
+    let minute = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
+    let redis_key = format!(
+        "{}{}:{}",
+        platform_shared::constants::REDIS_IP_RATE_LIMIT_PREFIX,
+        client_ip,
+        minute,
+    );
+
+    // Best-effort: if Redis fails, allow the request
+    let mut redis = limiter.redis.clone();
+    let count: i64 = match redis::cmd("INCR")
+        .arg(&redis_key)
+        .query_async::<i64>(&mut redis)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "IP rate limiter: Redis INCR failed, allowing request");
+            return next.run(request).await;
+        }
+    };
+
+    // Set TTL on first request in this window
+    if count == 1 {
+        let _: Result<(), redis::RedisError> = redis::cmd("EXPIRE")
+            .arg(&redis_key)
+            .arg(60)
+            .query_async(&mut redis)
+            .await;
+    }
+
+    let remaining = (limiter.rpm as i64 - count).max(0);
+
+    if count > limiter.rpm as i64 {
+        tracing::warn!(
+            client_ip = %client_ip,
+            count = count,
+            limit = limiter.rpm,
+            "IP rate limit exceeded"
+        );
+
+        let mut response = crate::error::AppError::RateLimited.into_response();
+        let headers = response.headers_mut();
+        headers.insert(
+            HeaderName::from_static("retry-after"),
+            HeaderValue::from_static("60"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-ratelimit-limit"),
+            HeaderValue::from(limiter.rpm),
+        );
+        headers.insert(
+            HeaderName::from_static("x-ratelimit-remaining"),
+            HeaderValue::from(0u32),
+        );
+        return response;
+    }
+
+    // Run the request, then attach rate limit headers to the response
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("x-ratelimit-limit"),
+        HeaderValue::from(limiter.rpm),
+    );
+    headers.insert(
+        HeaderName::from_static("x-ratelimit-remaining"),
+        HeaderValue::from(remaining as u32),
+    );
+
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +344,43 @@ mod tests {
             "default-src 'self'; script-src 'self' cdn.example.com"
         );
         assert_eq!(config.hsts_value, "max-age=86400; includeSubDomains");
+    }
+
+    // -- IP extraction tests --
+
+    #[test]
+    fn extract_ip_from_xff_header() {
+        let req = Request::builder()
+            .header("x-forwarded-for", "203.0.113.50, 70.41.3.18, 150.172.238.178")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req), "203.0.113.50");
+    }
+
+    #[test]
+    fn extract_ip_from_x_real_ip() {
+        let req = Request::builder()
+            .header("x-real-ip", "10.0.0.1")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req), "10.0.0.1");
+    }
+
+    #[test]
+    fn extract_ip_xff_takes_priority() {
+        let req = Request::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .header("x-real-ip", "5.6.7.8")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req), "1.2.3.4");
+    }
+
+    #[test]
+    fn extract_ip_fallback_to_unknown() {
+        let req = Request::builder()
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(extract_client_ip(&req), "unknown");
     }
 }

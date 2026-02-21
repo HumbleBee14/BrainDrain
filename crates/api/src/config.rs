@@ -88,6 +88,15 @@ pub struct Config {
     #[serde(default = "default_cors_origins")]
     pub cors_origins: String,
 
+    // ── IP Rate Limiting ──
+    /// Whether global IP-based rate limiting is enabled.
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+
+    /// Maximum requests per minute per IP address.
+    #[serde(default = "default_rate_limit_rpm")]
+    pub rate_limit_rpm: u32,
+
     // ── Security Headers ──
     /// Content-Security-Policy header value.
     #[serde(default = "default_csp_policy")]
@@ -177,4 +186,10 @@ fn default_hsts_max_age() -> u64 {
 }
 fn default_otel_endpoint() -> String {
     "http://localhost:4317".to_string()
+}
+fn default_rate_limit_enabled() -> bool {
+    true
+}
+fn default_rate_limit_rpm() -> u32 {
+    200
 }

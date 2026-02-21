@@ -55,14 +55,20 @@ async fn main() -> anyhow::Result<()> {
         config.security_hsts_max_age,
     );
     let http_metrics = middleware::HttpMetrics::new(&config);
+    let ip_rate_limiter = middleware::IpRateLimiter::new(state.redis(), &config);
 
     // Build router (layers applied outside-in: last .layer() is outermost)
+    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → handler
     let app = routes::router()
         .with_state(state)
         .layer(propagate_request_id)
         .layer(axum::middleware::from_fn_with_state(
             http_metrics,
             middleware::http_metrics,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            ip_rate_limiter,
+            middleware::ip_rate_limit,
         ))
         .layer(middleware::trace_layer())
         .layer(axum::middleware::from_fn_with_state(
@@ -78,9 +84,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(%addr, "Server listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     tracing::info!("Server shutdown complete");
     Ok(())

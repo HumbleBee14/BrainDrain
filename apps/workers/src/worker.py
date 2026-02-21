@@ -29,6 +29,38 @@ from src.workflows.train_iterative import TrainIterativeWorkflow
 from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 
+def setup_logging(settings: WorkerSettings) -> None:
+    """Configure structured logging for all platform loggers.
+
+    Uses JSON format by default for production (machine-parseable, Loki-friendly).
+    Set APP_LOG_FORMAT=text for human-readable output in development.
+    """
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, settings.log_level, logging.INFO))
+
+    # Remove any existing handlers (prevent duplicate output)
+    root.handlers.clear()
+
+    handler = logging.StreamHandler()
+
+    if settings.log_format.lower() == "text":
+        formatter = logging.Formatter(
+            "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        )
+    else:
+        from pythonjsonlogger.json import JsonFormatter
+
+        formatter = JsonFormatter(
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            rename_fields={"asctime": "timestamp", "levelname": "level", "name": "logger"},
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
+        )
+
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+
+
 def init_otel(settings: WorkerSettings) -> Sequence[Interceptor]:
     """Initialize OpenTelemetry tracing if enabled.
 
@@ -58,6 +90,11 @@ def init_otel(settings: WorkerSettings) -> Sequence[Interceptor]:
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
 
+        # Inject trace_id / span_id into all log records
+        from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
+        LoggingInstrumentor().instrument(set_logging_format=False)
+
         logging.getLogger("platform.worker").info(
             "OpenTelemetry export enabled → %s", settings.otel_endpoint
         )
@@ -78,7 +115,7 @@ async def main() -> None:
         os.environ["HF_TOKEN"] = settings.hf_token
     os.environ["HF_HOME"] = settings.model_cache_dir
 
-    logging.basicConfig(level=getattr(logging, settings.log_level))
+    setup_logging(settings)
     logger = logging.getLogger("platform.worker")
 
     # Initialize OpenTelemetry (best-effort, never blocks startup)
