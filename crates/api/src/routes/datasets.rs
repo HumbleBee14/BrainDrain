@@ -86,20 +86,12 @@ async fn get_parsed_content(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ParsedContentResponse>> {
-    let doc = crate::services::document_service::DocumentService::get(
-        state.db(),
-        user.tenant_id,
-        id,
-    )
-    .await?;
+    let doc =
+        crate::services::document_service::DocumentService::get(state.db(), user.tenant_id, id)
+            .await?;
 
-    let url = DatasetService::get_parsed_url(
-        state.storage(),
-        user.tenant_id,
-        doc.project_id,
-        id,
-    )
-    .await?;
+    let url =
+        DatasetService::get_parsed_url(state.storage(), user.tenant_id, doc.project_id, id).await?;
 
     Ok(Json(ParsedContentResponse { url }))
 }

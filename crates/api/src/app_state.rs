@@ -64,7 +64,10 @@ impl AppState {
                 &config.temporal_namespace,
                 "ml-pipeline",
             );
-            tracing::info!("Temporal client configured (host: {})", &config.temporal_host);
+            tracing::info!(
+                "Temporal client configured (host: {})",
+                &config.temporal_host
+            );
             Some(client)
         } else {
             tracing::warn!("Temporal not configured — workflow triggers disabled");

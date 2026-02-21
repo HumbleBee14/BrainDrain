@@ -79,11 +79,7 @@ impl TemporalClient {
         self.start_workflow(
             "IngestWorkflow",
             &workflow_id,
-            serde_json::json!([
-                tenant_id.to_string(),
-                project_id.to_string(),
-                doc_ids,
-            ]),
+            serde_json::json!([tenant_id.to_string(), project_id.to_string(), doc_ids,]),
         )
         .await
     }

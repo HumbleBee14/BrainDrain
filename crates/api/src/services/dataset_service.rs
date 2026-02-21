@@ -35,11 +35,7 @@ impl DatasetService {
     }
 
     /// Get a single dataset.
-    pub async fn get(
-        db: &PgPool,
-        tenant_id: Uuid,
-        dataset_id: Uuid,
-    ) -> AppResult<DatasetResponse> {
+    pub async fn get(db: &PgPool, tenant_id: Uuid, dataset_id: Uuid) -> AppResult<DatasetResponse> {
         let dataset = DatasetRepo::get_by_id(db, tenant_id, dataset_id)
             .await?
             .ok_or(AppError::NotFound {
@@ -91,10 +87,7 @@ impl DatasetService {
     ) -> AppResult<String> {
         let path = s3_paths::parsed_path(tenant_id, project_id, document_id);
 
-        let exists = storage
-            .exists(&path)
-            .await
-            .map_err(AppError::Storage)?;
+        let exists = storage.exists(&path).await.map_err(AppError::Storage)?;
 
         if !exists {
             return Err(AppError::NotFound {

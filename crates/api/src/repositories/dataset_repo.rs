@@ -42,13 +42,12 @@ impl DatasetRepo {
         tenant_id: Uuid,
         dataset_id: Uuid,
     ) -> Result<Option<Dataset>, AppError> {
-        let dataset = sqlx::query_as::<_, Dataset>(
-            "SELECT * FROM datasets WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(dataset_id)
-        .bind(tenant_id)
-        .fetch_optional(db)
-        .await?;
+        let dataset =
+            sqlx::query_as::<_, Dataset>("SELECT * FROM datasets WHERE id = $1 AND tenant_id = $2")
+                .bind(dataset_id)
+                .bind(tenant_id)
+                .fetch_optional(db)
+                .await?;
 
         Ok(dataset)
     }

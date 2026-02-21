@@ -6,8 +6,8 @@ use crate::dto::pipeline::{
     TriggerRefineResponse,
 };
 use crate::error::{AppError, AppResult};
-use crate::repositories::document_repo::DocumentRepo;
 use crate::repositories::dataset_repo::DatasetRepo;
+use crate::repositories::document_repo::DocumentRepo;
 use crate::temporal::TemporalClient;
 
 /// Business logic for pipeline orchestration.
@@ -43,7 +43,9 @@ impl PipelineService {
         let result = temporal
             .start_ingest(tenant_id, project_id, doc_ids)
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to start IngestWorkflow: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to start IngestWorkflow: {e}"))
+            })?;
 
         tracing::info!(
             project_id = %project_id,
@@ -87,7 +89,9 @@ impl PipelineService {
         let result = temporal
             .start_refine(tenant_id, project_id, doc_ids, task_type, config)
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to start RefineWorkflow: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to start RefineWorkflow: {e}"))
+            })?;
 
         tracing::info!(
             project_id = %project_id,
