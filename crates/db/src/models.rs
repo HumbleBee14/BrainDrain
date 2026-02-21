@@ -148,3 +148,15 @@ pub struct BillingEvent {
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub actor_id: String,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: Option<Uuid>,
+    pub metadata: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}

@@ -10,6 +10,7 @@ use crate::dto::pipeline::{
     ProjectPipelineStatus, TriggerParseResponse, TriggerRefineRequest, TriggerRefineResponse,
 };
 use crate::error::AppResult;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::pipeline_service::PipelineService;
 
 /// Pipeline trigger and status routes.
@@ -36,6 +37,16 @@ async fn trigger_parse(
     )
     .await?;
 
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "trigger_parse",
+        "project",
+        Some(project_id),
+        serde_json::json!({"document_count": result.document_count}),
+    )
+    .await;
+
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
@@ -59,6 +70,16 @@ async fn trigger_refine(
         body.config,
     )
     .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "trigger_refine",
+        "project",
+        Some(project_id),
+        serde_json::json!({"task_type": task_type, "document_count": result.document_count}),
+    )
+    .await;
 
     Ok((StatusCode::ACCEPTED, Json(result)))
 }

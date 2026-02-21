@@ -1,5 +1,5 @@
 use platform_db::models::{
-    ApiKey, BillingEvent, Dataset, Document, Evaluation, Model, Project, TrainingJob,
+    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Model, Project, TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
@@ -329,4 +329,45 @@ pub trait BillingEventRepository: Send + Sync {
         tenant_id: Uuid,
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<UsageSummary>>;
+}
+
+/// Contract for audit log database operations.
+///
+/// Append-only, tenant-scoped. Follows the same pattern as BillingEventRepository.
+#[allow(clippy::too_many_arguments)]
+pub trait AuditLogRepository: Send + Sync {
+    fn create(
+        &self,
+        tenant_id: Uuid,
+        actor_id: &str,
+        action: &str,
+        resource_type: &str,
+        resource_id: Option<Uuid>,
+        metadata: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<AuditLog>>;
+
+    fn list_by_tenant(
+        &self,
+        tenant_id: Uuid,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>>;
+
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn list_by_resource(
+        &self,
+        tenant_id: Uuid,
+        resource_type: &str,
+        resource_id: Uuid,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>>;
+
+    fn count_by_resource(
+        &self,
+        tenant_id: Uuid,
+        resource_type: &str,
+        resource_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<i64>>;
 }

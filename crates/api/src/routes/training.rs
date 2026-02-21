@@ -14,6 +14,7 @@ use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::model::ModelResponse;
 use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
 use crate::error::AppResult;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
 use crate::services::training_job_service::TrainingJobService;
 
@@ -47,6 +48,7 @@ async fn create_training_job(
     Path(project_id): Path<Uuid>,
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
+    let base_model = body.base_model.clone();
     let result = TrainingJobService::create(
         state.training_job_repo(),
         state.dataset_repo(),
@@ -56,6 +58,16 @@ async fn create_training_job(
         body,
     )
     .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "create",
+        "training_job",
+        result.id.parse().ok(),
+        serde_json::json!({"base_model": base_model, "project_id": project_id.to_string()}),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(result)))
 }
@@ -96,6 +108,15 @@ async fn cancel_training_job(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
     let job = TrainingJobService::cancel(state.training_job_repo(), user.tenant_id, id).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "cancel",
+        "training_job",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(job))
 }
 

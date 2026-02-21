@@ -9,6 +9,7 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::api_key::{ApiKeyResponse, CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::error::AppResult;
 use crate::services::api_key_service::ApiKeyService;
+use crate::services::audit_logger::AuditLogger;
 
 /// API key routes.
 pub fn router() -> Router<AppState> {
@@ -36,6 +37,16 @@ async fn create_api_key(
     )
     .await?;
 
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "create",
+        "api_key",
+        result.id.parse().ok(),
+        serde_json::json!({"model_id": model_id.to_string(), "key_prefix": result.key_prefix}),
+    )
+    .await;
+
     Ok((StatusCode::CREATED, Json(result)))
 }
 
@@ -56,5 +67,14 @@ async fn revoke_api_key(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiKeyResponse>> {
     let key = ApiKeyService::revoke(state.api_key_repo(), user.tenant_id, id).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "revoke",
+        "api_key",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(key))
 }

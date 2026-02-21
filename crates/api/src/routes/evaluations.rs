@@ -9,6 +9,7 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::evaluation::{CreateEvaluationRequest, EvaluationResponse};
 use crate::error::AppResult;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::evaluation_service::EvaluationService;
 
 /// Evaluation routes.
@@ -39,6 +40,16 @@ async fn create_evaluation(
         body,
     )
     .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "create",
+        "evaluation",
+        result.id.parse().ok(),
+        serde_json::json!({"model_id": model_id.to_string()}),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(result)))
 }

@@ -106,7 +106,7 @@ class GeneratePairsActivity:
                 )
 
                 try:
-                    pairs = await _call_llm(http, settings, prompt)
+                    pairs = await self.infra.circuit_breaker.call(_call_llm, http, settings, prompt)
                     for pair in pairs:
                         all_pairs.append(
                             {

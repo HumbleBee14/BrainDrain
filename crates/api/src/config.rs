@@ -87,6 +87,33 @@ pub struct Config {
     /// Comma-separated list of allowed CORS origins.
     #[serde(default = "default_cors_origins")]
     pub cors_origins: String,
+
+    // ── IP Rate Limiting ──
+    /// Whether global IP-based rate limiting is enabled.
+    #[serde(default = "default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+
+    /// Maximum requests per minute per IP address.
+    #[serde(default = "default_rate_limit_rpm")]
+    pub rate_limit_rpm: u32,
+
+    // ── Security Headers ──
+    /// Content-Security-Policy header value.
+    #[serde(default = "default_csp_policy")]
+    pub security_csp_policy: String,
+
+    /// HSTS max-age in seconds (1 year default).
+    #[serde(default = "default_hsts_max_age")]
+    pub security_hsts_max_age: u64,
+
+    // ── Observability (OTEL) ──
+    /// Whether OpenTelemetry export is enabled.
+    #[serde(default)]
+    pub otel_enabled: bool,
+
+    /// OTEL Collector gRPC endpoint.
+    #[serde(default = "default_otel_endpoint")]
+    pub otel_endpoint: String,
 }
 
 impl Config {
@@ -150,4 +177,19 @@ fn default_vllm_api_url() -> String {
 }
 fn default_cors_origins() -> String {
     "http://localhost:3000".to_string()
+}
+fn default_csp_policy() -> String {
+    "default-src 'self'".to_string()
+}
+fn default_hsts_max_age() -> u64 {
+    31536000
+}
+fn default_otel_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+fn default_rate_limit_enabled() -> bool {
+    true
+}
+fn default_rate_limit_rpm() -> u32 {
+    200
 }

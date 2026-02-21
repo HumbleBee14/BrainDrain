@@ -1,4 +1,5 @@
 pub mod api_key_service;
+pub mod audit_logger;
 pub mod dataset_service;
 pub mod deployment_service;
 pub mod document_service;

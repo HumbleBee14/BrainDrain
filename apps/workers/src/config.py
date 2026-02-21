@@ -36,6 +36,16 @@ class WorkerSettings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    log_format: str = "json"  # "json" (production) | "text" (local dev)
+
+    # Observability (OTEL)
+    otel_enabled: bool = False
+    otel_endpoint: str = "http://localhost:4317"
+
+    # Circuit breaker (LLM API resilience)
+    circuit_breaker_enabled: bool = True
+    circuit_breaker_fail_max: int = 5
+    circuit_breaker_reset_timeout: int = 30
 
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 

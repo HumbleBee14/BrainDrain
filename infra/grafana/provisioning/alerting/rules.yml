@@ -1,0 +1,135 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Platform Alerts
+    folder: Platform
+    interval: 1m
+    rules:
+      - uid: high-error-rate
+        title: "High API Error Rate"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "sum(rate(http_server_request_duration_seconds_count{http_status_code=~\"5..\"}[5m])) / sum(rate(http_server_request_duration_seconds_count[5m])) * 100"
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5]
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx error rate exceeds 5%"
+          description: "The API error rate is {{ $value }}%, which exceeds the 5% threshold."
+
+      - uid: high-p99-latency
+        title: "High API P99 Latency"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))"
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API P99 latency exceeds 2 seconds"
+          description: "P99 latency is {{ $value }}s, which exceeds the 2s threshold."
+
+      - uid: temporal-queue-backup
+        title: "Temporal Task Queue Backup"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "max(temporal_task_queue_depth)"
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [500]
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Temporal task queue has high backlog"
+          description: "Task queue depth is {{ $value }}, indicating workers may be overwhelmed."
+
+      - uid: training-job-failures
+        title: "Training Job Failures"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: "sum(increase(training_jobs_total{status=\"failed\"}[1h]))"
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: C
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Multiple training job failures"
+          description: "{{ $value }} training jobs have failed in the last hour."

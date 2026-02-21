@@ -1,17 +1,23 @@
-.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen
+.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability
 
 # Start all infrastructure (PostgreSQL, Redis, MinIO)
 infra:
+	docker network create platform-net 2>/dev/null || true
 	docker compose up -d
 
 # Start Temporal (separate because it's heavyweight)
 temporal:
 	docker compose -f infra/temporal/docker-compose.temporal.yml up -d
 
+# Start observability stack (OTEL Collector, Prometheus, Tempo, Loki, Grafana)
+observability:
+	docker compose -f infra/otel/docker-compose.otel.yml up -d
+
 # Stop all infrastructure
 infra-down:
 	docker compose down
 	docker compose -f infra/temporal/docker-compose.temporal.yml down
+	docker compose -f infra/otel/docker-compose.otel.yml down
 
 # Run database migrations
 migrate:

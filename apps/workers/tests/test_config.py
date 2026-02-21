@@ -1,4 +1,5 @@
 """Tests for worker configuration validation."""
+
 import pytest
 from pydantic import ValidationError
 

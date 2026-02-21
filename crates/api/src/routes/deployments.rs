@@ -7,6 +7,7 @@ use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::model::ModelResponse;
 use crate::error::AppResult;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::deployment_service::{DeploymentService, DeploymentStatusResponse};
 
 /// Deployment management routes.
@@ -34,6 +35,15 @@ async fn deploy_model(
         model_id,
     )
     .await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "deploy",
+        "model",
+        Some(model_id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(result))
 }
 
@@ -46,6 +56,15 @@ async fn undeploy_model(
     let result =
         DeploymentService::undeploy(state.model_repo(), state.config(), user.tenant_id, model_id)
             .await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "undeploy",
+        "model",
+        Some(model_id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(result))
 }
 

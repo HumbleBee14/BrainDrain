@@ -1,5 +1,4 @@
 """Tests for document parsing activity -- parser logic only (no S3/DB)."""
-import pytest
 
 # Import the internal parser functions directly
 from src.activities.parse_document import (

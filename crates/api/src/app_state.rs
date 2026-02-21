@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::auth::{AuthProviderChain, ClerkAuthProvider};
 use crate::config::Config;
 use crate::repositories::api_key_repo::PgApiKeyRepo;
+use crate::repositories::audit_log_repo::PgAuditLogRepo;
 use crate::repositories::billing_event_repo::PgBillingEventRepo;
 use crate::repositories::dataset_repo::PgDatasetRepo;
 use crate::repositories::document_repo::PgDocumentRepo;
@@ -13,8 +14,9 @@ use crate::repositories::model_repo::PgModelRepo;
 use crate::repositories::project_repo::PgProjectRepo;
 use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
-    ApiKeyRepository, BillingEventRepository, DatasetRepository, DocumentRepository,
-    EvaluationRepository, ModelRepository, ProjectRepository, TrainingJobRepository,
+    ApiKeyRepository, AuditLogRepository, BillingEventRepository, DatasetRepository,
+    DocumentRepository, EvaluationRepository, ModelRepository, ProjectRepository,
+    TrainingJobRepository,
 };
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -44,6 +46,7 @@ struct AppStateInner {
     pub evaluation_repo: Arc<dyn EvaluationRepository>,
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub billing_event_repo: Arc<dyn BillingEventRepository>,
+    pub audit_log_repo: Arc<dyn AuditLogRepository>,
 }
 
 impl AppState {
@@ -122,6 +125,7 @@ impl AppState {
         let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
             Arc::new(PgBillingEventRepo::new(db.clone()));
+        let audit_log_repo: Arc<dyn AuditLogRepository> = Arc::new(PgAuditLogRepo::new(db.clone()));
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -140,6 +144,7 @@ impl AppState {
                 evaluation_repo,
                 api_key_repo,
                 billing_event_repo,
+                audit_log_repo,
             }),
         })
     }
@@ -202,5 +207,9 @@ impl AppState {
 
     pub fn billing_event_repo(&self) -> &dyn BillingEventRepository {
         &*self.inner.billing_event_repo
+    }
+
+    pub fn audit_log_repo(&self) -> &dyn AuditLogRepository {
+        &*self.inner.audit_log_repo
     }
 }
