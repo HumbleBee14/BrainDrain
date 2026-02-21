@@ -62,6 +62,51 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        base_model: &str,
+        method: &str,
+        mode: &str,
+        hyperparams: serde_json::Value,
+        gpu_class: Option<&str>,
+        cost_estimate: Option<f64>,
+        max_models: i64,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        let base_model = base_model.to_string();
+        let method = method.to_string();
+        let mode = mode.to_string();
+        let gpu_class = gpu_class.map(|s| s.to_string());
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                INSERT INTO training_jobs
+                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate)
+                SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
+                WHERE (SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1) < $10
+                RETURNING *
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(project_id)
+            .bind(dataset_id)
+            .bind(&base_model)
+            .bind(&method)
+            .bind(&mode)
+            .bind(hyperparams)
+            .bind(gpu_class.as_deref())
+            .bind(cost_estimate)
+            .bind(max_models)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(job)
+        })
+    }
+
     fn get_by_id(
         &self,
         tenant_id: Uuid,

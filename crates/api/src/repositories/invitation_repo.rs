@@ -51,6 +51,43 @@ impl InvitationRepository for PgInvitationRepo {
         })
     }
 
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+        role: &str,
+        token: &str,
+        invited_by: &str,
+        expires_at: DateTime<Utc>,
+        max_members: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Invitation>>> {
+        let email = email.to_string();
+        let role = role.to_string();
+        let token = token.to_string();
+        let invited_by = invited_by.to_string();
+        Box::pin(async move {
+            let invitation = sqlx::query_as::<_, Invitation>(
+                r#"
+                INSERT INTO invitations (tenant_id, email, role, token, invited_by, expires_at)
+                SELECT $1, $2, $3, $4, $5, $6
+                WHERE (SELECT COUNT(*) FROM team_members WHERE tenant_id = $1) < $7
+                RETURNING *
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(&email)
+            .bind(&role)
+            .bind(&token)
+            .bind(&invited_by)
+            .bind(expires_at)
+            .bind(max_members)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(invitation)
+        })
+    }
+
     fn get_by_token(&self, token: &str) -> BoxFuture<'_, AppResult<Option<Invitation>>> {
         let token = token.to_string();
         Box::pin(async move {

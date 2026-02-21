@@ -91,10 +91,14 @@ export default function ModelDetailPage() {
 
   const handleCreateKey = async () => {
     if (!keyName.trim()) return;
-    const result = await createApiKey.mutateAsync({ name: keyName.trim() });
-    setCreatedKey(result.key);
-    setKeyName("");
-    setShowKeyForm(false);
+    try {
+      const result = await createApiKey.mutateAsync({ name: keyName.trim() });
+      setCreatedKey(result.key);
+      setKeyName("");
+      setShowKeyForm(false);
+    } catch {
+      // Error is captured by React Query and surfaced via createApiKey.isError
+    }
   };
 
   const handleCopyKey = async (key: string) => {

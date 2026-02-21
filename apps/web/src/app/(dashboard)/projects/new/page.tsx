@@ -33,9 +33,13 @@ export default function NewProjectPage() {
     const data = validate({ name, description, task_type: taskType || undefined });
     if (!data) return;
 
-    await createProject.mutateAsync(data);
-    markStepComplete("create_project");
-    router.push("/projects");
+    try {
+      await createProject.mutateAsync(data);
+      markStepComplete("create_project");
+      router.push("/projects");
+    } catch {
+      // Error is captured by React Query and surfaced via createProject.isError
+    }
   };
 
   return (

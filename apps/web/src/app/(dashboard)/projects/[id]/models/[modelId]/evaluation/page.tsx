@@ -229,11 +229,15 @@ export default function EvaluationPage() {
   const hasRunningEval = evaluations.some((e) => e.status === "running");
 
   const handleRunEvaluation = async () => {
-    await createEvaluation.mutateAsync({
-      judge_model: judgeModel || undefined,
-    });
-    setShowRunForm(false);
-    setJudgeModel("");
+    try {
+      await createEvaluation.mutateAsync({
+        judge_model: judgeModel || undefined,
+      });
+      setShowRunForm(false);
+      setJudgeModel("");
+    } catch {
+      // Error is captured by React Query and surfaced via createEvaluation.isError
+    }
   };
 
   if (isLoading) {

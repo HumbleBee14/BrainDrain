@@ -13,11 +13,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import {
   StatusBadge,
-  DocStatusBadge,
+  DatasetStatusBadge,
+  DeploymentStatusBadge,
   TrainingStatusBadge,
   DocumentRow,
   PipelineStageCard,
 } from "./components";
+
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -98,8 +100,13 @@ export default function ProjectDetailPage() {
       setConfirmDelete(true);
       return;
     }
-    await deleteProject.mutateAsync(params.id);
-    router.push("/projects");
+    try {
+      await deleteProject.mutateAsync(params.id);
+      router.push("/projects");
+    } catch {
+      // Error is captured by React Query and surfaced via deleteProject.isError
+      setConfirmDelete(false);
+    }
   };
 
   if (isLoading) {
@@ -237,11 +244,10 @@ export default function ProjectDetailPage() {
           </h2>
         </div>
         <div
-          className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
-            isDragging
-              ? "border-blue-500 bg-blue-900/10"
-              : "border-zinc-700 hover:border-zinc-600"
-          }`}
+          className={`rounded-lg border-2 border-dashed p-8 text-center transition ${isDragging
+            ? "border-blue-500 bg-blue-900/10"
+            : "border-zinc-700 hover:border-zinc-600"
+            }`}
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragging(true);
@@ -315,7 +321,7 @@ export default function ProjectDetailPage() {
                     {ds.format}
                   </p>
                 </div>
-                <DocStatusBadge status={ds.status} />
+                <DatasetStatusBadge status={ds.status} />
               </Link>
             ))}
           </div>
@@ -489,7 +495,7 @@ export default function ProjectDetailPage() {
                     v{model.version} &middot; {model.base_model.split("/").pop()}
                   </p>
                 </div>
-                <DocStatusBadge status={model.deployment_status} />
+                <DeploymentStatusBadge status={model.deployment_status} />
               </Link>
             ))}
           </div>
@@ -527,11 +533,10 @@ export default function ProjectDetailPage() {
           <button
             onClick={handleDelete}
             disabled={deleteProject.isPending}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-              confirmDelete
-                ? "bg-red-600 text-white hover:bg-red-500"
-                : "border border-red-800 text-red-400 hover:bg-red-900/30"
-            } disabled:opacity-50`}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${confirmDelete
+              ? "bg-red-600 text-white hover:bg-red-500"
+              : "border border-red-800 text-red-400 hover:bg-red-900/30"
+              } disabled:opacity-50`}
           >
             {deleteProject.isPending
               ? "Deleting..."

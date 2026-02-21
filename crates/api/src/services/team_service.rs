@@ -19,12 +19,14 @@ impl TeamService {
     }
 
     /// Invite a new team member.
+    /// When max_members is provided, uses atomic INSERT...WHERE count < limit.
     pub async fn invite(
         team_repo: &dyn TeamMemberRepository,
         invite_repo: &dyn InvitationRepository,
         tenant_id: Uuid,
         invited_by: &str,
         req: InviteRequest,
+        max_members: Option<i64>,
     ) -> AppResult<InvitationResponse> {
         let email = req.email.trim().to_lowercase();
         if email.is_empty() {
@@ -55,9 +57,24 @@ impl TeamService {
         let token = generate_invite_token();
 
         let expires_at = Utc::now() + chrono::Duration::days(7);
-        let invitation = invite_repo
-            .create(tenant_id, &email, &role_str, &token, invited_by, expires_at)
-            .await?;
+        let invitation = if let Some(max) = max_members {
+            // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
+            invite_repo
+                .create_with_limit(
+                    tenant_id, &email, &role_str, &token, invited_by, expires_at, max,
+                )
+                .await?
+                .ok_or(AppError::Forbidden {
+                    message: format!(
+                        "Plan limit reached: maximum {} team_members on your current plan",
+                        max
+                    ),
+                })?
+        } else {
+            invite_repo
+                .create(tenant_id, &email, &role_str, &token, invited_by, expires_at)
+                .await?
+        };
 
         tracing::info!(
             tenant_id = %tenant_id,

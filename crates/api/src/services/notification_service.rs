@@ -3,7 +3,7 @@ use std::net::ToSocketAddrs;
 use uuid::Uuid;
 
 use crate::dto::notification::{NotificationPreferenceResponse, PreferenceUpdate};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::repositories::traits::NotificationRepository;
 
 /// Reject webhook URLs that point to private/internal networks (SSRF protection).
@@ -24,7 +24,9 @@ fn is_safe_webhook_url(url: &str) -> bool {
     };
 
     // Resolve hostname and check all IPs are public
-    let port = parsed.port().unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let port = parsed
+        .port()
+        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
     let addrs = match (host, port).to_socket_addrs() {
         Ok(a) => a,
         Err(_) => return false,
@@ -116,7 +118,12 @@ impl NotificationService {
                             match result {
                                 Ok(res) if res.status().is_success() => {
                                     let _ = repo
-                                        .update_delivery_status(tenant_id, delivery.id, "sent", None)
+                                        .update_delivery_status(
+                                            tenant_id,
+                                            delivery.id,
+                                            "sent",
+                                            None,
+                                        )
                                         .await;
                                 }
                                 Ok(res) => {
@@ -169,12 +176,28 @@ impl NotificationService {
     }
 
     /// Batch-update notification preferences (upsert semantics).
+    /// Validates webhook URLs at save time to reject SSRF targets immediately.
     pub async fn update_preferences(
         repo: &dyn NotificationRepository,
         tenant_id: Uuid,
         updates: Vec<PreferenceUpdate>,
     ) -> AppResult<Vec<NotificationPreferenceResponse>> {
         let mut results = Vec::new();
+        for update in &updates {
+            // Validate webhook URLs at save time — reject private/internal targets
+            if update.channel == "webhook"
+                && let Some(ref config) = update.config
+                && let Some(url) = config.get("url").and_then(|v| v.as_str())
+                && !is_safe_webhook_url(url)
+            {
+                return Err(AppError::BadRequest {
+                    message: format!(
+                        "Webhook URL rejected: {} targets a private or internal network",
+                        url
+                    ),
+                });
+            }
+        }
         for update in updates {
             let pref = repo
                 .upsert_preference(

@@ -60,6 +60,11 @@ impl PlanService {
     ///
     /// Returns `Err(Forbidden)` if the current count meets or exceeds the
     /// plan limit for the specified resource.
+    ///
+    /// NOTE: Prefer the atomic `create_with_limit` pattern on repositories
+    /// where available. This non-atomic check is kept for resources that
+    /// don't yet have an atomic variant.
+    #[allow(dead_code)]
     pub async fn check_limit(
         tenant_repo: &dyn TenantRepository,
         tenant_id: Uuid,
@@ -81,7 +86,10 @@ impl PlanService {
             "team_members" => limits.max_team_members,
             "training_pairs" => limits.max_training_pairs,
             _ => {
-                tracing::warn!(resource = resource, "Unknown resource type in plan limit check — allowing");
+                tracing::warn!(
+                    resource = resource,
+                    "Unknown resource type in plan limit check — allowing"
+                );
                 return Ok(());
             }
         };

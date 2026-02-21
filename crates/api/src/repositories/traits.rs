@@ -166,6 +166,23 @@ pub trait TrainingJobRepository: Send + Sync {
         cost_estimate: Option<f64>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current model count for tenant < max_models.
+    /// Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        base_model: &str,
+        method: &str,
+        mode: &str,
+        hyperparams: serde_json::Value,
+        gpu_class: Option<&str>,
+        cost_estimate: Option<f64>,
+        max_models: i64,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
     fn get_by_id(
         &self,
         tenant_id: Uuid,
@@ -457,6 +474,7 @@ pub trait TeamMemberRepository: Send + Sync {
 }
 
 /// Contract for invitation database operations.
+#[allow(clippy::too_many_arguments)]
 pub trait InvitationRepository: Send + Sync {
     fn create(
         &self,
@@ -467,6 +485,20 @@ pub trait InvitationRepository: Send + Sync {
         invited_by: &str,
         expires_at: DateTime<Utc>,
     ) -> BoxFuture<'_, AppResult<Invitation>>;
+
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current team member count for tenant < max_members.
+    /// Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+        role: &str,
+        token: &str,
+        invited_by: &str,
+        expires_at: DateTime<Utc>,
+        max_members: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Invitation>>>;
 
     fn get_by_token(&self, token: &str) -> BoxFuture<'_, AppResult<Option<Invitation>>>;
 

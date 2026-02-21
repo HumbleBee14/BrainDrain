@@ -47,14 +47,15 @@ async fn create_invitation(
     Json(body): Json<InviteRequest>,
 ) -> AppResult<(StatusCode, Json<InvitationResponse>)> {
     require_role(&user, TeamRole::Admin)?;
-    let current_members = state.team_member_repo().count_by_tenant(user.tenant_id).await?;
-    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "team_members", current_members).await?;
+    // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
+    let limits = PlanService::get_limits(state.tenant_repo(), user.tenant_id).await?;
     let invitation = TeamService::invite(
         state.team_member_repo(),
         state.invitation_repo(),
         user.tenant_id,
         &user.user_id,
         body,
+        Some(limits.max_team_members),
     )
     .await?;
 
@@ -159,7 +160,13 @@ async fn remove_member(
     Path(target_user_id): Path<String>,
 ) -> AppResult<StatusCode> {
     require_role(&user, TeamRole::Admin)?;
-    TeamService::remove_member(state.team_member_repo(), user.tenant_id, &target_user_id, &user.role.to_string()).await?;
+    TeamService::remove_member(
+        state.team_member_repo(),
+        user.tenant_id,
+        &target_user_id,
+        &user.role.to_string(),
+    )
+    .await?;
 
     AuditLogger::log(
         state.audit_log_repo(),
@@ -173,4 +180,3 @@ async fn remove_member(
 
     Ok(StatusCode::NO_CONTENT)
 }
-

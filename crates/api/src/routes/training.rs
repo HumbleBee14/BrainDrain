@@ -53,8 +53,8 @@ async fn create_training_job(
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
     require_role(&user, TeamRole::Member)?;
-    let current_models = state.model_repo().count_by_tenant(user.tenant_id).await?;
-    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "models", current_models).await?;
+    // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
+    let limits = PlanService::get_limits(state.tenant_repo(), user.tenant_id).await?;
     let base_model = body.base_model.clone();
     let result = TrainingJobService::create(
         state.training_job_repo(),
@@ -63,6 +63,7 @@ async fn create_training_job(
         user.tenant_id,
         project_id,
         body,
+        Some(limits.max_models),
     )
     .await?;
 

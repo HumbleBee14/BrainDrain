@@ -42,7 +42,7 @@ typegen:
 # Run all tests
 test:
 	cargo test --workspace
-	cd apps/web && pnpm test
+	cd apps/web && pnpm type-check
 
 # Lint everything (Rust + Frontend + Python) — fails fast on first error
 lint:

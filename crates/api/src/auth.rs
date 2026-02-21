@@ -62,8 +62,7 @@ impl JwksCache {
                 && fetched_at.elapsed() < JWKS_CACHE_TTL
                 && let Some((n, e)) = cache.keys.get(kid)
             {
-                return DecodingKey::from_rsa_components(n, e)
-                    .map_err(|_| AppError::Unauthorized);
+                return DecodingKey::from_rsa_components(n, e).map_err(|_| AppError::Unauthorized);
             }
         }
 
@@ -96,11 +95,9 @@ impl JwksCache {
 
         let mut key_map = HashMap::new();
         for key in keys_array {
-            if let (Some(kid), Some(n), Some(e)) = (
-                key["kid"].as_str(),
-                key["n"].as_str(),
-                key["e"].as_str(),
-            ) {
+            if let (Some(kid), Some(n), Some(e)) =
+                (key["kid"].as_str(), key["n"].as_str(), key["e"].as_str())
+            {
                 key_map.insert(kid.to_string(), (n.to_string(), e.to_string()));
             }
         }
@@ -336,7 +333,9 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                         }
                     } else {
                         return Err(AppError::Forbidden {
-                            message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                            message:
+                                "You are not a member of this team. Ask an admin for an invitation."
+                                    .to_string(),
                         });
                     }
                 }
@@ -382,8 +381,7 @@ fn parse_dev_token(token: &str) -> Option<AuthenticatedUser> {
 /// Uses the JWKS cache (1h TTL) to avoid per-request HTTP calls.
 async fn verify_clerk_jwt(token: &str, jwks_cache: &JwksCache) -> Result<ClerkClaims, AppError> {
     // Extract kid from JWT header for key matching
-    let header =
-        jsonwebtoken::decode_header(token).map_err(|_| AppError::Unauthorized)?;
+    let header = jsonwebtoken::decode_header(token).map_err(|_| AppError::Unauthorized)?;
     let kid = header.kid.ok_or(AppError::Unauthorized)?;
 
     // Get the decoding key from cache (auto-refreshes on miss or TTL expiry)

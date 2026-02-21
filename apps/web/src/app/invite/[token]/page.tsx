@@ -50,7 +50,7 @@ export default function AcceptInvitePage() {
         ) : (
           <div>
             <p className="text-zinc-400 mb-6">
-              You've been invited to join a team. Click below to accept.
+              You&apos;ve been invited to join a team. Click below to accept.
             </p>
             <button
               onClick={handleAccept}

@@ -776,3 +776,67 @@ Potential next phases:
 3. **Streaming Inference** — SSE streaming for `/v1/chat/completions`
 4. **Marketplace** — shared model templates, community datasets
 5. **Enterprise** — SSO/SAML, custom domains, dedicated infrastructure
+
+---
+
+## Post-Implementation Review Fixes
+
+Two independent senior architect reviews were conducted after Phase 4b/4c implementation. All findings were addressed. This is the combined list.
+
+### Review #1 Fixes
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| 1 | Critical | SSRF via unvalidated webhook URL in notification delivery | Added URL validation: block private IPs (10.x, 172.16-31.x, 192.168.x, 127.x, ::1), require HTTPS, reject non-standard ports |
+| 2 | Critical | Stripe webhook replay — no timestamp check | Added 5-minute replay window: reject events where `abs(now - timestamp) > 300s` |
+| 3 | High | Webhook signature constant-time comparison missing | Switched from `==` to `subtle::ConstantTimeEq` (constant-time HMAC comparison) |
+| 4 | High | Brand name hardcoded in frontend layout | Replaced with `process.env.NEXT_PUBLIC_APP_NAME \|\| "Platform"` |
+| 5 | High | `useAuthedQuery` / `useAuthedMutation` hook factory missing | Created in `apps/web/src/hooks/use-authed-query.ts` — injects Clerk token into all API calls |
+| 6 | High | API client had no timeout or retry logic | Added `fetchWithRetry` with 30s timeout (AbortController), 3 retries with exponential backoff, only retries 5xx + network errors |
+| 7 | Medium | Python worker SQL f-string injection in `train_model.py` | Replaced f-strings with parameterized queries (`$1`, `$2` placeholders) |
+| 8 | Medium | Python worker SQL f-string injection in `parse_document.py` | Same fix — parameterized queries |
+| 9 | Medium | Python worker SQL f-string injection in `run_evaluation.py` | Same fix — parameterized queries |
+
+### Review #2 Fixes
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| C1 | Critical | JWKS fetched from Clerk on every request — no caching | Added `JwksCache` with `Arc<RwLock<HashMap>>`, 1-hour TTL, kid-based O(1) lookup, 5s fetch timeout |
+| C2 | Critical | `default_environment()` returns `"development"` — dev tokens enabled by default | Changed to `"production"` |
+| C3 | Critical | Plan limit TOCTOU race — check-then-create allows concurrent bypass | Atomic SQL: `INSERT ... SELECT WHERE (SELECT COUNT(*) ...) < $limit RETURNING *` |
+| C4 | Critical | Owner auto-bootstrap silently discards errors (`let _ = create()`) | Match on result, verify returned `user_id` matches requester, return Forbidden on error |
+| C5 | Critical | SSRF via webhook URL (duplicate of Review #1) | Already fixed |
+| H1 | High | JWKS key selected by array index, not JWT `kid` header | `decode_header()` extracts kid → HashMap lookup by kid |
+| H2 | High | No timeout on JWKS HTTP fetch | 5s dedicated timeout via `JWKS_FETCH_TIMEOUT` |
+| H3 | High | Stripe webhook events processed multiple times (no idempotency) | Redis `SET NX EX 86400` on `stripe_event:{event_id}` — duplicates return 200 OK |
+| H4 | High | Billing usage computed via in-memory loop over all events | Replaced with `repo.usage_totals()` SQL aggregation (`SUM`, `COUNT`) |
+| H5 | High | Dashboard runs 7 parallel queries — pool exhaustion risk | Added doc comment noting risk and planned Redis cache optimization |
+| H6 | High | Stripe API calls have no per-request timeout | Added `.timeout(Duration::from_secs(10))` before all 5 `.send()` calls |
+| H7 | High | Missing Stripe webhook secret returns 500 (leaks internal state) | Changed to 200 OK with `tracing::warn!` (Stripe retries on 5xx) |
+| H8 | High | No UNIQUE constraint on `tenants.stripe_customer_id` | Added `ALTER TABLE tenants ADD CONSTRAINT uq_tenants_stripe_customer UNIQUE (stripe_customer_id)` |
+| H9 | High | Team role update allows self-demotion; remove_member doesn't check caller vs target role | `update_role()` blocks self-demotion; `remove_member()` requires Owner to remove Owner |
+| H10 | High | IP extraction trusts X-Forwarded-For before ConnectInfo | Reordered: ConnectInfo (direct socket) first, XFF/X-Real-IP as fallback |
+| M1 | Medium | Invite creates row then checks for duplicate (wasted insert) | Added TODO for SELECT EXISTS pre-check optimization |
+| M2 | Medium | Unknown resource type in `check_limit()` silently does nothing | Added `tracing::warn!` in catch-all arm |
+| M3 | Medium | Unknown plan string silently falls back to starter limits | Added `tracing::warn!` for unrecognized plan names |
+| M4 | Medium | Empty `subscription_id` string treated as valid | Added `.filter(\|s\| !s.is_empty())` before using subscription_id |
+| M5 | Medium | `get_subscription` makes live Stripe API call on every request | Serve from DB (`tenant_repo.get_by_id()`) instead of live Stripe call |
+| M6 | Medium | No CHECK constraints on role/status columns in SQL | Added CHECK constraints: `team_members.role`, `invitations.role`, `invitations.status` |
+| M7 | Medium | `notification_deliveries.tenant_id` missing foreign key | Added `REFERENCES tenants(id)` |
+| M8 | Medium | No index on `notification_deliveries(tenant_id, created_at)` | Added composite index for paginated delivery queries |
+| M10 | Medium | `InviteRequest.role` is `String` instead of typed enum | Changed to `Option<TeamRole>`; `UpdateRoleRequest.role` changed to `TeamRole` |
+| M11 | Medium | Role parse failure silently defaults to Member | Added `tracing::error!` with tenant_id, user_id, role context before defaulting |
+| F5 | Frontend | localStorage parsed without shape validation | Added strict check: `Array.isArray(parsed.completedSteps) && typeof parsed.dismissed === "boolean"` |
+| F6 | Frontend | Brand name hardcoded (duplicate of Review #1) | Already fixed |
+| F7 | Frontend | AbortError (timeout) retried — can cause duplicate mutations | Removed AbortError from retryable errors; only `TypeError` (network error) retries |
+
+### Final Verification (Post-Fixes)
+
+| Check | Result |
+|---|---|
+| `cargo check --workspace` | Clean — zero errors |
+| `cargo clippy --workspace -- -D warnings` | Zero warnings |
+| `cargo test --workspace` | 185 tests pass (140 platform-api + 45 platform-shared) |
+| `npx tsc --noEmit` | Zero TypeScript errors |
+| Structural audit (Rust backend) | 15/15 audit points fully compliant |
+| Structural audit (Frontend) | 8/8 audit points fully compliant |

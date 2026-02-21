@@ -161,11 +161,17 @@ async fn get_subscription(
 ) -> AppResult<Json<SubscriptionResponse>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let tenant = state.tenant_repo().get_by_id(user.tenant_id).await?.ok_or(AppError::NotFound {
-        message: "Tenant not found".into(),
-    })?;
+    let tenant =
+        state
+            .tenant_repo()
+            .get_by_id(user.tenant_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Tenant not found".into(),
+            })?;
 
-    let subscription_id = tenant.stripe_subscription_id
+    let subscription_id = tenant
+        .stripe_subscription_id
         .filter(|s| !s.is_empty())
         .ok_or(AppError::NotFound {
             message: "No active subscription".into(),
