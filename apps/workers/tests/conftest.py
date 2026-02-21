@@ -1,4 +1,5 @@
 """Shared test fixtures for worker activity tests."""
+
 import pytest
 
 

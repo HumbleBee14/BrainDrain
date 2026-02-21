@@ -13,6 +13,7 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::document::{DocumentResponse, UploadResponse};
 use crate::error::{AppError, AppResult};
+use crate::services::audit_logger::AuditLogger;
 use crate::services::document_service::DocumentService;
 
 /// Document routes nested under projects.
@@ -87,6 +88,18 @@ async fn upload_document(
         return Err(AppError::BadRequest {
             message: "No files provided".to_string(),
         });
+    }
+
+    for upload in &uploads {
+        AuditLogger::log(
+            state.audit_log_repo(),
+            &user,
+            "create",
+            "document",
+            Some(upload.id),
+            serde_json::json!({"filename": upload.filename, "file_size": upload.file_size}),
+        )
+        .await;
     }
 
     Ok((StatusCode::CREATED, Json(uploads)))

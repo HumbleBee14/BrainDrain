@@ -1,4 +1,5 @@
 pub mod api_keys;
+pub mod audit_logs;
 pub mod billing;
 pub mod datasets;
 pub mod deployments;
@@ -36,5 +37,6 @@ fn v1_router() -> Router<AppState> {
         .merge(api_keys::router())
         .merge(deployments::router())
         .merge(billing::router())
+        .merge(audit_logs::router())
         .merge(ws::router())
 }

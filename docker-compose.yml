@@ -102,3 +102,8 @@ volumes:
   redis_data:
   minio_data:
   # vllm_cache:
+
+networks:
+  default:
+    name: platform-net
+    external: true

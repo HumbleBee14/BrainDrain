@@ -9,6 +9,7 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::project::{CreateProjectRequest, ProjectResponse, UpdateProjectRequest};
 use crate::error::AppResult;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::project_service::ProjectService;
 
 /// Project CRUD routes.
@@ -27,6 +28,15 @@ async fn create_project(
     Json(body): Json<CreateProjectRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectResponse>)> {
     let project = ProjectService::create(state.project_repo(), user.tenant_id, body).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "create",
+        "project",
+        Some(project.id),
+        serde_json::json!({"name": project.name}),
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -61,6 +71,15 @@ async fn update_project(
     Json(body): Json<UpdateProjectRequest>,
 ) -> AppResult<Json<ProjectResponse>> {
     let project = ProjectService::update(state.project_repo(), user.tenant_id, id, body).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "update",
+        "project",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(Json(project))
 }
 
@@ -70,5 +89,14 @@ async fn delete_project(
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     ProjectService::delete(state.project_repo(), user.tenant_id, id).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "delete",
+        "project",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }

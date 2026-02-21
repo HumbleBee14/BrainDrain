@@ -1,4 +1,5 @@
 pub mod api_key;
+pub mod audit_log;
 pub mod billing;
 pub mod common;
 pub mod dataset;

@@ -12,8 +12,9 @@ Supports three worker modes via APP_WORKER_MODE:
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 
-from temporalio.client import Client
+from temporalio.client import Client, Interceptor
 from temporalio.worker import Worker
 
 from src.config import WorkerSettings
@@ -28,6 +29,47 @@ from src.workflows.train_iterative import TrainIterativeWorkflow
 from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 
+def init_otel(settings: WorkerSettings) -> Sequence[Interceptor]:
+    """Initialize OpenTelemetry tracing if enabled.
+
+    Returns a list of Temporal interceptors to attach to the client.
+    Best-effort: if collector is unreachable, traces are dropped silently.
+    Swap OTEL for another vendor by changing only this function.
+    """
+    if not settings.otel_enabled:
+        return []
+
+    try:
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from temporalio.contrib.opentelemetry import TracingInterceptor
+
+        resource = Resource.create(
+            {
+                "service.name": "platform-worker",
+                "deployment.environment": "development",
+            }
+        )
+        exporter = OTLPSpanExporter(endpoint=settings.otel_endpoint, insecure=True)
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        logging.getLogger("platform.worker").info(
+            "OpenTelemetry export enabled → %s", settings.otel_endpoint
+        )
+        return [TracingInterceptor()]
+    except Exception:
+        logging.getLogger("platform.worker").warning(
+            "Failed to initialize OpenTelemetry, continuing without tracing",
+            exc_info=True,
+        )
+        return []
+
+
 async def main() -> None:
     settings = WorkerSettings()
 
@@ -39,6 +81,9 @@ async def main() -> None:
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger = logging.getLogger("platform.worker")
 
+    # Initialize OpenTelemetry (best-effort, never blocks startup)
+    interceptors = init_otel(settings)
+
     # Initialize infrastructure container (S3, DB, Redis)
     logger.info("Initializing infrastructure...")
     infra = await init_container(settings)
@@ -47,6 +92,7 @@ async def main() -> None:
     client = await Client.connect(
         settings.temporal_address,
         namespace=settings.temporal_namespace,
+        interceptors=interceptors,
     )
 
     # Import and instantiate activity classes with injected infrastructure

@@ -19,6 +19,7 @@ from typing import Protocol, runtime_checkable
 import asyncpg
 import redis.asyncio as aioredis
 
+from src.circuit_breaker import CircuitBreakerPolicy, create_circuit_breaker
 from src.config import WorkerSettings
 
 logger = logging.getLogger("platform.infra")
@@ -55,11 +56,13 @@ class InfraContainer:
         db: asyncpg.Pool,
         redis: aioredis.Redis,
         settings: WorkerSettings,
+        circuit_breaker: CircuitBreakerPolicy,
     ):
         self.s3 = s3
         self.db = db
         self.redis = redis
         self.settings = settings
+        self.circuit_breaker = circuit_breaker
 
     @property
     def s3_bucket(self) -> str:
@@ -95,7 +98,21 @@ async def init_container(settings: WorkerSettings) -> InfraContainer:
     redis = aioredis.from_url(settings.redis_url)
     logger.info("Redis client initialized")
 
-    _container = InfraContainer(s3=s3, db=db, redis=redis, settings=settings)
+    llm_breaker = create_circuit_breaker(
+        name="llm-api",
+        enabled=settings.circuit_breaker_enabled,
+        fail_max=settings.circuit_breaker_fail_max,
+        reset_timeout=settings.circuit_breaker_reset_timeout,
+    )
+    logger.info(
+        "Circuit breaker initialized (enabled: %s, fail_max: %d)",
+        settings.circuit_breaker_enabled,
+        settings.circuit_breaker_fail_max,
+    )
+
+    _container = InfraContainer(
+        s3=s3, db=db, redis=redis, settings=settings, circuit_breaker=llm_breaker
+    )
     return _container
 
 

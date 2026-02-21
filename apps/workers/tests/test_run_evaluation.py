@@ -1,7 +1,4 @@
 """Tests for evaluation activity -- pure helper functions only (no GPU/DB/S3)."""
-import math
-
-import pytest
 
 from src.activities.run_evaluation import (
     _check_answer,
