@@ -64,7 +64,7 @@ async fn create_training_job(
         &user,
         "create",
         "training_job",
-        Some(result.id.parse().unwrap_or_default()),
+        result.id.parse().ok(),
         serde_json::json!({"base_model": base_model, "project_id": project_id.to_string()}),
     )
     .await;

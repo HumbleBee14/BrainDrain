@@ -351,7 +351,10 @@ mod tests {
     #[test]
     fn extract_ip_from_xff_header() {
         let req = Request::builder()
-            .header("x-forwarded-for", "203.0.113.50, 70.41.3.18, 150.172.238.178")
+            .header(
+                "x-forwarded-for",
+                "203.0.113.50, 70.41.3.18, 150.172.238.178",
+            )
             .body(Body::empty())
             .unwrap();
         assert_eq!(extract_client_ip(&req), "203.0.113.50");
@@ -378,9 +381,7 @@ mod tests {
 
     #[test]
     fn extract_ip_fallback_to_unknown() {
-        let req = Request::builder()
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().body(Body::empty()).unwrap();
         assert_eq!(extract_client_ip(&req), "unknown");
     }
 }

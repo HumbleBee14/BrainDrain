@@ -46,7 +46,7 @@ async fn create_evaluation(
         &user,
         "create",
         "evaluation",
-        Some(result.id.parse().unwrap_or_default()),
+        result.id.parse().ok(),
         serde_json::json!({"model_id": model_id.to_string()}),
     )
     .await;

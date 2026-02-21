@@ -42,7 +42,7 @@ async fn create_api_key(
         &user,
         "create",
         "api_key",
-        Some(result.id.parse().unwrap_or_default()),
+        result.id.parse().ok(),
         serde_json::json!({"model_id": model_id.to_string(), "key_prefix": result.key_prefix}),
     )
     .await;
