@@ -80,7 +80,10 @@ impl DocumentService {
             id: doc.id,
             filename: doc.filename,
             file_size: doc.file_size,
-            status: doc.status,
+            status: doc
+                .status
+                .parse()
+                .unwrap_or(platform_shared::enums::DocumentStatus::Uploaded),
         })
     }
 

@@ -188,7 +188,7 @@ async fn get_training_metrics(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
     let job = TrainingJobService::get(state.db(), user.tenant_id, id).await?;
-    Ok(Json(job.metrics))
+    Ok(Json(serde_json::to_value(&job.metrics).unwrap_or_default()))
 }
 
 /// GET /api/v1/projects/:project_id/models

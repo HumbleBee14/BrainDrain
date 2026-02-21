@@ -1,9 +1,11 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::BillingEvent;
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Billing event returned by API.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct BillingEventResponse {
     pub id: String,
     pub operation: String,

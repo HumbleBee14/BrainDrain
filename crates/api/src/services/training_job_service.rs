@@ -48,28 +48,17 @@ impl TrainingJobService {
             });
         }
 
-        // Validate method via shared enum (auto-synced with TypeScript/Python)
-        let method_str = req.method.as_deref().unwrap_or("qlora");
-        let _method: TrainingMethod = method_str.parse().map_err(|_| AppError::BadRequest {
-            message: format!(
-                "Invalid method '{method_str}'. Must be {}",
-                ["qlora", "lora", "full"].join(", ")
-            ),
-        })?;
-        let method = method_str;
-
-        // Validate mode via shared enum (auto-synced with TypeScript/Python)
-        let mode_str = req.mode.as_deref().unwrap_or("quick");
-        let _mode: TrainingMode = mode_str.parse().map_err(|_| AppError::BadRequest {
-            message: format!(
-                "Invalid mode '{mode_str}'. Must be {}",
-                ["quick", "aligned", "reasoning", "iterative"].join(", ")
-            ),
-        })?;
-        let mode = mode_str;
+        // Resolve method and mode with defaults (serde already validates enum variants)
+        let method = req.method.unwrap_or(TrainingMethod::Qlora);
+        let mode = req.mode.unwrap_or(TrainingMode::Quick);
+        let method_str = method.to_string();
+        let mode_str = mode.to_string();
 
         // Merge user hyperparams with defaults
-        let hyperparams = merge_hyperparams(req.hyperparams);
+        let hyperparams = merge_hyperparams(
+            req.hyperparams
+                .map(|hp| serde_json::to_value(hp).unwrap_or_default()),
+        );
 
         // Compute cost estimate heuristic
         let cost_estimate = estimate_cost(
@@ -85,8 +74,8 @@ impl TrainingJobService {
             project_id,
             dataset_id,
             &req.base_model,
-            method,
-            mode,
+            &method_str,
+            &mode_str,
             hyperparams.clone(),
             req.gpu_class.as_deref(),
             Some(cost_estimate),
@@ -105,8 +94,8 @@ impl TrainingJobService {
                 job.id,
                 &dataset_path,
                 &req.base_model,
-                method,
-                mode,
+                &method_str,
+                &mode_str,
                 hyperparams,
                 req.gpu_class.as_deref(),
             )
@@ -123,8 +112,8 @@ impl TrainingJobService {
             training_job_id = %job.id,
             workflow_id = %result.workflow_id,
             base_model = %req.base_model,
-            method = method,
-            mode = mode,
+            method = %method,
+            mode = %mode,
             "TrainWorkflow started"
         );
 
@@ -473,8 +462,8 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
         };
-        let method_str = req.method.as_deref().unwrap_or("qlora");
-        assert_eq!(method_str, "qlora");
+        let method = req.method.unwrap_or(TrainingMethod::Qlora);
+        assert_eq!(method, TrainingMethod::Qlora);
     }
 
     #[test]
@@ -487,7 +476,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
         };
-        let mode_str = req.mode.as_deref().unwrap_or("quick");
-        assert_eq!(mode_str, "quick");
+        let mode = req.mode.unwrap_or(TrainingMode::Quick);
+        assert_eq!(mode, TrainingMode::Quick);
     }
 }

@@ -70,6 +70,9 @@ base64 = "0.22"
 async-stream = "0.3"
 tokio-stream = "0.1"
 
+# Type generation (Rust → TypeScript)
+ts-rs = { version = "12", features = ["chrono-impl", "uuid-impl", "serde-json-impl", "serde-compat"] }
+
 # Internal crates
 platform-shared = { path = "crates/shared" }
 platform-db = { path = "crates/db" }

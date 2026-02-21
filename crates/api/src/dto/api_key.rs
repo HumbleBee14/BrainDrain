@@ -1,18 +1,23 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::ApiKey;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Request to create a new API key.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export)]
 pub struct CreateApiKeyRequest {
     pub name: String,
+    #[ts(optional)]
     pub rate_limit: Option<i32>,
+    #[ts(optional)]
     pub expires_in_days: Option<i64>,
 }
 
 /// Response returned when an API key is created.
 /// Includes the full key — only shown once.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct CreateApiKeyResponse {
     pub id: String,
     pub name: String,
@@ -25,7 +30,8 @@ pub struct CreateApiKeyResponse {
 
 /// API key information returned by list/get endpoints.
 /// Does NOT include the full key (it's hashed in DB).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ApiKeyResponse {
     pub id: String,
     pub model_id: String,

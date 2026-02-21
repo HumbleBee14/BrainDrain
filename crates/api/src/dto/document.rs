@@ -1,16 +1,19 @@
 use chrono::{DateTime, Utc};
+use platform_shared::enums::DocumentStatus;
 use serde::Serialize;
+use ts_rs::TS;
 use uuid::Uuid;
 
 /// API response for a document.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct DocumentResponse {
     pub id: Uuid,
     pub project_id: Uuid,
     pub filename: String,
     pub file_size: i64,
     pub mime_type: String,
-    pub status: String,
+    pub status: DocumentStatus,
     pub parse_quality: Option<f64>,
     pub page_count: Option<i32>,
     pub language: Option<String>,
@@ -27,7 +30,7 @@ impl From<platform_db::models::Document> for DocumentResponse {
             filename: d.filename,
             file_size: d.file_size,
             mime_type: d.mime_type,
-            status: d.status,
+            status: d.status.parse().unwrap_or(DocumentStatus::Uploaded),
             parse_quality: d.parse_quality,
             page_count: d.page_count,
             language: d.language,
@@ -39,10 +42,11 @@ impl From<platform_db::models::Document> for DocumentResponse {
 }
 
 /// Response after successful document upload.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct UploadResponse {
     pub id: Uuid,
     pub filename: String,
     pub file_size: i64,
-    pub status: String,
+    pub status: DocumentStatus,
 }

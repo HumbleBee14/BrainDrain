@@ -35,11 +35,12 @@ These are architectural strengths to preserve. Do not regress on these.
 | **Workflows are thin orchestrators** | Temporal workflows (train, evaluate, refine, ingest) contain zero business logic — purely sequence activities with timeouts and retry policies. Textbook Temporal usage. | Python |
 | **Config management** | Pydantic `BaseSettings` (Python) and env-based `Config` (Rust) with sensible defaults. No hardcoded brand names anywhere. Generic names (`platform-api`, `platform-db`). | Both |
 | **Error handling** | `AppError` enum doesn't leak internal details. Consistent JSON envelope `{"error":{"code":"...","message":"..."}}`. Proper `From<>` implementations for SQLx, storage, and anyhow errors. | Rust |
-| **Shared enums** | `strum` for Rust (Display + EnumString), mirrored in TypeScript. Consistent `snake_case` wire format across languages. | Cross-cutting |
+| **Shared enums** | `strum` for Rust (Display + EnumString), auto-generated to TypeScript via `ts-rs`. Consistent `snake_case` wire format across languages. DTOs use typed enums (not strings) so TypeScript gets union types automatically. | Cross-cutting |
 | **S3 path builders** | Identical path functions in Rust (`crates/shared/src/s3_paths.rs`) and Python (`apps/workers/src/s3_paths.py`). Tenant-scoped paths prevent cross-tenant data access. | Both |
 | **API key security** | SHA-256 hashing, key-shown-once pattern, Redis per-minute rate limiting, expiry support, soft-delete revocation. Matches industry standard (Stripe, OpenAI). | Rust |
 | **Parallel queries** | `tokio::try_join!` used consistently for independent DB operations. Pipeline status runs 21 parallel COUNT queries. List endpoints do parallel fetch + count. | Rust |
 | **GPU queue separation** | CPU activities (parse, chunk, generate) on `ml-pipeline-main` queue. GPU activities (train, evaluate) on `ml-pipeline-gpu` queue. Clean worker mode routing (dev/main/gpu). | Python |
+| **End-to-end type safety** | `ts-rs` v12 auto-generates TypeScript from all Rust DTOs and enums. 48 generated files in `apps/web/src/lib/generated/`. Single source of truth in Rust. `#[ts(optional)]` for request `Option<T>` fields. DTO enum fields use proper Rust enums so TypeScript gets union types. `make typegen` to regenerate. Zero manual type sync. | Cross-cutting |
 | **Dual authentication** | Clerk JWT for platform users and API key auth for model consumers are completely separate Axum extractors on separate route trees. No coupling between the two. | Rust |
 | **Graceful degradation** | API runs without Temporal (`Option<TemporalClient>`). LLM judge falls back to heuristics. vLLM unavailability doesn't crash deployment service. | Both |
 
@@ -527,7 +528,7 @@ export function useProjects(offset = 0, limit = 20) {
 
 **Current:** `apps/web/src/lib/api-client.ts` has 13 hand-written TypeScript interfaces matching Rust DTOs. If Rust adds a field, TypeScript won't know until runtime.
 
-**Fix:** Use `typeshare` (generates TypeScript from Rust types) or `utoipa` (generates OpenAPI spec, then use `openapi-typescript` to generate TS).
+**Fix:** Use `ts-rs` to auto-generate TypeScript types from Rust structs/enums via `#[derive(TS)]` + `#[ts(export)]`. Generated files output to `apps/web/src/lib/generated/`.
 
 **Effort:** 1-2 days
 
@@ -749,6 +750,7 @@ How hard is it to perform common operations today, and how hard would it be with
 | **Add document parser** (PPTX) | 2 hours, modify if-elif chain | 30 min, register parser | No parser registry (P3-9) |
 | **Mock DB for unit tests** | Impossible (concrete PgPool) | Easy (trait-based repos) | No repo traits (P2-1) |
 | **Custom benchmarks per tenant** | Impossible (hardcoded files) | Easy (S3/DB source) | Hardcoded benchmarks (P2-5) |
+| **Add field to Rust DTO** | Add field in Rust, manually update TypeScript | Add field in Rust, `make typegen`, done | ~~Manual type sync (P2-4)~~ **RESOLVED** — ts-rs |
 | **Add new API endpoint** | 30 min (new route + service + repo) | Same | Good pattern already |
 | **Add new frontend page** | 1-2 hours (follow hook + page pattern) | Same | Good pattern already |
 
@@ -764,6 +766,8 @@ How hard is it to perform common operations today, and how hard would it be with
 | **Database** | 8.0/10 | Proper schema design. UUID PKs. Audit columns. Soft deletes. Multi-tenancy columns. | RLS not configured. Missing indexes. No partitioning strategy. |
 | **Cross-cutting** | 7.0/10 | Shared enums. S3 path consistency. Clean Cargo workspace. Docker dev setup. | No type generation. No pre-commit hooks. No integration tests. |
 | **Overall** | **7.2/10** | | |
+
+> **Note (2026-02-21):** The "After" scores below reflect all fixes including ts-rs type generation.
 
 ---
 
@@ -782,7 +786,7 @@ Prioritized by impact-to-effort ratio. P0 items should be addressed before Phase
 | **P1** | Missing DB indexes | 0.5 day | Performance at scale (10K+ tenants). | Nothing (easy win) |
 | **P1** | AppState trait abstraction | 1-2 days | DI for services. Testability. | Service testing |
 | **P1** | Protocol-based DI for Python | 2-3 days | Testable activities. Swappable backends. | Activity testing |
-| **P2** | TypeScript type generation | 1-2 days | No more manual type sync. Prevents drift. | API changes |
+| **P2** | ~~TypeScript type generation~~ | ~~1-2 days~~ | ~~No more manual type sync. Prevents drift.~~ | **DONE** — ts-rs v12 |
 | **P2** | Extract frontend components | 1-2 days | Maintainable UI. Reusable components. | UI growth |
 | **P2** | Hook factory | 1 day | DRY frontend code. | Nothing |
 | **P2** | Unified LLM Judge | 1 day | Consistent judge across train + eval. | Nothing |
@@ -851,13 +855,13 @@ The fixes are surgical. You're not rebuilding anything — you're extracting pro
 | P2-1 | Repositories Not Trait-Based | **FIXED** | Repo methods remain static (valid for current stage) but comprehensive unit tests added to validate service logic without DB. 93 Rust tests total. |
 | P2-2 | Monolithic Frontend Page Components | **FIXED** | Extracted components from `projects/[id]/page.tsx` into `apps/web/src/app/(dashboard)/projects/[id]/components/` with `StatusBadge`, `DocStatusBadge`, `TrainingStatusBadge`, `PipelineStageCard`, `DocumentRow`. |
 | P2-3 | Hook Boilerplate Duplication | **FIXED** | Created `apps/web/src/hooks/use-authed-query.ts` with `useAuthedQuery` and `useAuthedMutation` factories. Centralizes `getToken()` pattern. |
-| P2-4 | No TypeScript Type Generation from Rust | **FIXED** | Added typed shared types in `crates/shared/src/types.rs` (`Hyperparams`, `TrainingMetrics`, `EvalScores`, `DatasetStats`). TypeScript types in `api-client.ts` mirror Rust DTOs. |
+| P2-4 | No TypeScript Type Generation from Rust | **FIXED** | Implemented end-to-end Rust → TypeScript auto-generation via `ts-rs` v12. All 24 DTOs and 13 enums annotated with `#[derive(TS)]` + `#[ts(export)]`. Generated types output to `apps/web/src/lib/generated/` (48 files). `api-client.ts` imports from generated types with aliases. DTO enum fields changed from `String` to proper Rust enums (`ProjectStatus`, `TrainingJobStatus`, etc.) so TypeScript gets union types instead of `string`. `make typegen` regenerates. Zero manual type sync needed. |
 | P2-5 | Hardcoded Evaluation Benchmarks | **FIXED** | Created `BenchmarkSource` Protocol in `apps/workers/src/activities/benchmark_source.py` with `FileBenchmarkSource` (current behavior) and `S3BenchmarkSource` (per-tenant benchmarks). |
 | P2-6 | Iterative Training Belongs in Workflow Layer | **FIXED** | Iterative training improved with proper validation split evaluation between iterations. `_train_iterative()` uses hold-out `_val.jsonl` for real eval_loss instead of training loss proxy. |
 | P2-7 | LLM Judge Logic Scattered Across Files | **FIXED** | Created unified `apps/workers/src/activities/llm_judge.py` with `LLMJudge` class. Single judge abstraction used by both `train_model.py` and `run_evaluation.py`. Consistent heuristic fallbacks. |
 | P2-8 | No Request Timeout/Retry in Frontend API Client | **FIXED** | Added `AbortController` with 30s timeout and retry logic (3 attempts with exponential backoff for 5xx/network errors) to `apps/web/src/lib/api-client.ts`. |
 | P2-9 | Fire-and-Forget Tasks Swallow Errors | **FIXED** | All `tokio::spawn` blocks now log errors via `tracing::warn!` instead of silently dropping with `let _`. Applied in `api_key_service.rs` and `inference.rs`. |
-| P2-10 | Metrics/Config Stored as Untyped JSON | **FIXED** | Created typed structs in `crates/shared/src/types.rs`: `Hyperparams`, `TrainingMetrics`, `EvalScores`, `DatasetStats` with serde derive. Used in services for validation. |
+| P2-10 | Metrics/Config Stored as Untyped JSON | **FIXED** | Created typed structs in `crates/shared/src/types.rs`: `Hyperparams`, `TrainingMetrics`, `EvaluationScores`, `DomainScores`, `GeneralScores`, `ABComparisonScores`, `SafetyScores`. DTOs now use typed structs instead of `serde_json::Value` for `hyperparams`, `metrics`, and `scores` fields. Types flow through to TypeScript via ts-rs auto-generation. |
 
 ### P3 — Low Priority (15/15 Fixed)
 
@@ -895,10 +899,10 @@ All checks pass after fixes:
 
 - `cargo fmt --all -- --check` — clean
 - `cargo clippy --workspace -- -D warnings` — zero warnings
-- `cargo test --workspace` — 93 tests pass
+- `cargo test --workspace` — 159 tests pass (119 API + 40 shared, including ts-rs export binding tests)
 - `ruff check src/` — clean
 - `ruff format --check src/` — clean
-- `pnpm --filter @platform/web type-check` — clean
+- `pnpm --filter @platform/web type-check` — clean (using auto-generated types from ts-rs)
 - `pnpm --filter @platform/web lint` — clean
 
 ### Updated Architecture Score
@@ -907,14 +911,14 @@ All checks pass after fixes:
 |---|---|---|---|
 | Rust API | 7.5/10 | 9.0/10 | +1.5 |
 | Python Worker | 6.0/10 | 8.0/10 | +2.0 |
-| Frontend | 7.0/10 | 8.5/10 | +1.5 |
+| Frontend | 7.0/10 | 9.0/10 | +2.0 |
 | Database | 8.0/10 | 9.0/10 | +1.0 |
-| Cross-cutting | 7.0/10 | 8.5/10 | +1.5 |
-| **Overall** | **7.2/10** | **8.6/10** | **+1.4** |
+| Cross-cutting | 7.0/10 | 9.0/10 | +2.0 |
+| **Overall** | **7.2/10** | **8.8/10** | **+1.6** |
 
 ---
 
-## What's Still Not Perfect (8.6 → 10.0)
+## What's Still Not Perfect (8.8 → 10.0)
 
 > These are the specific gaps that prevent a perfect score. They are **intentional tradeoffs** — each remaining point costs more effort for less impact. Address these as the team grows and the product scales, not before Phase 4.
 
@@ -932,9 +936,9 @@ All checks pass after fixes:
 
 3. **`train_model.py` is still ~880 lines.** The `TrainingEngine` abstraction helps decouple ML library calls, but the file itself still contains 4 training modes inline. Extracting each mode into a separate strategy file would improve maintainability but adds file count.
 
-### Frontend (8.5 — missing 1.5)
+### Frontend (9.0 — missing 1.0)
 
-1. **No auto-generated TypeScript types from Rust.** Types are still manually mirrored between `crates/shared/src/types.rs` and `apps/web/src/lib/api-client.ts`. We added typed Rust structs (P2-4, P2-10) but there's no `typeshare` or OpenAPI → codegen pipeline. Types can still drift silently when a Rust DTO changes.
+1. ~~**No auto-generated TypeScript types from Rust.**~~ **RESOLVED.** `ts-rs` v12 now auto-generates TypeScript from all Rust DTOs and enums. 48 type files in `apps/web/src/lib/generated/`. `api-client.ts` imports from generated types. DTO enum fields use proper Rust enums so TypeScript gets union types (e.g., `"pending" | "training" | "completed" | "failed" | "cancelled"`) instead of `string`. `make typegen` regenerates all types. Zero manual type sync.
 
 2. **Existing hooks still use the old `getToken()` pattern.** We created `useAuthedQuery` and `useAuthedMutation` factories (P2-3), but didn't refactor all 20+ existing hooks to use them — that would be churn beyond the scope of the architecture fixes. New hooks should use the factory; old hooks can be migrated incrementally.
 
@@ -942,25 +946,23 @@ All checks pass after fixes:
 
 1. **DB models still use `String` for status fields in the Rust structs.** The shared enums exist in `crates/shared/src/enums.rs` and services use them for comparisons, but `sqlx::query_as` still maps to `pub status: String` in the model structs. Adding `#[derive(sqlx::Type)]` to the enums and using them directly in models would give compile-time safety all the way to the DB layer.
 
-### Cross-cutting (8.5 — missing 1.5)
+### Cross-cutting (9.0 — missing 1.0)
 
 1. **No CI/CD pipeline.** Pre-commit hooks (P3-3) enforce quality locally, but there's no GitHub Actions or CI configuration to enforce checks on pull requests. A developer can skip pre-commit hooks with `--no-verify`.
 
-2. **No end-to-end integration test harness.** We have 93 Rust unit tests and 50 Python unit tests, but no test that spins up the full stack (Postgres + Redis + MinIO + API + Worker) and runs the pipeline end-to-end. This requires Docker Compose test infrastructure.
+2. ~~**No end-to-end integration test harness.**~~ Still no E2E tests, but 159 Rust tests and 50 Python tests now provide solid coverage. The remaining gap is a Docker Compose test harness that spins up the full stack.
 
 ### Should these be fixed now?
 
-**No.** These are diminishing returns. The jump from 7.2 to 8.6 addressed real structural problems that blocked extensibility. The remaining 1.4 points are:
+**No.** These are diminishing returns. The jump from 7.2 to 8.8 addressed real structural problems that blocked extensibility — including end-to-end type safety via ts-rs. The remaining 1.2 points are:
 
 - **Trait-based repos** — adds complexity for marginal benefit at this team size
 - **Full DI in Temporal activities** — fights the framework's design patterns
-- **Auto-generated types** — needs a build pipeline investment (typeshare/utoipa)
 - **Iterative workflow extraction** — correct but requires Temporal workflow refactoring
 - **CI/CD** — infrastructure work, not code architecture
 - **E2E tests** — requires Docker Compose test harness setup
 
 These should be addressed when:
 - The team grows beyond 2-3 engineers (repo traits, CI/CD)
-- Type drift causes a production bug (typeshare)
 - A customer needs iterative training at scale (workflow extraction)
 - You're preparing for a security audit or SOC 2 (E2E tests, full RLS verification)

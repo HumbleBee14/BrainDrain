@@ -5,9 +5,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use ts_rs::TS;
 
 /// Training hyperparameters (stored in training_jobs.hyperparams).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub struct Hyperparams {
     #[serde(default = "default_r")]
     pub r: i32,
@@ -35,6 +37,7 @@ pub struct Hyperparams {
     pub max_seq_length: i32,
     /// Extra user-provided params not in the schema.
     #[serde(flatten)]
+    #[ts(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
 
@@ -81,7 +84,8 @@ fn default_seq_length() -> i32 {
 }
 
 /// Training metrics (stored in training_jobs.metrics).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub struct TrainingMetrics {
     #[serde(default)]
     pub train_loss: Option<f64>,
@@ -95,11 +99,13 @@ pub struct TrainingMetrics {
     pub estimated_cost: Option<f64>,
     /// Phase-specific sub-metrics (e.g., "dpo", "grpo").
     #[serde(flatten)]
+    #[ts(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// Evaluation scores (stored in models.eval_scores and evaluations.scores).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub struct EvaluationScores {
     #[serde(default)]
     pub domain: Option<DomainScores>,
@@ -113,7 +119,8 @@ pub struct EvaluationScores {
     pub overall: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DomainScores {
     pub accuracy: f64,
     pub completeness: f64,
@@ -121,7 +128,8 @@ pub struct DomainScores {
     pub mean: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct GeneralScores {
     pub finetuned_score: f64,
     pub base_score: f64,
@@ -131,7 +139,8 @@ pub struct GeneralScores {
     pub per_category: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct ABComparisonScores {
     pub win_rate: f64,
     pub confidence_low: f64,
@@ -142,7 +151,8 @@ pub struct ABComparisonScores {
     pub total: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SafetyScores {
     pub refusal_rate: f64,
     pub base_refusal_rate: f64,
@@ -156,7 +166,8 @@ pub struct SafetyScores {
 }
 
 /// Deployment configuration (stored in models.deployment_config).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
+#[ts(export)]
 pub struct DeploymentConfig {
     #[serde(default)]
     pub vllm_adapter_name: Option<String>,
@@ -166,6 +177,7 @@ pub struct DeploymentConfig {
     pub deployed_at: Option<String>,
     /// Extra config not in the schema.
     #[serde(flatten)]
+    #[ts(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
 

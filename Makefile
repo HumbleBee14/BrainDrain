@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean
+.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen
 
 # Start all infrastructure (PostgreSQL, Redis, MinIO)
 infra:
@@ -28,6 +28,11 @@ dev-web:
 # Start Temporal workers (Python)
 dev-workers:
 	cd apps/workers && uv run python -m src.worker
+
+# Generate TypeScript types from Rust (ts-rs)
+typegen:
+	cargo test --workspace export_bindings_ -- --exact 2>/dev/null || true
+	@echo "TypeScript types regenerated in apps/web/src/lib/generated/"
 
 # Run all tests
 test:

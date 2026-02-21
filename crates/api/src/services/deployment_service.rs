@@ -198,7 +198,10 @@ impl DeploymentService {
 
         Ok(DeploymentStatusResponse {
             model_id: model.id.to_string(),
-            deployment_status: model.deployment_status,
+            deployment_status: model
+                .deployment_status
+                .parse()
+                .unwrap_or(DeploymentStatus::Undeployed),
             deployment_config: model.deployment_config,
             base_model: model.base_model,
             adapter_path: model.adapter_path,
@@ -207,10 +210,11 @@ impl DeploymentService {
 }
 
 /// Deployment status response.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct DeploymentStatusResponse {
     pub model_id: String,
-    pub deployment_status: String,
+    pub deployment_status: DeploymentStatus,
     pub deployment_config: serde_json::Value,
     pub base_model: String,
     pub adapter_path: Option<String>,
@@ -338,7 +342,7 @@ mod tests {
     fn status_response_serializes_to_json() {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
-            deployment_status: DeploymentStatus::Active.to_string(),
+            deployment_status: DeploymentStatus::Active,
             deployment_config: serde_json::json!({"vllm_adapter_name": "adapter-123"}),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             adapter_path: Some("/path/to/adapter".to_string()),
@@ -356,7 +360,7 @@ mod tests {
     fn status_response_with_null_adapter() {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
-            deployment_status: DeploymentStatus::Undeployed.to_string(),
+            deployment_status: DeploymentStatus::Undeployed,
             deployment_config: serde_json::json!({}),
             base_model: "model".to_string(),
             adapter_path: None,

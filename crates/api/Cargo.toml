@@ -51,6 +51,9 @@ base64 = { workspace = true }
 async-stream = { workspace = true }
 tokio-stream = { workspace = true }
 
+# Type generation
+ts-rs = { workspace = true }
+
 # Internal crates
 platform-shared = { workspace = true }
 platform-db = { workspace = true }
