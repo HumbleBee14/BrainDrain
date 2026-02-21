@@ -3,6 +3,7 @@ pub mod documents;
 pub mod health;
 pub mod pipeline;
 pub mod projects;
+pub mod training;
 
 use axum::Router;
 
@@ -22,4 +23,5 @@ fn v1_router() -> Router<AppState> {
         .merge(documents::router())
         .merge(pipeline::router())
         .merge(datasets::router())
+        .merge(training::router())
 }

@@ -2,10 +2,16 @@
 
 Starts a worker that listens on the ML pipeline task queue
 and executes registered workflows and activities.
+
+Supports three worker modes via APP_WORKER_MODE:
+  - "all": Register all activities on a single queue (dev mode)
+  - "main": CPU activities only on ml-pipeline-main queue
+  - "gpu": GPU activities only on ml-pipeline-gpu queue
 """
 
 import asyncio
 import logging
+import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
@@ -28,6 +34,11 @@ from src.workflows.train import TrainWorkflow
 async def main() -> None:
     settings = WorkerSettings()
 
+    # Set HuggingFace env vars before any ML imports
+    if settings.hf_token:
+        os.environ["HF_TOKEN"] = settings.hf_token
+    os.environ["HF_HOME"] = settings.model_cache_dir
+
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger = logging.getLogger("platform.worker")
 
@@ -47,27 +58,52 @@ async def main() -> None:
     from src.activities.generate_pairs import generate_synthetic_pairs
     from src.activities.parse_document import parse_document
 
-    logger.info("Starting worker on queue: %s", settings.temporal_task_queue)
+    # CPU-bound activities (parsing, data generation, dataset building)
+    cpu_activities = [
+        parse_document,
+        generate_synthetic_pairs,
+        chunk_text,
+        build_dataset,
+        get_document_info,
+    ]
+
+    # GPU-bound activities (training, evaluation)
+    gpu_activities = [
+        start_training,
+        run_evaluation,
+        deploy_model,
+    ]
+
+    # All workflows (registered on every worker mode)
+    all_workflows = [
+        IngestWorkflow,
+        RefineWorkflow,
+        TrainWorkflow,
+        EvaluateWorkflow,
+        FullPipelineWorkflow,
+    ]
+
+    mode = settings.worker_mode
+
+    if mode == "main":
+        task_queue = "ml-pipeline-main"
+        activities = cpu_activities
+        logger.info("Worker mode: main (CPU only)")
+    elif mode == "gpu":
+        task_queue = "ml-pipeline-gpu"
+        activities = gpu_activities
+        logger.info("Worker mode: gpu (GPU only)")
+    else:
+        task_queue = settings.temporal_task_queue
+        activities = cpu_activities + gpu_activities
+        logger.info("Worker mode: all (dev mode)")
+
+    logger.info("Starting worker on queue: %s", task_queue)
     worker = Worker(
         client,
-        task_queue=settings.temporal_task_queue,
-        workflows=[
-            IngestWorkflow,
-            RefineWorkflow,
-            TrainWorkflow,
-            EvaluateWorkflow,
-            FullPipelineWorkflow,
-        ],
-        activities=[
-            parse_document,
-            generate_synthetic_pairs,
-            chunk_text,
-            build_dataset,
-            get_document_info,
-            start_training,
-            run_evaluation,
-            deploy_model,
-        ],
+        task_queue=task_queue,
+        workflows=all_workflows,
+        activities=activities,
     )
 
     logger.info("Worker started. Waiting for tasks...")

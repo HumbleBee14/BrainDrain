@@ -25,7 +25,9 @@ export function usePipelineStatus(projectId: string, enabled = true) {
       if (!data) return false;
       // Poll every 3s while pipeline is actively processing
       const isActive =
-        data.documents.parsing > 0 || data.datasets.generating > 0;
+        data.documents.parsing > 0 ||
+        data.datasets.generating > 0 ||
+        data.training_jobs.training > 0;
       return isActive ? 3000 : false;
     },
   });

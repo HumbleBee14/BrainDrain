@@ -2,12 +2,14 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::pipeline::{
-    DatasetStatusCounts, DocumentStatusCounts, ProjectPipelineStatus, TriggerParseResponse,
-    TriggerRefineResponse,
+    DatasetStatusCounts, DocumentStatusCounts, ModelStatusCounts, ProjectPipelineStatus,
+    TrainingJobStatusCounts, TriggerParseResponse, TriggerRefineResponse,
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::dataset_repo::DatasetRepo;
 use crate::repositories::document_repo::DocumentRepo;
+use crate::repositories::model_repo::ModelRepo;
+use crate::repositories::training_job_repo::TrainingJobRepo;
 use crate::temporal::TemporalClient;
 
 /// Business logic for pipeline orchestration.
@@ -118,11 +120,19 @@ impl PipelineService {
             uploaded,
             parsing,
             parsed,
-            failed,
+            doc_failed,
             total_datasets,
             generating,
             review_pending,
             approved,
+            total_jobs,
+            jobs_pending,
+            jobs_training,
+            jobs_completed,
+            jobs_failed,
+            total_models,
+            models_undeployed,
+            models_active,
         ) = tokio::try_join!(
             DocumentRepo::count_by_project(db, tenant_id, project_id),
             DocumentRepo::count_by_status(db, tenant_id, project_id, "uploaded"),
@@ -133,6 +143,14 @@ impl PipelineService {
             DatasetRepo::count_by_status(db, tenant_id, project_id, "generating"),
             DatasetRepo::count_by_status(db, tenant_id, project_id, "review_pending"),
             DatasetRepo::count_by_status(db, tenant_id, project_id, "approved"),
+            TrainingJobRepo::count_by_project(db, tenant_id, project_id),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "pending"),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "training"),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "completed"),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "failed"),
+            ModelRepo::count_by_project(db, tenant_id, project_id),
+            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "undeployed"),
+            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "active"),
         )?;
 
         Ok(ProjectPipelineStatus {
@@ -142,13 +160,25 @@ impl PipelineService {
                 uploaded,
                 parsing,
                 parsed,
-                failed,
+                failed: doc_failed,
             },
             datasets: DatasetStatusCounts {
                 total: total_datasets,
                 generating,
                 review_pending,
                 approved,
+            },
+            training_jobs: TrainingJobStatusCounts {
+                total: total_jobs,
+                pending: jobs_pending,
+                training: jobs_training,
+                completed: jobs_completed,
+                failed: jobs_failed,
+            },
+            models: ModelStatusCounts {
+                total: total_models,
+                undeployed: models_undeployed,
+                active: models_active,
             },
         })
     }

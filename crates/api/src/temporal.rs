@@ -110,23 +110,70 @@ impl TemporalClient {
         .await
     }
 
-    /// Start a Temporal workflow via the HTTP API.
+    /// Start the TrainWorkflow to fine-tune a model.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_train(
+        &self,
+        tenant_id: Uuid,
+        training_job_id: Uuid,
+        dataset_path: &str,
+        base_model: &str,
+        method: &str,
+        mode: &str,
+        hyperparams: serde_json::Value,
+        gpu_class: Option<&str>,
+    ) -> Result<StartWorkflowResponse, TemporalError> {
+        let workflow_id = format!("train-{training_job_id}-{}", chrono::Utc::now().timestamp());
+
+        self.start_workflow_on_queue(
+            "TrainWorkflow",
+            &workflow_id,
+            serde_json::json!([
+                tenant_id.to_string(),
+                training_job_id.to_string(),
+                dataset_path,
+                base_model,
+                method,
+                mode,
+                hyperparams,
+                gpu_class,
+            ]),
+            Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+        )
+        .await
+    }
+
+    /// Start a Temporal workflow via the HTTP API on the default task queue.
     async fn start_workflow(
         &self,
         workflow_type: &str,
         workflow_id: &str,
         args: serde_json::Value,
     ) -> Result<StartWorkflowResponse, TemporalError> {
+        self.start_workflow_on_queue(workflow_type, workflow_id, args, None)
+            .await
+    }
+
+    /// Start a Temporal workflow via the HTTP API on a specific task queue.
+    async fn start_workflow_on_queue(
+        &self,
+        workflow_type: &str,
+        workflow_id: &str,
+        args: serde_json::Value,
+        task_queue: Option<&str>,
+    ) -> Result<StartWorkflowResponse, TemporalError> {
         let url = format!(
             "{}/api/v1/namespaces/{}/workflows",
             self.base_url, self.namespace
         );
 
+        let queue = task_queue.unwrap_or(&self.task_queue);
+
         // Temporal HTTP API payload format
         let payload = serde_json::json!({
             "workflowId": workflow_id,
             "workflowType": { "name": workflow_type },
-            "taskQueue": { "name": &self.task_queue },
+            "taskQueue": { "name": queue },
             "input": {
                 "payloads": args.as_array().unwrap_or(&vec![]).iter().map(|arg| {
                     serde_json::json!({

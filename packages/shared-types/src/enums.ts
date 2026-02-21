@@ -6,6 +6,7 @@
 
 export const DocumentStatus = {
   Uploaded: "uploaded",
+  Scanning: "scanning",
   Parsing: "parsing",
   Parsed: "parsed",
   Failed: "failed",
@@ -13,15 +14,17 @@ export const DocumentStatus = {
 export type DocumentStatus = (typeof DocumentStatus)[keyof typeof DocumentStatus];
 
 export const DatasetStatus = {
-  Building: "building",
-  Ready: "ready",
-  Failed: "failed",
+  Generating: "generating",
+  ReviewPending: "review_pending",
+  Approved: "approved",
+  Archived: "archived",
 } as const;
 export type DatasetStatus = (typeof DatasetStatus)[keyof typeof DatasetStatus];
 
 export const TrainingJobStatus = {
-  Queued: "queued",
-  Preparing: "preparing",
+  Pending: "pending",
+  CostApproval: "cost_approval",
+  Provisioning: "provisioning",
   Training: "training",
   Completed: "completed",
   Failed: "failed",
@@ -37,23 +40,22 @@ export const TrainingMethod = {
 export type TrainingMethod = (typeof TrainingMethod)[keyof typeof TrainingMethod];
 
 export const TrainingMode = {
-  Sft: "sft",
-  Dpo: "dpo",
-  Orpo: "orpo",
+  Quick: "quick",
+  Aligned: "aligned",
+  Reasoning: "reasoning",
+  Iterative: "iterative",
 } as const;
 export type TrainingMode = (typeof TrainingMode)[keyof typeof TrainingMode];
 
 export const DeploymentStatus = {
-  NotDeployed: "not_deployed",
+  Undeployed: "undeployed",
   Deploying: "deploying",
   Active: "active",
-  Failed: "failed",
-  Stopped: "stopped",
+  Inactive: "inactive",
 } as const;
 export type DeploymentStatus = (typeof DeploymentStatus)[keyof typeof DeploymentStatus];
 
 export const EvaluationStatus = {
-  Pending: "pending",
   Running: "running",
   Completed: "completed",
   Failed: "failed",
@@ -61,8 +63,7 @@ export const EvaluationStatus = {
 export type EvaluationStatus = (typeof EvaluationStatus)[keyof typeof EvaluationStatus];
 
 export const PipelineStage = {
-  Upload: "upload",
-  Parse: "parse",
+  Ingest: "ingest",
   Refine: "refine",
   Train: "train",
   Evaluate: "evaluate",
@@ -71,18 +72,48 @@ export const PipelineStage = {
 export type PipelineStage = (typeof PipelineStage)[keyof typeof PipelineStage];
 
 export const TaskType = {
-  Chat: "chat",
-  Instruct: "instruct",
-  Classify: "classify",
-  Extract: "extract",
-  Summarize: "summarize",
-  Code: "code",
+  QuestionAnswering: "question_answering",
+  InstructionFollowing: "instruction_following",
+  Reasoning: "reasoning",
   Custom: "custom",
 } as const;
 export type TaskType = (typeof TaskType)[keyof typeof TaskType];
 
 export const ProjectStatus = {
-  Active: "active",
+  Created: "created",
+  Ingesting: "ingesting",
+  Refining: "refining",
+  Training: "training",
+  Evaluating: "evaluating",
+  Deployed: "deployed",
   Archived: "archived",
 } as const;
 export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
+
+export const GpuClass = {
+  T4: "t4",
+  A10g: "a10g",
+  L40s: "l40s",
+  A10040gb: "a10040gb",
+  A10080gb: "a10080gb",
+  H100: "h100",
+} as const;
+export type GpuClass = (typeof GpuClass)[keyof typeof GpuClass];
+
+export const BillingOperation = {
+  Parse: "parse",
+  Synthesize: "synthesize",
+  Train: "train",
+  Evaluate: "evaluate",
+  Inference: "inference",
+  Export: "export",
+} as const;
+export type BillingOperation = (typeof BillingOperation)[keyof typeof BillingOperation];
+
+export const Plan = {
+  Starter: "starter",
+  Growth: "growth",
+  Pro: "pro",
+  Enterprise: "enterprise",
+} as const;
+export type Plan = (typeof Plan)[keyof typeof Plan];
