@@ -1,4 +1,93 @@
+import type {
+  ProjectResponse,
+  DocumentResponse,
+  DatasetResponse,
+  TrainingJobResponse,
+  ModelResponse,
+  EvaluationResponse,
+  CreateProjectRequest,
+  CreateTrainingJobRequest,
+  CreateEvaluationRequest,
+  CreateApiKeyRequest,
+  CreateApiKeyResponse,
+  ApiKeyResponse,
+  DeploymentStatusResponse,
+  UploadResponse,
+  ProjectPipelineStatus,
+  TriggerParseResponse,
+  TriggerRefineResponse,
+  PaginatedResponse,
+} from "./generated";
+
+// ── Re-export generated types with frontend-friendly aliases ──
+// All types below are auto-generated from Rust DTOs via ts-rs.
+// Run `cargo test --workspace` to regenerate.
+
+export type {
+  // Enums
+  ProjectStatus,
+  DocumentStatus,
+  DatasetStatus,
+  TrainingJobStatus,
+  TrainingMethod,
+  TrainingMode,
+  EvaluationStatus,
+  DeploymentStatus,
+  // Typed structs
+  EvaluationScores,
+  Hyperparams,
+  TrainingMetrics,
+  // Response types (pass-through)
+  ApiKeyResponse,
+  CreateApiKeyResponse,
+  DeploymentStatusResponse,
+  UploadResponse,
+  ProjectPipelineStatus,
+  TriggerParseResponse,
+  TriggerRefineResponse,
+  PaginatedResponse,
+} from "./generated";
+
+// Response types with frontend-friendly aliases
+export type { ProjectResponse as Project } from "./generated";
+export type { DocumentResponse as Document } from "./generated";
+export type { DatasetResponse as Dataset } from "./generated";
+export type { TrainingJobResponse as TrainingJob } from "./generated";
+export type { ModelResponse as Model } from "./generated";
+export type { EvaluationResponse as Evaluation } from "./generated";
+
+// Request types with frontend-friendly aliases
+export type { CreateProjectRequest as CreateProjectInput } from "./generated";
+export type { CreateTrainingJobRequest as CreateTrainingJobInput } from "./generated";
+export type { CreateEvaluationRequest as CreateEvaluationInput } from "./generated";
+export type { CreateApiKeyRequest as CreateApiKeyInput } from "./generated";
+
+// Backward-compatible alias
+export type { DeploymentStatus as ModelDeploymentStatus } from "./generated";
+
+// ── Frontend-only types (not in Rust DTOs) ──
+
+export interface TrainingMetricsEntry {
+  step: number;
+  epoch: number;
+  loss: number;
+  learning_rate: number;
+  grad_norm: number;
+  phase: string;
+  timestamp: string;
+}
+
+export interface ParsedContentResponse {
+  url: string;
+}
+
+// ── API client infrastructure ──
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 500;
 
 interface ApiError {
   error: {
@@ -7,7 +96,7 @@ interface ApiError {
   };
 }
 
-class ApiClientError extends Error {
+export class ApiClientError extends Error {
   code: string;
   status: number;
 
@@ -16,6 +105,72 @@ class ApiClientError extends Error {
     this.code = body.error.code;
     this.status = status;
   }
+}
+
+function isRetryable(error: unknown): boolean {
+  if (error instanceof ApiClientError) {
+    return error.status >= 500;
+  }
+  return (
+    error instanceof TypeError ||
+    (error instanceof DOMException && error.name === "AbortError")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wraps fetch with a timeout (via AbortController) and retry logic
+ * for transient failures (network errors, 5xx responses).
+ *
+ * Retries up to MAX_RETRIES times with exponential backoff.
+ * Non-retryable errors (4xx, known client errors) are thrown immediately.
+ */
+async function fetchWithRetry(
+  url: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    if (init?.signal) {
+      init.signal.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
+    }
+
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+
+      if (res.status >= 500 && attempt < MAX_RETRIES) {
+        lastError = new ApiClientError(res.status, {
+          error: { code: "server_error", message: `Server returned ${res.status}` },
+        });
+        await sleep(BASE_BACKOFF_MS * 2 ** attempt);
+        continue;
+      }
+
+      return res;
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || attempt >= MAX_RETRIES) {
+        throw error;
+      }
+
+      await sleep(BASE_BACKOFF_MS * 2 ** attempt);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw lastError;
 }
 
 /**
@@ -42,7 +197,7 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchWithRetry(`${API_URL}${path}`, {
     ...fetchOptions,
     headers,
   });
@@ -59,266 +214,6 @@ async function request<T>(
   return res.json();
 }
 
-// ── Project types ──
-
-export interface Project {
-  id: string;
-  name: string;
-  description: string | null;
-  task_type: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PaginatedResponse<T> {
-  data: T[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  task_type?: string;
-}
-
-// ── Document types ──
-
-export interface Document {
-  id: string;
-  project_id: string;
-  filename: string;
-  file_size: number;
-  mime_type: string;
-  status: string;
-  parse_quality: number | null;
-  page_count: number | null;
-  language: string | null;
-  domain: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface UploadResponse {
-  id: string;
-  filename: string;
-  file_size: number;
-  status: string;
-}
-
-// ── Dataset types ──
-
-export interface Dataset {
-  id: string;
-  project_id: string;
-  name: string;
-  format: string;
-  status: string;
-  pair_count: number | null;
-  stats: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
-
-// ── Training job types ──
-
-export interface TrainingJob {
-  id: string;
-  project_id: string;
-  dataset_id: string;
-  base_model: string;
-  method: string;
-  mode: string;
-  hyperparams: Record<string, unknown>;
-  gpu_class: string | null;
-  status: string;
-  cost_estimate: number | null;
-  actual_cost: number | null;
-  metrics: Record<string, unknown>;
-  started_at: string | null;
-  completed_at: string | null;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateTrainingJobInput {
-  dataset_id: string;
-  base_model: string;
-  method?: string;
-  mode?: string;
-  hyperparams?: Record<string, unknown>;
-  gpu_class?: string;
-}
-
-// ── Model types ──
-
-export interface Model {
-  id: string;
-  project_id: string;
-  training_job_id: string;
-  name: string;
-  base_model: string;
-  deployment_status: string;
-  eval_scores: Record<string, unknown>;
-  version: number;
-  created_at: string;
-  updated_at: string;
-}
-
-// ── Training metrics ──
-
-export interface TrainingMetricsEntry {
-  step: number;
-  epoch: number;
-  loss: number;
-  learning_rate: number;
-  grad_norm: number;
-  phase: string;
-  timestamp: string;
-}
-
-// ── Pipeline types ──
-
-export interface TriggerParseResponse {
-  workflow_id: string;
-  document_count: number;
-}
-
-export interface TriggerRefineResponse {
-  workflow_id: string;
-  document_count: number;
-}
-
-export interface ProjectPipelineStatus {
-  project_id: string;
-  documents: {
-    total: number;
-    uploaded: number;
-    parsing: number;
-    parsed: number;
-    failed: number;
-  };
-  datasets: {
-    total: number;
-    generating: number;
-    review_pending: number;
-    approved: number;
-  };
-  training_jobs: {
-    total: number;
-    pending: number;
-    training: number;
-    completed: number;
-    failed: number;
-  };
-  models: {
-    total: number;
-    undeployed: number;
-    active: number;
-  };
-  evaluations: {
-    total: number;
-    running: number;
-    completed: number;
-    failed: number;
-  };
-}
-
-export interface ParsedContentResponse {
-  url: string;
-}
-
-// ── Evaluation types ──
-
-export interface Evaluation {
-  id: string;
-  model_id: string;
-  status: string;
-  scores: EvaluationScores | null;
-  report: Record<string, unknown>;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface EvaluationScores {
-  domain: {
-    accuracy: number;
-    completeness: number;
-    faithfulness: number;
-    mean: number;
-  };
-  general: {
-    base_score: number;
-    finetuned_score: number;
-    delta_pct: number;
-    forgetting_alert: boolean;
-    categories: Record<string, { base: number; finetuned: number }>;
-  };
-  ab_comparison: {
-    win_rate: number;
-    confidence_low: number;
-    confidence_high: number;
-    total_comparisons: number;
-  };
-  safety: {
-    refusal_rate: number;
-    base_refusal_rate: number;
-    degraded: boolean;
-    categories: Record<string, { refusal_rate: number }>;
-  };
-  overall: number;
-}
-
-export interface CreateEvaluationInput {
-  judge_model?: string;
-  judge_api_base?: string;
-}
-
-// ── API Key types ──
-
-export interface ApiKeyResponse {
-  id: string;
-  model_id: string;
-  name: string;
-  key_prefix: string;
-  rate_limit: number;
-  is_active: boolean;
-  last_used_at: string | null;
-  expires_at: string | null;
-  created_at: string;
-}
-
-export interface CreateApiKeyResponse {
-  id: string;
-  name: string;
-  key: string;
-  key_prefix: string;
-  rate_limit: number;
-  expires_at: string | null;
-  created_at: string;
-}
-
-export interface CreateApiKeyInput {
-  name: string;
-  rate_limit?: number;
-  expires_in_days?: number;
-}
-
-// ── Deployment types ──
-
-export interface DeploymentStatus {
-  model_id: string;
-  deployment_status: string;
-  deployment_config: Record<string, unknown>;
-  base_model: string;
-  adapter_path: string | null;
-}
-
 // ── API methods ──
 
 async function uploadRequest(
@@ -326,7 +221,7 @@ async function uploadRequest(
   token: string,
   formData: FormData,
 ): Promise<UploadResponse[]> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchWithRetry(`${API_URL}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
@@ -343,16 +238,16 @@ async function uploadRequest(
 export const api = {
   projects: {
     list: (token: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<Project>>(
+      request<PaginatedResponse<ProjectResponse>>(
         `/api/v1/projects?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<Project>(`/api/v1/projects/${id}`, { token }),
+      request<ProjectResponse>(`/api/v1/projects/${id}`, { token }),
 
-    create: (token: string, data: CreateProjectInput) =>
-      request<Project>("/api/v1/projects", {
+    create: (token: string, data: CreateProjectRequest) =>
+      request<ProjectResponse>("/api/v1/projects", {
         token,
         method: "POST",
         body: JSON.stringify(data),
@@ -364,13 +259,13 @@ export const api = {
 
   documents: {
     list: (token: string, projectId: string, offset = 0, limit = 50) =>
-      request<PaginatedResponse<Document>>(
+      request<PaginatedResponse<DocumentResponse>>(
         `/api/v1/projects/${projectId}/documents?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<Document>(`/api/v1/documents/${id}`, { token }),
+      request<DocumentResponse>(`/api/v1/documents/${id}`, { token }),
 
     upload: (token: string, projectId: string, files: File[]) => {
       const formData = new FormData();
@@ -417,13 +312,13 @@ export const api = {
 
   datasets: {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<Dataset>>(
+      request<PaginatedResponse<DatasetResponse>>(
         `/api/v1/projects/${projectId}/datasets?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<Dataset>(`/api/v1/datasets/${id}`, { token }),
+      request<DatasetResponse>(`/api/v1/datasets/${id}`, { token }),
 
     preview: (token: string, id: string, maxRows = 20) =>
       request<Record<string, unknown>[]>(
@@ -434,23 +329,23 @@ export const api = {
 
   trainingJobs: {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<TrainingJob>>(
+      request<PaginatedResponse<TrainingJobResponse>>(
         `/api/v1/projects/${projectId}/training-jobs?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<TrainingJob>(`/api/v1/training-jobs/${id}`, { token }),
+      request<TrainingJobResponse>(`/api/v1/training-jobs/${id}`, { token }),
 
-    create: (token: string, projectId: string, data: CreateTrainingJobInput) =>
-      request<TrainingJob>(`/api/v1/projects/${projectId}/training-jobs`, {
+    create: (token: string, projectId: string, data: CreateTrainingJobRequest) =>
+      request<TrainingJobResponse>(`/api/v1/projects/${projectId}/training-jobs`, {
         token,
         method: "POST",
         body: JSON.stringify(data),
       }),
 
     cancel: (token: string, id: string) =>
-      request<TrainingJob>(`/api/v1/training-jobs/${id}/cancel`, {
+      request<TrainingJobResponse>(`/api/v1/training-jobs/${id}/cancel`, {
         token,
         method: "POST",
         body: JSON.stringify({}),
@@ -464,27 +359,27 @@ export const api = {
 
   models: {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<Model>>(
+      request<PaginatedResponse<ModelResponse>>(
         `/api/v1/projects/${projectId}/models?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<Model>(`/api/v1/models/${id}`, { token }),
+      request<ModelResponse>(`/api/v1/models/${id}`, { token }),
   },
 
   evaluations: {
     list: (token: string, modelId: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<Evaluation>>(
+      request<PaginatedResponse<EvaluationResponse>>(
         `/api/v1/models/${modelId}/evaluations?offset=${offset}&limit=${limit}`,
         { token }
       ),
 
     get: (token: string, id: string) =>
-      request<Evaluation>(`/api/v1/evaluations/${id}`, { token }),
+      request<EvaluationResponse>(`/api/v1/evaluations/${id}`, { token }),
 
-    create: (token: string, modelId: string, data: CreateEvaluationInput) =>
-      request<Evaluation>(`/api/v1/models/${modelId}/evaluations`, {
+    create: (token: string, modelId: string, data: CreateEvaluationRequest) =>
+      request<EvaluationResponse>(`/api/v1/models/${modelId}/evaluations`, {
         token,
         method: "POST",
         body: JSON.stringify(data),
@@ -498,7 +393,7 @@ export const api = {
         { token }
       ),
 
-    create: (token: string, modelId: string, data: CreateApiKeyInput) =>
+    create: (token: string, modelId: string, data: CreateApiKeyRequest) =>
       request<CreateApiKeyResponse>(`/api/v1/models/${modelId}/api-keys`, {
         token,
         method: "POST",
@@ -515,21 +410,21 @@ export const api = {
 
   deployments: {
     deploy: (token: string, modelId: string) =>
-      request<Model>(`/api/v1/models/${modelId}/deploy`, {
+      request<ModelResponse>(`/api/v1/models/${modelId}/deploy`, {
         token,
         method: "POST",
         body: JSON.stringify({}),
       }),
 
     undeploy: (token: string, modelId: string) =>
-      request<Model>(`/api/v1/models/${modelId}/undeploy`, {
+      request<ModelResponse>(`/api/v1/models/${modelId}/undeploy`, {
         token,
         method: "POST",
         body: JSON.stringify({}),
       }),
 
     status: (token: string, modelId: string) =>
-      request<DeploymentStatus>(
+      request<DeploymentStatusResponse>(
         `/api/v1/models/${modelId}/deployment`,
         { token }
       ),

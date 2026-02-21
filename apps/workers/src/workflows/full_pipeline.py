@@ -9,10 +9,7 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from src.activities.stubs import (
-        DeployModelInput,
-        deploy_model,
-    )
+    from src.activities.stubs import DeployModelInput
     from src.workflows.evaluate import EvaluateWorkflow
     from src.workflows.ingest import IngestWorkflow
     from src.workflows.refine import RefineWorkflow
@@ -86,7 +83,7 @@ class FullPipelineWorkflow:
         deploy_result = None
         if training_config.get("auto_deploy", False):
             deploy_result = await workflow.execute_activity(
-                deploy_model,
+                "deploy_model",
                 DeployModelInput(
                     tenant_id=tenant_id,
                     model_id=f"{project_id}-model",

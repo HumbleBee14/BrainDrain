@@ -1,3 +1,6 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
@@ -7,7 +10,11 @@ use uuid::Uuid;
 use crate::app_state::AppState;
 use crate::error::AppError;
 
-/// Authenticated user extracted from a Clerk JWT.
+/// Boxed future returned by [`AuthProvider::authenticate`].
+type AuthFuture<'a> =
+    Pin<Box<dyn Future<Output = Option<Result<AuthenticatedUser, AppError>>> + Send + 'a>>;
+
+/// Authenticated user extracted from a JWT or other auth token.
 ///
 /// Available as an extractor in route handlers:
 /// ```ignore
@@ -15,21 +22,121 @@ use crate::error::AppError;
 /// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthenticatedUser {
-    /// Clerk user ID (sub claim).
+    /// User ID (e.g. Clerk sub claim, OAuth2 subject).
     pub user_id: String,
-    /// Tenant UUID (from org_id claim, mapped to our tenants table).
+    /// Tenant UUID (mapped from external org/user identity).
     pub tenant_id: Uuid,
-    /// Clerk organization ID (raw).
+    /// External organization ID (raw), if any.
     pub org_id: Option<String>,
 }
 
-/// JWT claims from Clerk.
-#[derive(Debug, Deserialize)]
-struct ClerkClaims {
-    sub: String,
-    org_id: Option<String>,
-    // Clerk includes more claims; we only extract what we need.
+// ---------------------------------------------------------------------------
+// AuthProvider trait
+// ---------------------------------------------------------------------------
+
+/// Trait for authentication providers.
+/// Implement this to add new auth methods (OAuth2, SAML, OpenID Connect).
+pub trait AuthProvider: Send + Sync + 'static {
+    /// Attempt to authenticate from the given bearer token.
+    /// Returns `None` if this provider doesn't handle the given credentials.
+    /// Returns `Some(Ok(user))` on success, `Some(Err(e))` on auth failure.
+    fn authenticate<'a>(&'a self, token: &'a str, db: &'a sqlx::PgPool) -> AuthFuture<'a>;
 }
+
+// ---------------------------------------------------------------------------
+// AuthProviderChain
+// ---------------------------------------------------------------------------
+
+/// Chain of auth providers. Tries each in order until one handles the request.
+pub struct AuthProviderChain {
+    providers: Vec<Box<dyn AuthProvider>>,
+}
+
+impl AuthProviderChain {
+    pub fn new() -> Self {
+        Self {
+            providers: Vec::new(),
+        }
+    }
+
+    pub fn add(mut self, provider: impl AuthProvider) -> Self {
+        self.providers.push(Box::new(provider));
+        self
+    }
+
+    pub async fn authenticate(
+        &self,
+        token: &str,
+        db: &sqlx::PgPool,
+    ) -> Result<AuthenticatedUser, AppError> {
+        for provider in &self.providers {
+            if let Some(result) = provider.authenticate(token, db).await {
+                return result;
+            }
+        }
+        Err(AppError::Unauthorized)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClerkAuthProvider
+// ---------------------------------------------------------------------------
+
+/// Clerk JWT authentication provider.
+///
+/// Verifies tokens against Clerk's JWKS endpoint and resolves the
+/// corresponding tenant from the database.
+pub struct ClerkAuthProvider {
+    jwks_url: String,
+    is_dev: bool,
+}
+
+impl ClerkAuthProvider {
+    pub fn new(jwks_url: String, is_dev: bool) -> Self {
+        Self { jwks_url, is_dev }
+    }
+}
+
+impl AuthProvider for ClerkAuthProvider {
+    fn authenticate<'a>(&'a self, token: &'a str, db: &'a sqlx::PgPool) -> AuthFuture<'a> {
+        Box::pin(async move {
+            // Dev token check (only in development mode)
+            if self.is_dev
+                && let Some(dev_user) = parse_dev_token(token)
+            {
+                return Some(Ok(dev_user));
+            }
+
+            // Try Clerk JWT verification
+            let claims = match verify_clerk_jwt(token, &self.jwks_url).await {
+                Ok(c) => c,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let tenant_id = if let Some(ref org_id) = claims.org_id {
+                match resolve_tenant_id(db, org_id).await {
+                    Ok(id) => id,
+                    Err(e) => return Some(Err(e)),
+                }
+            } else {
+                match resolve_personal_tenant(db, &claims.sub).await {
+                    Ok(id) => id,
+                    Err(e) => return Some(Err(e)),
+                }
+            };
+
+            Some(Ok(AuthenticatedUser {
+                user_id: claims.sub,
+                tenant_id,
+                org_id: claims.org_id,
+            }))
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FromRequestParts extractor
+// ---------------------------------------------------------------------------
 
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = AppError;
@@ -38,7 +145,6 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // Extract Bearer token from Authorization header
         let auth_header = parts
             .headers
             .get("authorization")
@@ -49,30 +155,20 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .strip_prefix("Bearer ")
             .ok_or(AppError::Unauthorized)?;
 
-        // In development mode, accept a simple dev token format: "dev_{tenant_id}_{user_id}"
-        if state.config().is_dev()
-            && let Some(dev_user) = parse_dev_token(token)
-        {
-            return Ok(dev_user);
-        }
-
-        // Verify JWT with Clerk's JWKS
-        let claims = verify_clerk_jwt(token, &state.config().clerk_jwks_url).await?;
-
-        // Map org_id to tenant_id by looking up the tenant in the database
-        let tenant_id = if let Some(ref org_id) = claims.org_id {
-            resolve_tenant_id(state.db(), org_id).await?
-        } else {
-            // Personal workspace — resolve by user's personal org
-            resolve_personal_tenant(state.db(), &claims.sub).await?
-        };
-
-        Ok(AuthenticatedUser {
-            user_id: claims.sub,
-            tenant_id,
-            org_id: claims.org_id,
-        })
+        state.auth_chain().authenticate(token, state.db()).await
     }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers (used by ClerkAuthProvider)
+// ---------------------------------------------------------------------------
+
+/// JWT claims from Clerk.
+#[derive(Debug, Deserialize)]
+struct ClerkClaims {
+    sub: String,
+    org_id: Option<String>,
+    // Clerk includes more claims; we only extract what we need.
 }
 
 /// Parse a development-only token for local testing.

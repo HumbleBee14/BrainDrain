@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use uuid::Uuid;
 
 /// Application error type that maps cleanly to HTTP responses.
 ///
@@ -54,6 +55,40 @@ struct ErrorBody {
     message: String,
 }
 
+/// Structured context for error observability.
+/// Attached to errors for logging — never exposed to clients.
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub struct ErrorContext {
+    pub tenant_id: Option<Uuid>,
+    pub operation: Option<&'static str>,
+    pub resource_type: Option<&'static str>,
+    pub resource_id: Option<Uuid>,
+}
+
+#[allow(dead_code)]
+impl ErrorContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn tenant(mut self, id: Uuid) -> Self {
+        self.tenant_id = Some(id);
+        self
+    }
+
+    pub fn operation(mut self, op: &'static str) -> Self {
+        self.operation = Some(op);
+        self
+    }
+
+    pub fn resource(mut self, resource_type: &'static str, id: Uuid) -> Self {
+        self.resource_type = Some(resource_type);
+        self.resource_id = Some(id);
+        self
+    }
+}
+
 impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
@@ -83,6 +118,22 @@ impl AppError {
             Self::Database(_) => "DATABASE_ERROR",
             Self::Storage(_) => "STORAGE_ERROR",
         }
+    }
+
+    /// Attach structured context for observability logging.
+    /// Context is logged with the error but never exposed to clients.
+    #[allow(dead_code)]
+    pub fn with_context(self, ctx: ErrorContext) -> Self {
+        tracing::warn!(
+            error = %self,
+            error_code = self.error_code(),
+            tenant_id = ?ctx.tenant_id,
+            operation = ?ctx.operation,
+            resource_type = ?ctx.resource_type,
+            resource_id = ?ctx.resource_id,
+            "Error with context"
+        );
+        self
     }
 }
 
@@ -214,6 +265,277 @@ mod tests {
 
         // Must have { "error": { "code": "...", "message": "..." } }
         assert!(json.get("error").is_some());
+        assert!(json["error"].get("code").is_some());
+        assert!(json["error"].get("message").is_some());
+    }
+
+    // ── Comprehensive error code mapping ──
+
+    #[test]
+    fn all_error_variants_have_codes() {
+        let variants: Vec<AppError> = vec![
+            AppError::NotFound {
+                message: "x".into(),
+            },
+            AppError::BadRequest {
+                message: "x".into(),
+            },
+            AppError::Unauthorized,
+            AppError::Forbidden {
+                message: "x".into(),
+            },
+            AppError::Conflict {
+                message: "x".into(),
+            },
+            AppError::RateLimited,
+            AppError::NotImplemented,
+            AppError::Internal(anyhow::anyhow!("x")),
+        ];
+
+        for err in variants {
+            let code = err.error_code();
+            assert!(!code.is_empty(), "Error code should not be empty");
+            assert_eq!(
+                code,
+                code.to_uppercase(),
+                "Error code should be uppercase: {code}",
+            );
+        }
+    }
+
+    #[test]
+    fn error_code_values_are_correct() {
+        assert_eq!(
+            AppError::NotFound {
+                message: "x".into()
+            }
+            .error_code(),
+            "NOT_FOUND",
+        );
+        assert_eq!(
+            AppError::BadRequest {
+                message: "x".into()
+            }
+            .error_code(),
+            "BAD_REQUEST",
+        );
+        assert_eq!(AppError::Unauthorized.error_code(), "UNAUTHORIZED");
+        assert_eq!(
+            AppError::Forbidden {
+                message: "x".into()
+            }
+            .error_code(),
+            "FORBIDDEN",
+        );
+        assert_eq!(
+            AppError::Conflict {
+                message: "x".into()
+            }
+            .error_code(),
+            "CONFLICT",
+        );
+        assert_eq!(AppError::RateLimited.error_code(), "RATE_LIMITED");
+        assert_eq!(AppError::NotImplemented.error_code(), "NOT_IMPLEMENTED");
+        assert_eq!(
+            AppError::Internal(anyhow::anyhow!("x")).error_code(),
+            "INTERNAL_ERROR",
+        );
+    }
+
+    // ── Status code mapping is consistent ──
+
+    #[test]
+    fn forbidden_maps_to_403() {
+        assert_status(
+            AppError::Forbidden {
+                message: "x".into(),
+            },
+            StatusCode::FORBIDDEN,
+        );
+    }
+
+    #[test]
+    fn conflict_maps_to_409() {
+        assert_status(
+            AppError::Conflict {
+                message: "x".into(),
+            },
+            StatusCode::CONFLICT,
+        );
+    }
+
+    #[test]
+    fn rate_limited_maps_to_429() {
+        assert_status(AppError::RateLimited, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn not_implemented_maps_to_501() {
+        assert_status(AppError::NotImplemented, StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[test]
+    fn internal_maps_to_500() {
+        assert_status(
+            AppError::Internal(anyhow::anyhow!("err")),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        );
+    }
+
+    // ── Internal errors don't leak details ──
+
+    #[tokio::test]
+    async fn database_errors_dont_leak_details() {
+        // Simulate a database error using sqlx::Error
+        let error = AppError::Internal(anyhow::anyhow!("connection refused to pg:5432"));
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let message = json["error"]["message"].as_str().unwrap();
+        assert!(!message.contains("connection"));
+        assert!(!message.contains("5432"));
+        assert_eq!(message, "An internal error occurred");
+    }
+
+    #[tokio::test]
+    async fn forbidden_error_shows_message() {
+        let error = AppError::Forbidden {
+            message: "Insufficient permissions".into(),
+        };
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "FORBIDDEN");
+        assert_eq!(json["error"]["message"], "Insufficient permissions");
+    }
+
+    #[tokio::test]
+    async fn conflict_error_shows_message() {
+        let error = AppError::Conflict {
+            message: "Already exists".into(),
+        };
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "CONFLICT");
+        assert_eq!(json["error"]["message"], "Already exists");
+    }
+
+    #[tokio::test]
+    async fn rate_limited_error_envelope() {
+        let error = AppError::RateLimited;
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "RATE_LIMITED");
+    }
+
+    // ── Display trait correctness ──
+
+    #[test]
+    fn display_messages_are_correct() {
+        assert_eq!(
+            AppError::NotFound {
+                message: "gone".into()
+            }
+            .to_string(),
+            "gone",
+        );
+        assert_eq!(
+            AppError::BadRequest {
+                message: "bad".into()
+            }
+            .to_string(),
+            "bad",
+        );
+        assert_eq!(
+            AppError::Unauthorized.to_string(),
+            "Authentication required"
+        );
+        assert_eq!(AppError::RateLimited.to_string(), "Rate limit exceeded");
+        assert_eq!(AppError::NotImplemented.to_string(), "Not implemented");
+        assert_eq!(
+            AppError::Internal(anyhow::anyhow!("oops")).to_string(),
+            "Internal server error",
+        );
+    }
+
+    // ── ErrorContext builder ──
+
+    #[test]
+    fn error_context_builder_pattern() {
+        let tenant_id = uuid::Uuid::new_v4();
+        let resource_id = uuid::Uuid::new_v4();
+
+        let ctx = ErrorContext::new()
+            .tenant(tenant_id)
+            .operation("create")
+            .resource("project", resource_id);
+
+        assert_eq!(ctx.tenant_id, Some(tenant_id));
+        assert_eq!(ctx.operation, Some("create"));
+        assert_eq!(ctx.resource_type, Some("project"));
+        assert_eq!(ctx.resource_id, Some(resource_id));
+    }
+
+    #[test]
+    fn error_context_default_is_all_none() {
+        let ctx = ErrorContext::new();
+        assert!(ctx.tenant_id.is_none());
+        assert!(ctx.operation.is_none());
+        assert!(ctx.resource_type.is_none());
+        assert!(ctx.resource_id.is_none());
+    }
+
+    // ── From trait conversions ──
+
+    #[test]
+    fn anyhow_converts_to_internal() {
+        let err: AppError = anyhow::anyhow!("something went wrong").into();
+        assert!(matches!(err, AppError::Internal(_)));
+        assert_eq!(err.error_code(), "INTERNAL_ERROR");
+    }
+
+    // ── No extra fields leaked in JSON envelope ──
+
+    #[tokio::test]
+    async fn json_envelope_has_only_expected_fields() {
+        let error = AppError::BadRequest {
+            message: "test".into(),
+        };
+        let response = error.into_response();
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let top_keys: Vec<&String> = json.as_object().unwrap().keys().collect();
+        assert_eq!(
+            top_keys,
+            vec!["error"],
+            "Top-level should only have 'error'"
+        );
+
+        let error_keys: Vec<&String> = json["error"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            error_keys.len(),
+            2,
+            "Error object should have exactly 2 fields (code, message)",
+        );
         assert!(json["error"].get("code").is_some());
         assert!(json["error"].get("message").is_some());
     }

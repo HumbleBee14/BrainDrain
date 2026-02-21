@@ -70,7 +70,7 @@ async fn upload_document(
         }
 
         let result = DocumentService::upload(
-            state.db(),
+            state.document_repo(),
             state.storage(),
             user.tenant_id,
             project_id,
@@ -99,7 +99,7 @@ async fn list_documents(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<DocumentResponse>>> {
     let result = DocumentService::list(
-        state.db(),
+        state.document_repo(),
         user.tenant_id,
         project_id,
         params.offset,
@@ -114,6 +114,6 @@ async fn get_document(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<DocumentResponse>> {
-    let doc = DocumentService::get(state.db(), user.tenant_id, id).await?;
+    let doc = DocumentService::get(state.document_repo(), user.tenant_id, id).await?;
     Ok(Json(doc))
 }

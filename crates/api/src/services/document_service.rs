@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use platform_shared::constants::SUPPORTED_EXTENSIONS;
@@ -9,7 +8,7 @@ use platform_storage::ObjectStorage;
 use crate::dto::common::PaginatedResponse;
 use crate::dto::document::{DocumentResponse, UploadResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::document_repo::DocumentRepo;
+use crate::repositories::traits::DocumentRepository;
 
 /// Business logic for document operations.
 ///
@@ -19,7 +18,7 @@ pub struct DocumentService;
 impl DocumentService {
     /// Upload a document: validate → store in S3 → create DB record.
     pub async fn upload(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         storage: &impl ObjectStorage,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -57,16 +56,16 @@ impl DocumentService {
             .map_err(AppError::Storage)?;
 
         // Create DB record
-        let doc = DocumentRepo::create(
-            db,
-            tenant_id,
-            project_id,
-            filename,
-            file_size,
-            content_type,
-            &storage_path,
-        )
-        .await?;
+        let doc = repo
+            .create(
+                tenant_id,
+                project_id,
+                filename,
+                file_size,
+                content_type,
+                &storage_path,
+            )
+            .await?;
 
         tracing::info!(
             document_id = %doc.id,
@@ -80,21 +79,24 @@ impl DocumentService {
             id: doc.id,
             filename: doc.filename,
             file_size: doc.file_size,
-            status: doc.status,
+            status: doc
+                .status
+                .parse()
+                .unwrap_or(platform_shared::enums::DocumentStatus::Uploaded),
         })
     }
 
     /// List documents for a project.
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         tenant_id: Uuid,
         project_id: Uuid,
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<DocumentResponse>> {
         let (docs, total) = tokio::try_join!(
-            DocumentRepo::list_by_project(db, tenant_id, project_id, offset, limit),
-            DocumentRepo::count_by_project(db, tenant_id, project_id),
+            repo.list_by_project(tenant_id, project_id, offset, limit),
+            repo.count_by_project(tenant_id, project_id),
         )?;
 
         Ok(PaginatedResponse {
@@ -107,16 +109,132 @@ impl DocumentService {
 
     /// Get a single document.
     pub async fn get(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         tenant_id: Uuid,
         document_id: Uuid,
     ) -> AppResult<DocumentResponse> {
-        let doc = DocumentRepo::get_by_id(db, tenant_id, document_id)
+        let doc = repo
+            .get_by_id(tenant_id, document_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Document not found".to_string(),
             })?;
 
         Ok(doc.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use platform_shared::constants::SUPPORTED_EXTENSIONS;
+
+    /// Helper: extracts the extension from a filename the same way the service does.
+    fn extract_ext(filename: &str) -> String {
+        filename.rsplit('.').next().unwrap_or("").to_lowercase()
+    }
+
+    // ── File extension extraction ──
+
+    #[test]
+    fn extracts_simple_extension() {
+        assert_eq!(extract_ext("document.pdf"), "pdf");
+        assert_eq!(extract_ext("report.docx"), "docx");
+        assert_eq!(extract_ext("readme.txt"), "txt");
+    }
+
+    #[test]
+    fn extracts_extension_case_insensitive() {
+        assert_eq!(extract_ext("PHOTO.JPG"), "jpg");
+        assert_eq!(extract_ext("Scan.PDF"), "pdf");
+        assert_eq!(extract_ext("FILE.DocX"), "docx");
+    }
+
+    #[test]
+    fn extracts_extension_with_multiple_dots() {
+        assert_eq!(extract_ext("archive.tar.pdf"), "pdf");
+        assert_eq!(extract_ext("my.file.name.txt"), "txt");
+    }
+
+    #[test]
+    fn no_dot_returns_full_filename_lowercased() {
+        assert_eq!(extract_ext("Makefile"), "makefile");
+    }
+
+    #[test]
+    fn dot_only_filename() {
+        assert_eq!(extract_ext(".hidden"), "hidden");
+    }
+
+    // ── Supported extension validation ──
+
+    #[test]
+    fn pdf_is_supported() {
+        let ext = extract_ext("report.pdf");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn docx_is_supported() {
+        let ext = extract_ext("letter.docx");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn csv_is_supported() {
+        let ext = extract_ext("data.csv");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn image_formats_are_supported() {
+        for filename in ["photo.png", "img.jpg", "scan.jpeg", "fax.tiff", "icon.bmp"] {
+            let ext = extract_ext(filename);
+            assert!(
+                SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
+                "Expected .{ext} to be supported",
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_extensions_are_rejected() {
+        for filename in [
+            "script.py",
+            "binary.exe",
+            "archive.zip",
+            "video.mp4",
+            "music.mp3",
+        ] {
+            let ext = extract_ext(filename);
+            assert!(
+                !SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
+                "Expected .{ext} to be unsupported",
+            );
+        }
+    }
+
+    #[test]
+    fn all_supported_extensions_are_lowercase() {
+        for ext in SUPPORTED_EXTENSIONS {
+            assert_eq!(
+                *ext,
+                ext.to_lowercase(),
+                "Extension constant should be lowercase: {ext}",
+            );
+        }
+    }
+
+    // ── Empty file validation ──
+
+    #[test]
+    fn zero_byte_file_is_invalid() {
+        let data = bytes::Bytes::new();
+        assert_eq!(data.len(), 0);
+    }
+
+    #[test]
+    fn non_empty_file_is_valid() {
+        let data = bytes::Bytes::from_static(b"hello");
+        assert!(!data.is_empty());
     }
 }

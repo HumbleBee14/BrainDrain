@@ -1,13 +1,16 @@
-"""Training activity — runs fine-tuning jobs using Unsloth + TRL.
+"""Training activities — runs fine-tuning jobs via pluggable strategies.
 
-Supports 4 training modes:
+Strategy-based modes (dispatched by start_training activity):
   - quick:     SFT only (fastest iteration)
   - aligned:   SFT → DPO (production quality alignment)
   - reasoning: SFT → GRPO (reward-guided reasoning optimization)
-  - iterative: Multiple SFT rounds with evaluation between each
 
-Uses Redis streams for real-time metrics streaming and Temporal
-heartbeats to keep the activity alive during long training runs.
+Workflow-based activities (called by TrainIterativeWorkflow):
+  - train_sft_round:    Single SFT iteration with checkpoint save
+  - evaluate_holdout:   Validation eval for early stopping decisions
+
+Uses TrainingEngine protocol (default: Unsloth) for model loading,
+LLMJudge protocol for scoring, and Redis streams for real-time metrics.
 """
 
 import json
@@ -16,186 +19,357 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 from temporalio import activity
 
-from src import clients
-from src.activities.stubs import StartTrainingInput, StartTrainingOutput
+from src import s3_paths
+from src.activities.llm_judge import create_judge_from_settings
+from src.activities.stubs import (
+    EvaluateHoldoutInput,
+    EvaluateHoldoutOutput,
+    StartTrainingInput,
+    StartTrainingOutput,
+    TrainSftRoundInput,
+    TrainSftRoundOutput,
+)
+from src.activities.training_engine import (
+    get_engine,
+    get_strategy,
+    register_strategy,
+)
+from src.constants import TrainingJobStatus
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.training")
 
-# LLM judge client — reused across DPO pair scoring and GRPO reward calls.
-_llm_client: httpx.Client | None = None
+
+class StartTrainingActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="start_training")
+    async def run(self, input: StartTrainingInput) -> StartTrainingOutput:
+        """Run a fine-tuning job. Called by TrainWorkflow."""
+        db = self.infra.db
+        job_id = input.training_job_id
+
+        try:
+            await db.execute(
+                "UPDATE training_jobs SET status = $1, started_at = NOW() WHERE id = $2",
+                TrainingJobStatus.TRAINING,
+                job_id,
+            )
+
+            result = await _run_training(input, self.infra)
+
+            await db.execute(
+                """UPDATE training_jobs
+                SET status = $1,
+                    metrics = $3,
+                    actual_cost = $4,
+                    completed_at = NOW()
+                WHERE id = $2""",
+                TrainingJobStatus.COMPLETED,
+                job_id,
+                json.dumps(result.metrics),
+                result.metrics.get("estimated_cost"),
+            )
+
+            model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
+            project_id = await _get_project_id(db, job_id)
+
+            await db.execute(
+                """INSERT INTO models
+                (tenant_id, project_id, training_job_id, name, base_model,
+                 adapter_path, adapter_size_bytes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                input.tenant_id,
+                project_id,
+                job_id,
+                model_name,
+                input.base_model,
+                result.adapter_path,
+                result.adapter_size_bytes,
+            )
+
+            logger.info("Training completed for job %s, model: %s", job_id, model_name)
+            return result
+
+        except Exception as e:
+            logger.exception("Training failed for job %s", job_id)
+            await db.execute(
+                """UPDATE training_jobs
+                SET status = $1, error_message = $3, completed_at = NOW()
+                WHERE id = $2""",
+                TrainingJobStatus.FAILED,
+                job_id,
+                str(e)[:2000],
+            )
+            raise
 
 
-@activity.defn
-async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
-    """Run a fine-tuning job. Called by TrainWorkflow."""
-    db = await clients.get_db()
-    job_id = input.training_job_id
+class TrainSftRoundActivity:
+    """Single SFT iteration for the iterative workflow.
 
-    try:
-        # Update status to training
-        await db.execute(
-            "UPDATE training_jobs SET status = 'training', started_at = NOW() WHERE id = $1",
-            job_id,
-        )
+    Each round: load model (+adapter if continuing), train one SFT pass,
+    save adapter checkpoint to S3. The loop lives in TrainIterativeWorkflow.
+    """
 
-        result = await _run_training(input)
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-        # Update status to completed
-        await db.execute(
-            """UPDATE training_jobs
-            SET status = 'completed',
-                metrics = $2,
-                actual_cost = $3,
-                completed_at = NOW()
-            WHERE id = $1""",
-            job_id,
-            json.dumps(result.metrics),
-            result.metrics.get("estimated_cost"),
-        )
+    @activity.defn(name="train_sft_round")
+    async def run(self, input: TrainSftRoundInput) -> TrainSftRoundOutput:
+        engine = get_engine()
+        hp = input.hyperparams
+        job_id = input.training_job_id
+        iteration = input.iteration
 
-        # Create model record
-        model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
-        project_id = await _get_project_id(db, job_id)
+        _get_sync_redis(self.infra.settings)
 
-        await db.execute(
-            """INSERT INTO models
-            (tenant_id, project_id, training_job_id, name, base_model,
-             adapter_path, adapter_size_bytes)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-            input.tenant_id,
-            project_id,
-            job_id,
-            model_name,
-            input.base_model,
-            result.adapter_path,
-            result.adapter_size_bytes,
-        )
+        with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
+            tmpdir_path = Path(tmpdir)
 
-        logger.info("Training completed for job %s, model: %s", job_id, model_name)
-        return result
+            # Download dataset
+            dataset_local = tmpdir_path / "dataset.jsonl"
+            _download_dataset(
+                input.dataset_path,
+                dataset_local,
+                self.infra.s3,
+                self.infra.s3_bucket,
+            )
+            dataset = _load_chatml_dataset(dataset_local)
 
-    except Exception as e:
-        logger.exception("Training failed for job %s", job_id)
-        await db.execute(
-            """UPDATE training_jobs
-            SET status = 'failed', error_message = $2, completed_at = NOW()
-            WHERE id = $1""",
-            job_id,
-            str(e)[:2000],
-        )
-        raise
+            # Load model
+            load_in_4bit = input.method == "qlora"
+            max_seq_length = hp.get("max_seq_length", 2048)
+            model, tokenizer = engine.load_model(
+                model_name=input.base_model,
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+            )
+
+            # Attach adapter
+            target_modules = hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            )
+            model = engine.attach_adapter(
+                model,
+                r=hp.get("r", 16),
+                lora_alpha=hp.get("lora_alpha", 16),
+                lora_dropout=hp.get("lora_dropout", 0),
+                target_modules=target_modules,
+            )
+
+            # If resuming from previous iteration, load adapter weights
+            if input.adapter_path:
+                prev_adapter_dir = tmpdir_path / "prev_adapter"
+                prev_adapter_dir.mkdir(parents=True)
+                _download_adapter(
+                    input.adapter_path,
+                    prev_adapter_dir,
+                    self.infra.s3,
+                    self.infra.s3_bucket,
+                )
+                model.load_adapter(
+                    str(prev_adapter_dir),
+                    adapter_name="default",
+                )
+                logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
+
+            # Train one SFT round
+            phase = f"iter_{iteration}"
+            metrics = _train_sft(
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                phase=phase,
+                tenant_id=input.tenant_id,
+                s3=self.infra.s3,
+                bucket=self.infra.s3_bucket,
+            )
+
+            # Save adapter checkpoint
+            adapter_dir = tmpdir_path / "adapter"
+            engine.save_adapter(model, tokenizer, adapter_dir)
+
+            ckpt_s3_path = (
+                s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
+            )
+            adapter_size = _upload_adapter(
+                adapter_dir,
+                ckpt_s3_path,
+                self.infra.s3,
+                self.infra.s3_bucket,
+            )
+
+            logger.info(
+                "Iteration %d complete for job %s, checkpoint: %s",
+                iteration,
+                job_id,
+                ckpt_s3_path,
+            )
+
+            return TrainSftRoundOutput(
+                adapter_path=ckpt_s3_path,
+                adapter_size_bytes=adapter_size,
+                metrics=metrics,
+            )
 
 
-async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
-    """Dispatch to the appropriate training mode."""
-    # Import ML libraries lazily (only available on GPU workers)
-    from unsloth import FastLanguageModel
+class EvaluateHoldoutActivity:
+    """Run holdout validation after an SFT round.
 
+    Loads the adapter from the iteration checkpoint and evaluates
+    on the validation split. Returns eval_loss for early stopping decisions.
+    """
+
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="evaluate_holdout")
+    async def run(self, input: EvaluateHoldoutInput) -> EvaluateHoldoutOutput:
+        engine = get_engine()
+        hp = input.hyperparams
+
+        job_prefix = input.training_job_id[:8]
+        with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Download validation dataset
+            val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
+            val_local = tmpdir_path / "val.jsonl"
+            _download_dataset(val_s3_path, val_local, self.infra.s3, self.infra.s3_bucket)
+            val_dataset = _load_chatml_dataset(val_local)
+            logger.info("Loaded validation set: %d examples", len(val_dataset))
+
+            # Load model + adapter from this iteration's checkpoint
+            max_seq_length = hp.get("max_seq_length", 2048)
+            load_in_4bit = input.method == "qlora"
+            model, tokenizer = engine.load_model(
+                model_name=input.base_model,
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+            )
+
+            target_modules = hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            )
+            model = engine.attach_adapter(
+                model,
+                r=hp.get("r", 16),
+                lora_alpha=hp.get("lora_alpha", 16),
+                lora_dropout=hp.get("lora_dropout", 0),
+                target_modules=target_modules,
+            )
+
+            # Load the adapter weights from this iteration
+            adapter_dir = tmpdir_path / "adapter"
+            adapter_dir.mkdir(parents=True)
+            _download_adapter(input.adapter_path, adapter_dir, self.infra.s3, self.infra.s3_bucket)
+            model.load_adapter(str(adapter_dir), adapter_name="default")
+
+            # Evaluate
+            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
+
+            logger.info(
+                "Holdout eval iteration %d for job %s: eval_loss=%.4f",
+                input.iteration,
+                input.training_job_id,
+                eval_loss,
+            )
+
+            return EvaluateHoldoutOutput(
+                eval_loss=eval_loss,
+                metrics={
+                    "iteration": input.iteration,
+                    "eval_loss": eval_loss,
+                },
+            )
+
+
+def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
+    """Download all files under an S3 prefix to a local directory."""
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=s3_prefix)
+    for obj in response.get("Contents", []):
+        key = obj["Key"]
+        relative = key[len(s3_prefix) :]
+        if not relative:
+            continue
+        local_file = local_dir / relative
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(bucket, key, str(local_file))
+    logger.info("Downloaded adapter from %s to %s", s3_prefix, local_dir)
+
+
+async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
+    """Load model via engine, dispatch to strategy, upload adapter."""
+    engine = get_engine()
     hp = input.hyperparams
     job_id = input.training_job_id
+
+    # Ensure sync redis is initialized before any training callbacks use it
+    _get_sync_redis(infra.settings)
 
     with tempfile.TemporaryDirectory(prefix=f"train-{job_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
 
         # Download dataset from S3
         dataset_local = tmpdir_path / "dataset.jsonl"
-        _download_dataset(input.dataset_path, dataset_local)
+        _download_dataset(input.dataset_path, dataset_local, infra.s3, infra.s3_bucket)
 
-        # Load and prepare dataset
         dataset = _load_chatml_dataset(dataset_local)
         logger.info("Loaded dataset: %d examples", len(dataset))
 
-        # Load base model
+        # Load model via engine protocol
         load_in_4bit = input.method == "qlora"
         max_seq_length = hp.get("max_seq_length", 2048)
 
-        model, tokenizer = FastLanguageModel.from_pretrained(
+        model, tokenizer = engine.load_model(
             model_name=input.base_model,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
-            dtype=None,
         )
 
-        # Attach LoRA adapters
+        # Attach LoRA adapters via engine protocol
         target_modules = hp.get(
             "target_modules",
-            [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
+            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         )
-        model = FastLanguageModel.get_peft_model(
+        model = engine.attach_adapter(
             model,
             r=hp.get("r", 16),
             lora_alpha=hp.get("lora_alpha", 16),
             lora_dropout=hp.get("lora_dropout", 0),
             target_modules=target_modules,
-            use_gradient_checkpointing="unsloth",
         )
 
-        tenant_id = input.tenant_id
+        # Dispatch to registered strategy
+        strategy = get_strategy(input.mode)
+        metrics = strategy.execute(
+            model=model,
+            tokenizer=tokenizer,
+            dataset=dataset,
+            hp=hp,
+            job_id=job_id,
+            max_seq_length=max_seq_length,
+            tenant_id=input.tenant_id,
+            dataset_path=input.dataset_path,
+            s3=infra.s3,
+            bucket=infra.s3_bucket,
+        )
 
-        # Route to training mode
-        if input.mode == "quick":
-            metrics = _train_sft(
-                model, tokenizer, dataset, hp, job_id, max_seq_length, tenant_id=tenant_id
-            )
-        elif input.mode == "aligned":
-            metrics_sft = _train_sft(
-                model,
-                tokenizer,
-                dataset,
-                hp,
-                job_id,
-                max_seq_length,
-                phase="sft",
-                tenant_id=tenant_id,
-            )
-            metrics_dpo = _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
-            metrics = {**metrics_sft, "dpo": metrics_dpo}
-        elif input.mode == "reasoning":
-            metrics_sft = _train_sft(
-                model,
-                tokenizer,
-                dataset,
-                hp,
-                job_id,
-                max_seq_length,
-                phase="sft",
-                tenant_id=tenant_id,
-            )
-            metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
-            metrics = {**metrics_sft, "grpo": metrics_grpo}
-        elif input.mode == "iterative":
-            metrics = _train_iterative(
-                model,
-                tokenizer,
-                dataset,
-                hp,
-                job_id,
-                max_seq_length,
-                tenant_id=tenant_id,
-                dataset_path=input.dataset_path,
-            )
-        else:
-            raise ValueError(f"Unknown training mode: {input.mode}")
-
-        # Save adapter
+        # Save adapter via engine protocol
         adapter_dir = tmpdir_path / "adapter"
-        model.save_pretrained(str(adapter_dir))
-        tokenizer.save_pretrained(str(adapter_dir))
+        engine.save_adapter(model, tokenizer, adapter_dir)
 
         # Upload adapter to S3
-        adapter_s3_path = f"adapters/{input.tenant_id}/{job_id}/"
-        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path)
+        adapter_s3_path = s3_paths.adapter_training_prefix(input.tenant_id, job_id)
+        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path, infra.s3, infra.s3_bucket)
 
         return StartTrainingOutput(
             adapter_path=adapter_s3_path,
@@ -204,7 +378,99 @@ async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
         )
 
 
-def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None, tenant_id=None):
+# -- Training Strategies --
+
+
+@register_strategy("quick")
+class QuickStrategy:
+    """SFT-only training — fastest iteration."""
+
+    name = "quick"
+
+    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
+        tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
+        return _train_sft(
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
+        )
+
+
+@register_strategy("aligned")
+class AlignedStrategy:
+    """SFT → DPO pipeline for production quality alignment."""
+
+    name = "aligned"
+
+    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
+        tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
+        metrics_sft = _train_sft(
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            phase="sft",
+            tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
+        )
+        metrics_dpo = _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
+        return {**metrics_sft, "dpo": metrics_dpo}
+
+
+@register_strategy("reasoning")
+class ReasoningStrategy:
+    """SFT → GRPO pipeline for reward-guided reasoning."""
+
+    name = "reasoning"
+
+    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
+        tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
+        metrics_sft = _train_sft(
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            phase="sft",
+            tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
+        )
+        metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
+        return {**metrics_sft, "grpo": metrics_grpo}
+
+
+# -- SFT Training --
+
+
+def _train_sft(
+    model,
+    tokenizer,
+    dataset,
+    hp,
+    job_id,
+    max_seq_length,
+    phase=None,
+    tenant_id=None,
+    s3=None,
+    bucket=None,
+):
     """Run SFT (Supervised Fine-Tuning) training."""
     from trl import SFTConfig, SFTTrainer
 
@@ -212,12 +478,11 @@ def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase=phase or "sft")
 
-    # Enable periodic checkpointing when tenant_id is available
     save_steps = hp.get("save_steps", 100)
     enable_checkpoints = tenant_id is not None
     callbacks = [callback]
     if enable_checkpoints:
-        CkptClass = _build_checkpoint_callback_class(tenant_id, job_id)
+        CkptClass = _build_checkpoint_callback_class(tenant_id, job_id, s3, bucket)
         callbacks.append(CkptClass())
 
     training_args = SFTConfig(
@@ -260,17 +525,16 @@ def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None
     }
 
 
-def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
-    """Run DPO (Direct Preference Optimization) training on the same dataset.
+# -- DPO Training --
 
-    Reformats the ChatML data as chosen/rejected pairs for alignment.
-    """
+
+def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
+    """Run DPO (Direct Preference Optimization) training."""
     from trl import DPOConfig, DPOTrainer
 
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase="dpo")
 
-    # Create DPO pairs from the dataset: original is "chosen", shuffled is "rejected"
     dpo_dataset = _create_dpo_pairs(dataset, tokenizer)
 
     dpo_epochs = max(1, hp.get("num_train_epochs", 3) // 2)
@@ -307,17 +571,16 @@ def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
     }
 
 
-def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
-    """Run GRPO (Group Relative Policy Optimization) for reasoning tasks.
+# -- GRPO Training --
 
-    Uses a simple reward function based on response quality heuristics.
-    """
+
+def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
+    """Run GRPO (Group Relative Policy Optimization) for reasoning tasks."""
     from trl import GRPOConfig, GRPOTrainer
 
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase="grpo")
 
-    # Extract prompts from the dataset for GRPO
     grpo_dataset = _create_grpo_prompts(dataset, tokenizer)
 
     grpo_epochs = max(1, hp.get("num_train_epochs", 3) // 2)
@@ -337,11 +600,17 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
         report_to="none",
     )
 
+    # Create reward function using the unified judge
+    judge = create_judge_from_settings()
+
+    def reasoning_reward(completions: list[str], **kwargs) -> list[float]:
+        return [judge.score_reasoning(c) for c in completions]
+
     trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=grpo_dataset,
-        reward_funcs=[_reasoning_reward],
+        reward_funcs=[reasoning_reward],
         args=training_args,
         callbacks=[callback],
     )
@@ -353,74 +622,6 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
         "grpo_steps": train_result.global_step,
         "grpo_runtime": train_result.metrics.get("train_runtime", 0),
     }
-
-
-def _train_iterative(
-    model,
-    tokenizer,
-    dataset,
-    hp,
-    job_id,
-    max_seq_length,
-    tenant_id=None,
-    dataset_path=None,
-):
-    """Run multiple SFT rounds with hold-out validation between each.
-
-    Downloads the validation split (_val.jsonl) from S3 and runs
-    trainer.evaluate() between iterations for real eval_loss.
-    """
-    num_iterations = hp.get("num_iterations", 3)
-    all_metrics = {}
-
-    # Load validation split for real evaluation between iterations
-    val_dataset = None
-    if dataset_path:
-        try:
-            val_s3_path = dataset_path.replace(".jsonl", "_val.jsonl")
-            val_local = Path(tempfile.mktemp(suffix="_val.jsonl"))
-            _download_dataset(val_s3_path, val_local)
-            val_dataset = _load_chatml_dataset(val_local)
-            logger.info("Loaded validation set: %d examples", len(val_dataset))
-            val_local.unlink(missing_ok=True)
-        except Exception as e:
-            logger.warning("No validation split found (%s), using train loss as proxy", e)
-
-    for iteration in range(num_iterations):
-        phase = f"iter_{iteration}"
-        logger.info("Starting iteration %d/%d for job %s", iteration + 1, num_iterations, job_id)
-
-        iteration_metrics = _train_sft(
-            model,
-            tokenizer,
-            dataset,
-            hp,
-            job_id,
-            max_seq_length,
-            phase=phase,
-            tenant_id=tenant_id,
-        )
-        all_metrics[phase] = iteration_metrics
-
-        # Run hold-out validation if available
-        eval_loss = iteration_metrics.get(f"{phase}_train_loss", 0)
-        if val_dataset is not None:
-            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
-        all_metrics[f"{phase}_eval_loss"] = eval_loss
-
-        # Stream iteration completion
-        _stream_metric(
-            job_id,
-            {
-                "event": "iteration_complete",
-                "iteration": iteration + 1,
-                "total_iterations": num_iterations,
-                "eval_loss": eval_loss,
-            },
-        )
-
-    all_metrics["total_iterations"] = num_iterations
-    return all_metrics
 
 
 def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> float:
@@ -447,60 +648,21 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
     return eval_result.get("eval_loss", 0.0)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# -- Helpers --
 
-
-# Module-level sync Redis client for metrics streaming from training threads.
-# Lazily initialized, reused across all callbacks and helper calls.
 _sync_redis_client = None
 
 
-def _get_sync_redis():
+def _get_sync_redis(settings=None):
     """Get or create the module-level synchronous Redis client."""
     global _sync_redis_client  # noqa: PLW0603
     if _sync_redis_client is None:
         import redis as sync_redis
 
-        settings = clients.get_settings()
+        if settings is None:
+            raise RuntimeError("Settings required for first Redis initialization")
         _sync_redis_client = sync_redis.from_url(settings.redis_url)
     return _sync_redis_client
-
-
-def _get_llm_client() -> httpx.Client:
-    """Get or create the module-level synchronous LLM API client."""
-    global _llm_client  # noqa: PLW0603
-    if _llm_client is None:
-        settings = clients.get_settings()
-        _llm_client = httpx.Client(
-            base_url=settings.llm_api_base_url,
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-            timeout=60.0,
-        )
-    return _llm_client
-
-
-def _call_llm_judge(prompt: str, max_tokens: int = 500) -> str:
-    """Call the configured LLM judge and return the response text.
-
-    Returns empty string on any failure (network, rate limit, etc.)
-    so callers can fall back to heuristic scoring.
-    """
-    settings = clients.get_settings()
-    try:
-        resp = _get_llm_client().post(
-            "/chat/completions",
-            json={
-                "model": settings.llm_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.warning("LLM judge call failed: %s", e)
-        return ""
 
 
 def _get_gpu_metrics() -> dict:
@@ -527,12 +689,7 @@ def _get_gpu_metrics() -> dict:
 
 
 def _build_callback_class():
-    """Build MetricsStreamingCallback as a proper TrainerCallback subclass.
-
-    Can't inherit at module level because transformers may not be installed
-    (it's an optional ML dependency). This factory is called at training time
-    when transformers is guaranteed to be available.
-    """
+    """Build MetricsStreamingCallback as a proper TrainerCallback subclass."""
     try:
         from transformers import TrainerCallback
 
@@ -541,7 +698,7 @@ def _build_callback_class():
         _base = object
 
     class MetricsStreamingCallback(_base):
-        """HuggingFace TrainerCallback that streams metrics to Redis and heartbeats Temporal."""
+        """HuggingFace TrainerCallback that streams metrics to Redis."""
 
         def __init__(self, job_id: str, phase: str = ""):
             if _base is not object:
@@ -550,7 +707,6 @@ def _build_callback_class():
             self.phase = phase
 
         def on_log(self, args, state, control, logs=None, **kwargs):
-            """Push metrics to Redis stream on each log step."""
             if logs is None:
                 return
 
@@ -564,7 +720,6 @@ def _build_callback_class():
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 
-            # Merge GPU utilization metrics
             gpu = _get_gpu_metrics()
             if gpu:
                 metrics.update(gpu)
@@ -575,7 +730,6 @@ def _build_callback_class():
             except Exception as e:
                 logger.warning("Failed to stream metrics: %s", e)
 
-            # Heartbeat to keep Temporal activity alive
             try:
                 activity.heartbeat(f"step={state.global_step}")
             except Exception:
@@ -605,12 +759,8 @@ def _build_callback_class():
     return MetricsStreamingCallback
 
 
-def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
-    """Build a TrainerCallback that uploads checkpoints to S3 on save.
-
-    Like MetricsStreamingCallback, this is a factory because transformers
-    may not be installed at module-import time.
-    """
+def _build_checkpoint_callback_class(tenant_id: str, job_id: str, s3, bucket: str):
+    """Build a TrainerCallback that uploads checkpoints to S3 on save."""
     try:
         from transformers import TrainerCallback
 
@@ -626,14 +776,13 @@ def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
             self.job_id = job_id
 
         def on_save(self, args, state, control, **kwargs):
-            """Upload the latest checkpoint directory to S3."""
             try:
                 ckpt_dir = Path(args.output_dir) / f"checkpoint-{state.global_step}"
                 if ckpt_dir.is_dir():
                     s3_prefix = (
                         f"checkpoints/{self.tenant_id}/{self.job_id}/step-{state.global_step}/"
                     )
-                    _upload_adapter(ckpt_dir, s3_prefix)
+                    _upload_adapter(ckpt_dir, s3_prefix, s3, bucket)
                     logger.info("Uploaded checkpoint step %d to %s", state.global_step, s3_prefix)
             except Exception as e:
                 logger.warning("Failed to upload checkpoint: %s", e)
@@ -642,7 +791,7 @@ def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
 
 
 def _stream_metric(job_id: str, data: dict):
-    """Push a single metric event to Redis using the shared connection."""
+    """Push a single metric event to Redis."""
     try:
         stream_key = f"training:metrics:{job_id}"
         str_data = {k: str(v) for k, v in data.items()}
@@ -651,10 +800,8 @@ def _stream_metric(job_id: str, data: dict):
         logger.warning("Failed to stream metric event: %s", e)
 
 
-def _download_dataset(s3_path: str, local_path: Path):
+def _download_dataset(s3_path: str, local_path: Path, s3, bucket: str):
     """Download dataset from S3 to local file."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
     s3.download_file(bucket, s3_path, str(local_path))
     logger.info("Downloaded dataset: %s -> %s", s3_path, local_path)
 
@@ -670,7 +817,6 @@ def _load_chatml_dataset(path: Path):
             if line:
                 records.append(json.loads(line))
 
-    # Convert ChatML format to text for SFT
     texts = []
     for record in records:
         messages = record.get("messages", [])
@@ -691,40 +837,29 @@ def _format_chatml(messages: list[dict]) -> str:
 
 
 def _create_dpo_pairs(dataset, tokenizer):
-    """Create DPO preference pairs from an SFT dataset using LLM-as-Judge.
-
-    For each sample, the original response is scored by the LLM judge.
-    A degraded version is also generated and scored. The higher-scoring
-    response becomes "chosen" and the lower becomes "rejected".
-
-    Falls back to truncation heuristic if the LLM judge is unavailable.
-    """
+    """Create DPO preference pairs using unified LLM judge."""
     from datasets import Dataset
 
+    judge = create_judge_from_settings()
     chosen_texts = []
     rejected_texts = []
 
     for text in dataset["text"]:
         parts = text.split("<|im_start|>assistant\n")
         if len(parts) <= 1:
-            # No assistant response found — skip
             continue
 
-        # Extract the prompt and response
         prompt_part = "<|im_start|>assistant\n".join(parts[:-1])
         original_response = parts[-1].split("<|im_end|>")[0]
 
-        # Create a degraded version (truncated + simplified)
         truncated = original_response[: max(10, len(original_response) // 3)]
 
-        # Ask LLM judge to score both responses
-        original_score = _score_response(prompt_part, original_response)
-        degraded_score = _score_response(prompt_part, truncated)
+        original_score = judge.score_response(prompt_part, original_response)
+        degraded_score = judge.score_response(prompt_part, truncated)
 
         original_full = prompt_part + "<|im_start|>assistant\n" + original_response + "<|im_end|>"
         degraded_full = prompt_part + "<|im_start|>assistant\n" + truncated + "<|im_end|>"
 
-        # Higher score = chosen, lower = rejected
         if original_score >= degraded_score:
             chosen_texts.append(original_full)
             rejected_texts.append(degraded_full)
@@ -733,44 +868,11 @@ def _create_dpo_pairs(dataset, tokenizer):
             rejected_texts.append(original_full)
 
     if not chosen_texts:
-        # Fallback: use full dataset text as chosen, first half as rejected
         for text in dataset["text"]:
             chosen_texts.append(text)
             rejected_texts.append(text[: len(text) // 2])
 
-    return Dataset.from_dict(
-        {
-            "chosen": chosen_texts,
-            "rejected": rejected_texts,
-        }
-    )
-
-
-def _score_response(prompt: str, response: str) -> float:
-    """Score a response using the LLM judge. Returns 0-10 score.
-
-    Falls back to a length-based heuristic on failure.
-    """
-    judge_prompt = (
-        "Rate the quality of the following AI assistant response on a scale of 1-10.\n"
-        "Consider: accuracy, completeness, helpfulness, and clarity.\n"
-        "Respond with ONLY a single number between 1 and 10.\n\n"
-        f"Context/Prompt:\n{prompt[:500]}\n\n"
-        f"Response:\n{response[:1000]}\n\n"
-        "Score (1-10):"
-    )
-
-    result = _call_llm_judge(judge_prompt, max_tokens=5)
-    if result:
-        try:
-            score = float(result.strip().split()[0])
-            return max(1.0, min(10.0, score))
-        except (ValueError, IndexError):
-            pass
-
-    # Heuristic fallback: longer, more structured responses score higher
-    score = min(10.0, len(response) / 100 + 3)
-    return score
+    return Dataset.from_dict({"chosen": chosen_texts, "rejected": rejected_texts})
 
 
 def _create_grpo_prompts(dataset, tokenizer):
@@ -779,7 +881,6 @@ def _create_grpo_prompts(dataset, tokenizer):
 
     prompts = []
     for text in dataset["text"]:
-        # Extract user messages as prompts
         parts = text.split("<|im_start|>user\n")
         for part in parts[1:]:
             user_msg = part.split("<|im_end|>")[0].strip()
@@ -789,65 +890,8 @@ def _create_grpo_prompts(dataset, tokenizer):
     return Dataset.from_list(prompts) if prompts else dataset
 
 
-def _reasoning_reward(completions: list[str], **kwargs) -> list[float]:
-    """Reward function for GRPO using LLM-as-Judge with heuristic fallback.
-
-    Calls the configured LLM to score reasoning quality of each completion.
-    Falls back to keyword-based heuristic if the LLM judge is unavailable.
-    """
-    rewards = []
-    for completion in completions:
-        score = _llm_reward_score(completion)
-        rewards.append(score)
-    return rewards
-
-
-def _llm_reward_score(completion: str) -> float:
-    """Score a single completion using LLM judge, normalized to [-1, 1].
-
-    Falls back to heuristic on any failure.
-    """
-    judge_prompt = (
-        "Rate the reasoning quality of the following AI response on a scale of 1-10.\n"
-        "Consider: logical structure, step-by-step reasoning, correctness, and clarity.\n"
-        "Respond with ONLY a single number between 1 and 10.\n\n"
-        f"Response:\n{completion[:1500]}\n\n"
-        "Score (1-10):"
-    )
-
-    result = _call_llm_judge(judge_prompt, max_tokens=5)
-    if result:
-        try:
-            raw_score = float(result.strip().split()[0])
-            # Normalize from 1-10 to -1..1 range (5.5 is neutral)
-            return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
-        except (ValueError, IndexError):
-            pass
-
-    # Heuristic fallback
-    return _heuristic_reasoning_score(completion)
-
-
-def _heuristic_reasoning_score(completion: str) -> float:
-    """Keyword-based heuristic reward for reasoning quality."""
-    score = 0.0
-    if len(completion) > 50:
-        score += 0.3
-    if len(completion) > 200:
-        score += 0.2
-    reasoning_markers = ["because", "therefore", "however", "first", "then", "finally"]
-    for marker in reasoning_markers:
-        if marker.lower() in completion.lower():
-            score += 0.1
-    if len(completion.strip()) < 10:
-        score -= 0.5
-    return min(1.0, max(-1.0, score))
-
-
-def _upload_adapter(adapter_dir: Path, s3_prefix: str) -> int:
+def _upload_adapter(adapter_dir: Path, s3_prefix: str, s3, bucket: str) -> int:
     """Upload adapter directory to S3, return total size in bytes."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
     total_size = 0
 
     for file_path in adapter_dir.rglob("*"):
@@ -875,7 +919,7 @@ def _is_bf16_supported() -> bool:
 
         if torch.cuda.is_available():
             capability = torch.cuda.get_device_capability()
-            return capability[0] >= 8  # Ampere (A100) and newer
+            return capability[0] >= 8
     except ImportError:
         pass
     return False

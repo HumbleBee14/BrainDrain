@@ -2,8 +2,21 @@ use platform_storage::s3::{S3Config, S3Storage};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+use crate::auth::{AuthProviderChain, ClerkAuthProvider};
 use crate::config::Config;
-use crate::temporal::TemporalClient;
+use crate::repositories::api_key_repo::PgApiKeyRepo;
+use crate::repositories::billing_event_repo::PgBillingEventRepo;
+use crate::repositories::dataset_repo::PgDatasetRepo;
+use crate::repositories::document_repo::PgDocumentRepo;
+use crate::repositories::evaluation_repo::PgEvaluationRepo;
+use crate::repositories::model_repo::PgModelRepo;
+use crate::repositories::project_repo::PgProjectRepo;
+use crate::repositories::training_job_repo::PgTrainingJobRepo;
+use crate::repositories::traits::{
+    ApiKeyRepository, BillingEventRepository, DatasetRepository, DocumentRepository,
+    EvaluationRepository, ModelRepository, ProjectRepository, TrainingJobRepository,
+};
+use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
 /// Shared application state available to all route handlers.
 ///
@@ -19,7 +32,18 @@ struct AppStateInner {
     pub db: PgPool,
     pub redis: redis::aio::ConnectionManager,
     pub storage: S3Storage,
-    pub temporal: Option<TemporalClient>,
+    pub orchestrator: Option<Arc<dyn WorkflowOrchestrator>>,
+    pub auth_chain: AuthProviderChain,
+    pub http_client: reqwest::Client,
+    // Repository trait objects
+    pub project_repo: Arc<dyn ProjectRepository>,
+    pub document_repo: Arc<dyn DocumentRepository>,
+    pub dataset_repo: Arc<dyn DatasetRepository>,
+    pub training_job_repo: Arc<dyn TrainingJobRepository>,
+    pub model_repo: Arc<dyn ModelRepository>,
+    pub evaluation_repo: Arc<dyn EvaluationRepository>,
+    pub api_key_repo: Arc<dyn ApiKeyRepository>,
+    pub billing_event_repo: Arc<dyn BillingEventRepository>,
 }
 
 impl AppState {
@@ -57,22 +81,47 @@ impl AppState {
 
         tracing::info!("S3 client initialized (bucket: {})", &config.s3_bucket);
 
-        // Temporal (optional — API works without it, just can't trigger workflows)
-        let temporal = if !config.temporal_host.is_empty() {
-            let client = TemporalClient::new(
-                &config.temporal_host,
-                &config.temporal_namespace,
-                "ml-pipeline",
-            );
-            tracing::info!(
-                "Temporal client configured (host: {})",
-                &config.temporal_host
-            );
-            Some(client)
-        } else {
-            tracing::warn!("Temporal not configured — workflow triggers disabled");
-            None
-        };
+        // Workflow orchestrator (optional — API works without it, just can't trigger workflows)
+        let orchestrator: Option<Arc<dyn WorkflowOrchestrator>> =
+            if !config.temporal_host.is_empty() {
+                let client = TemporalClient::new(
+                    &config.temporal_host,
+                    &config.temporal_namespace,
+                    "ml-pipeline",
+                );
+                tracing::info!(
+                    "Workflow orchestrator configured (host: {})",
+                    &config.temporal_host
+                );
+                Some(Arc::new(client))
+            } else {
+                tracing::warn!("Workflow orchestrator not configured — workflow triggers disabled");
+                None
+            };
+
+        // Auth provider chain
+        let auth_chain = AuthProviderChain::new().add(ClerkAuthProvider::new(
+            config.clerk_jwks_url.clone(),
+            config.is_dev(),
+        ));
+
+        tracing::info!("Auth provider chain initialized");
+
+        // Shared HTTP client for outbound requests (connection pooling)
+        let http_client = reqwest::Client::new();
+
+        // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone)
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db.clone()));
+        let document_repo: Arc<dyn DocumentRepository> = Arc::new(PgDocumentRepo::new(db.clone()));
+        let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db.clone()));
+        let training_job_repo: Arc<dyn TrainingJobRepository> =
+            Arc::new(PgTrainingJobRepo::new(db.clone()));
+        let model_repo: Arc<dyn ModelRepository> = Arc::new(PgModelRepo::new(db.clone()));
+        let evaluation_repo: Arc<dyn EvaluationRepository> =
+            Arc::new(PgEvaluationRepo::new(db.clone()));
+        let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
+        let billing_event_repo: Arc<dyn BillingEventRepository> =
+            Arc::new(PgBillingEventRepo::new(db.clone()));
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -80,7 +129,17 @@ impl AppState {
                 db,
                 redis,
                 storage,
-                temporal,
+                orchestrator,
+                auth_chain,
+                http_client,
+                project_repo,
+                document_repo,
+                dataset_repo,
+                training_job_repo,
+                model_repo,
+                evaluation_repo,
+                api_key_repo,
+                billing_event_repo,
             }),
         })
     }
@@ -101,7 +160,47 @@ impl AppState {
         &self.inner.storage
     }
 
-    pub fn temporal(&self) -> Option<&TemporalClient> {
-        self.inner.temporal.as_ref()
+    pub fn orchestrator(&self) -> Option<&dyn WorkflowOrchestrator> {
+        self.inner.orchestrator.as_deref()
+    }
+
+    pub fn auth_chain(&self) -> &AuthProviderChain {
+        &self.inner.auth_chain
+    }
+
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.inner.http_client
+    }
+
+    pub fn project_repo(&self) -> &dyn ProjectRepository {
+        &*self.inner.project_repo
+    }
+
+    pub fn document_repo(&self) -> &dyn DocumentRepository {
+        &*self.inner.document_repo
+    }
+
+    pub fn dataset_repo(&self) -> &dyn DatasetRepository {
+        &*self.inner.dataset_repo
+    }
+
+    pub fn training_job_repo(&self) -> &dyn TrainingJobRepository {
+        &*self.inner.training_job_repo
+    }
+
+    pub fn model_repo(&self) -> &dyn ModelRepository {
+        &*self.inner.model_repo
+    }
+
+    pub fn evaluation_repo(&self) -> &dyn EvaluationRepository {
+        &*self.inner.evaluation_repo
+    }
+
+    pub fn api_key_repo(&self) -> &dyn ApiKeyRepository {
+        &*self.inner.api_key_repo
+    }
+
+    pub fn billing_event_repo(&self) -> &dyn BillingEventRepository {
+        &*self.inner.billing_event_repo
     }
 }

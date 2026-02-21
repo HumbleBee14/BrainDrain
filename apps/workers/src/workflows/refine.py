@@ -10,12 +10,9 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput, build_dataset
-    from src.activities.chunk_text import ChunkTextInput, chunk_text
-    from src.activities.generate_pairs import (
-        GenerateSyntheticPairsInput,
-        generate_synthetic_pairs,
-    )
+    from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput
+    from src.activities.chunk_text import ChunkTextInput
+    from src.activities.generate_pairs import GenerateSyntheticPairsInput
 
 
 @workflow.defn
@@ -37,7 +34,7 @@ class RefineWorkflow:
     ) -> BuildDatasetOutput:
         # Stage 1: Chunk the parsed documents
         chunk_result = await workflow.execute_activity(
-            chunk_text,
+            "chunk_text",
             ChunkTextInput(
                 tenant_id=tenant_id,
                 project_id=project_id,
@@ -55,7 +52,7 @@ class RefineWorkflow:
 
         # Stage 2: Generate synthetic pairs from chunks
         pairs_result = await workflow.execute_activity(
-            generate_synthetic_pairs,
+            "generate_synthetic_pairs",
             GenerateSyntheticPairsInput(
                 tenant_id=tenant_id,
                 project_id=project_id,
@@ -75,7 +72,7 @@ class RefineWorkflow:
         # Stage 3: Build the dataset (filter, format, split)
         dataset_id = str(uuid.uuid4())
         dataset_result = await workflow.execute_activity(
-            build_dataset,
+            "build_dataset",
             BuildDatasetInput(
                 tenant_id=tenant_id,
                 project_id=project_id,

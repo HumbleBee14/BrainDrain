@@ -1,4 +1,6 @@
-use sqlx::PgPool;
+use platform_shared::enums::{
+    DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
+};
 use uuid::Uuid;
 
 use crate::dto::pipeline::{
@@ -6,12 +8,11 @@ use crate::dto::pipeline::{
     ProjectPipelineStatus, TrainingJobStatusCounts, TriggerParseResponse, TriggerRefineResponse,
 };
 use crate::error::{AppError, AppResult};
-use crate::repositories::dataset_repo::DatasetRepo;
-use crate::repositories::document_repo::DocumentRepo;
-use crate::repositories::evaluation_repo::EvaluationRepo;
-use crate::repositories::model_repo::ModelRepo;
-use crate::repositories::training_job_repo::TrainingJobRepo;
-use crate::temporal::TemporalClient;
+use crate::repositories::traits::{
+    DatasetRepository, DocumentRepository, EvaluationRepository, ModelRepository,
+    TrainingJobRepository,
+};
+use crate::temporal::WorkflowOrchestrator;
 
 /// Business logic for pipeline orchestration.
 ///
@@ -23,16 +24,19 @@ impl PipelineService {
     ///
     /// Finds documents with status "uploaded" and starts an IngestWorkflow.
     pub async fn trigger_parse(
-        db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        doc_repo: &dyn DocumentRepository,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
     ) -> AppResult<TriggerParseResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Pipeline workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Pipeline workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
-        let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "uploaded").await?;
+        let docs = doc_repo
+            .list_by_status(tenant_id, project_id, DocumentStatus::Uploaded)
+            .await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -43,7 +47,7 @@ impl PipelineService {
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
 
-        let result = temporal
+        let result = orchestrator
             .start_ingest(tenant_id, project_id, doc_ids)
             .await
             .map_err(|e| {
@@ -67,18 +71,21 @@ impl PipelineService {
     ///
     /// Finds documents with status "parsed" and starts a RefineWorkflow.
     pub async fn trigger_refine(
-        db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        doc_repo: &dyn DocumentRepository,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
         task_type: &str,
         config: serde_json::Value,
     ) -> AppResult<TriggerRefineResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Pipeline workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Pipeline workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
-        let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "parsed").await?;
+        let docs = doc_repo
+            .list_by_status(tenant_id, project_id, DocumentStatus::Parsed)
+            .await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -89,7 +96,7 @@ impl PipelineService {
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
 
-        let result = temporal
+        let result = orchestrator
             .start_refine(tenant_id, project_id, doc_ids, task_type, config)
             .await
             .map_err(|e| {
@@ -112,7 +119,11 @@ impl PipelineService {
 
     /// Get aggregate pipeline status for a project.
     pub async fn get_status(
-        db: &PgPool,
+        doc_repo: &dyn DocumentRepository,
+        dataset_repo: &dyn DatasetRepository,
+        training_repo: &dyn TrainingJobRepository,
+        model_repo: &dyn ModelRepository,
+        eval_repo: &dyn EvaluationRepository,
         tenant_id: Uuid,
         project_id: Uuid,
     ) -> AppResult<ProjectPipelineStatus> {
@@ -139,27 +150,31 @@ impl PipelineService {
             evals_completed,
             evals_failed,
         ) = tokio::try_join!(
-            DocumentRepo::count_by_project(db, tenant_id, project_id),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "uploaded"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "parsing"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "parsed"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "failed"),
-            DatasetRepo::count_by_project(db, tenant_id, project_id),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "generating"),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "review_pending"),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "approved"),
-            TrainingJobRepo::count_by_project(db, tenant_id, project_id),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "pending"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "training"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "completed"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "failed"),
-            ModelRepo::count_by_project(db, tenant_id, project_id),
-            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "undeployed"),
-            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "active"),
-            EvaluationRepo::count_by_project(db, tenant_id, project_id),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "running"),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "completed"),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "failed"),
+            doc_repo.count_by_project(tenant_id, project_id),
+            doc_repo.count_by_status(tenant_id, project_id, DocumentStatus::Uploaded),
+            doc_repo.count_by_status(tenant_id, project_id, DocumentStatus::Parsing),
+            doc_repo.count_by_status(tenant_id, project_id, DocumentStatus::Parsed),
+            doc_repo.count_by_status(tenant_id, project_id, DocumentStatus::Failed),
+            dataset_repo.count_by_project(tenant_id, project_id),
+            dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Generating),
+            dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::ReviewPending),
+            dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Approved),
+            training_repo.count_by_project(tenant_id, project_id),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Pending),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Training),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Completed),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Failed),
+            model_repo.count_by_project(tenant_id, project_id),
+            model_repo.count_by_deployment_status(
+                tenant_id,
+                project_id,
+                DeploymentStatus::Undeployed
+            ),
+            model_repo.count_by_deployment_status(tenant_id, project_id, DeploymentStatus::Active),
+            eval_repo.count_by_project(tenant_id, project_id),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Running),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Completed),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Failed),
         )?;
 
         Ok(ProjectPipelineStatus {

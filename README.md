@@ -10,8 +10,9 @@ docker compose up -d              # Start PostgreSQL, Redis, MinIO
 make migrate                      # Run database migrations
 make dev-api                      # Start Rust API server
 cd apps/web && pnpm install && pnpm dev  # Start frontend
-
 ```
+
+> **Type generation:** TypeScript types are auto-generated from Rust via `ts-rs`. After changing any Rust DTO or enum, run `make typegen` to regenerate the TypeScript interfaces in `apps/web/src/lib/generated/`. This also runs automatically as part of `make test`.
 
 ## Documentation
 

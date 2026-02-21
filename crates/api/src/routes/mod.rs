@@ -9,6 +9,7 @@ pub mod inference;
 pub mod pipeline;
 pub mod projects;
 pub mod training;
+pub mod ws;
 
 use axum::Router;
 
@@ -35,4 +36,5 @@ fn v1_router() -> Router<AppState> {
         .merge(api_keys::router())
         .merge(deployments::router())
         .merge(billing::router())
+        .merge(ws::router())
 }

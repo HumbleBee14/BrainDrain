@@ -86,6 +86,7 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
       {/* Suite scores grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Domain Evaluation */}
+        {scores.domain && (
         <div className="rounded-lg border border-zinc-800 p-5">
           <h3 className="text-sm font-semibold text-white mb-4">Domain Evaluation</h3>
           <div className="space-y-3">
@@ -100,8 +101,10 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             </div>
           </div>
         </div>
+        )}
 
         {/* General Capability */}
+        {scores.general && (
         <div className="rounded-lg border border-zinc-800 p-5">
           <h3 className="text-sm font-semibold text-white mb-4">General Capability</h3>
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -120,9 +123,9 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             subtitle={scores.general.forgetting_alert ? "Catastrophic forgetting detected!" : "Capability preserved"}
             alert={scores.general.forgetting_alert}
           />
-          {scores.general.categories && (
+          {scores.general.per_category && (
             <div className="mt-4 space-y-2">
-              {Object.entries(scores.general.categories).map(([cat, vals]) => (
+              {Object.entries(scores.general.per_category).map(([cat, vals]) => (
                 <div key={cat} className="flex justify-between text-xs">
                   <span className="text-zinc-500 capitalize">{cat.replace(/_/g, " ")}</span>
                   <span className="text-zinc-400">
@@ -133,8 +136,10 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             </div>
           )}
         </div>
+        )}
 
         {/* A/B Comparison */}
+        {scores.ab_comparison && (
         <div className="rounded-lg border border-zinc-800 p-5">
           <h3 className="text-sm font-semibold text-white mb-4">A/B Comparison</h3>
           <div className="text-center mb-4">
@@ -159,11 +164,13 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             />
           </div>
           <p className="text-xs text-zinc-600 mt-3 text-center">
-            {scores.ab_comparison.total_comparisons} blind comparisons
+            {scores.ab_comparison.total ?? 0} blind comparisons
           </p>
         </div>
+        )}
 
         {/* Safety */}
+        {scores.safety && (
         <div className="rounded-lg border border-zinc-800 p-5">
           <h3 className="text-sm font-semibold text-white mb-4">Safety Check</h3>
           <div className="grid grid-cols-2 gap-3 mb-4">
@@ -187,6 +194,7 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Recommendations */}

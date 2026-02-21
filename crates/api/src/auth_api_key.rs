@@ -42,7 +42,8 @@ impl FromRequestParts<AppState> for ApiKeyAuth {
 
         let mut redis = state.redis();
 
-        let authenticated = ApiKeyService::authenticate(state.db(), &mut redis, raw_key).await?;
+        let authenticated =
+            ApiKeyService::authenticate(state.api_key_repo(), &mut redis, raw_key).await?;
 
         Ok(ApiKeyAuth {
             key_id: authenticated.key_id,

@@ -48,8 +48,9 @@ async fn create_training_job(
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
     let result = TrainingJobService::create(
-        state.db(),
-        state.temporal(),
+        state.training_job_repo(),
+        state.dataset_repo(),
+        state.orchestrator(),
         user.tenant_id,
         project_id,
         body,
@@ -67,7 +68,7 @@ async fn list_training_jobs(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<TrainingJobResponse>>> {
     let result = TrainingJobService::list(
-        state.db(),
+        state.training_job_repo(),
         user.tenant_id,
         project_id,
         params.offset,
@@ -84,7 +85,7 @@ async fn get_training_job(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
-    let job = TrainingJobService::get(state.db(), user.tenant_id, id).await?;
+    let job = TrainingJobService::get(state.training_job_repo(), user.tenant_id, id).await?;
     Ok(Json(job))
 }
 
@@ -94,7 +95,7 @@ async fn cancel_training_job(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
-    let job = TrainingJobService::cancel(state.db(), user.tenant_id, id).await?;
+    let job = TrainingJobService::cancel(state.training_job_repo(), user.tenant_id, id).await?;
     Ok(Json(job))
 }
 
@@ -187,8 +188,8 @@ async fn get_training_metrics(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let job = TrainingJobService::get(state.db(), user.tenant_id, id).await?;
-    Ok(Json(job.metrics))
+    let job = TrainingJobService::get(state.training_job_repo(), user.tenant_id, id).await?;
+    Ok(Json(serde_json::to_value(&job.metrics).unwrap_or_default()))
 }
 
 /// GET /api/v1/projects/:project_id/models
@@ -199,7 +200,7 @@ async fn list_models(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<ModelResponse>>> {
     let result = ModelService::list(
-        state.db(),
+        state.model_repo(),
         user.tenant_id,
         project_id,
         params.offset,
@@ -216,7 +217,7 @@ async fn get_model(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
-    let model = ModelService::get(state.db(), user.tenant_id, id).await?;
+    let model = ModelService::get(state.model_repo(), user.tenant_id, id).await?;
     Ok(Json(model))
 }
 

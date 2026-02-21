@@ -7,7 +7,6 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::billing::BillingEventResponse;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::error::AppResult;
-use crate::repositories::billing_event_repo::BillingEventRepo;
 
 /// Billing routes.
 pub fn router() -> Router<AppState> {
@@ -25,9 +24,10 @@ async fn list_billing_events(
     let offset = pagination.offset;
     let limit = pagination.limit.min(100);
 
+    let repo = state.billing_event_repo();
     let (events, total) = tokio::try_join!(
-        BillingEventRepo::list_by_tenant(state.db(), user.tenant_id, offset, limit),
-        BillingEventRepo::count_by_tenant(state.db(), user.tenant_id),
+        repo.list_by_tenant(user.tenant_id, offset, limit),
+        repo.count_by_tenant(user.tenant_id),
     )?;
 
     Ok(Json(PaginatedResponse {
@@ -43,9 +43,10 @@ async fn get_usage_summary(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<TenantUsageSummary>> {
+    let repo = state.billing_event_repo();
     let (events, total) = tokio::try_join!(
-        BillingEventRepo::list_by_tenant(state.db(), user.tenant_id, 0, 1000),
-        BillingEventRepo::count_by_tenant(state.db(), user.tenant_id),
+        repo.list_by_tenant(user.tenant_id, 0, 1000),
+        repo.count_by_tenant(user.tenant_id),
     )?;
 
     let mut total_tokens_in: i64 = 0;

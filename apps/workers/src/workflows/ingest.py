@@ -10,8 +10,8 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from src.activities.parse_document import ParseDocumentInput, parse_document
-    from src.activities.stubs import DocumentInfo, get_document_info
+    from src.activities.parse_document import ParseDocumentInput
+    from src.activities.stubs import DocumentInfo
 
 
 @workflow.defn
@@ -27,7 +27,7 @@ class IngestWorkflow:
             try:
                 # Fetch document metadata from DB (storage_path, mime_type)
                 doc_info: DocumentInfo = await workflow.execute_activity(
-                    get_document_info,
+                    "get_document_info",
                     doc_id,
                     start_to_close_timeout=timedelta(seconds=30),
                 )
@@ -39,7 +39,7 @@ class IngestWorkflow:
 
                 # Parse the document
                 await workflow.execute_activity(
-                    parse_document,
+                    "parse_document",
                     ParseDocumentInput(
                         tenant_id=tenant_id,
                         project_id=project_id,

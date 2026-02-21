@@ -28,9 +28,17 @@ async fn create_evaluation(
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateEvaluationRequest>,
 ) -> AppResult<(StatusCode, Json<EvaluationResponse>)> {
-    let result =
-        EvaluationService::create(state.db(), state.temporal(), user.tenant_id, model_id, body)
-            .await?;
+    let result = EvaluationService::create(
+        state.evaluation_repo(),
+        state.model_repo(),
+        state.training_job_repo(),
+        state.dataset_repo(),
+        state.orchestrator(),
+        user.tenant_id,
+        model_id,
+        body,
+    )
+    .await?;
 
     Ok((StatusCode::CREATED, Json(result)))
 }
@@ -43,7 +51,7 @@ async fn list_evaluations(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<EvaluationResponse>>> {
     let result = EvaluationService::list(
-        state.db(),
+        state.evaluation_repo(),
         user.tenant_id,
         model_id,
         params.offset,
@@ -60,6 +68,6 @@ async fn get_evaluation(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<EvaluationResponse>> {
-    let eval = EvaluationService::get(state.db(), user.tenant_id, id).await?;
+    let eval = EvaluationService::get(state.evaluation_repo(), user.tenant_id, id).await?;
     Ok(Json(eval))
 }

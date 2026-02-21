@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -37,3 +38,38 @@ class WorkerSettings(BaseSettings):
     log_level: str = "INFO"
 
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
+
+    @field_validator("temporal_address")
+    @classmethod
+    def temporal_address_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("temporal_address must not be empty")
+        return v
+
+    @field_validator("database_url")
+    @classmethod
+    def database_url_must_be_postgresql(cls, v: str) -> str:
+        if not v.startswith("postgresql://"):
+            raise ValueError("database_url must start with 'postgresql://'")
+        return v
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def s3_endpoint_must_be_http(cls, v: str) -> str:
+        if not v.startswith("http://") and not v.startswith("https://"):
+            raise ValueError("s3_endpoint must start with 'http://' or 'https://'")
+        return v
+
+    @field_validator("llm_api_base_url")
+    @classmethod
+    def llm_api_base_url_must_be_http(cls, v: str) -> str:
+        if not v.startswith("http://") and not v.startswith("https://"):
+            raise ValueError("llm_api_base_url must start with 'http://' or 'https://'")
+        return v
+
+    @field_validator("s3_bucket")
+    @classmethod
+    def s3_bucket_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("s3_bucket must not be empty")
+        return v

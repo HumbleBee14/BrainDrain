@@ -8,7 +8,7 @@ export function useModels(projectId: string, offset = 0, limit = 20) {
   const { getToken } = useAuth();
 
   return useQuery<PaginatedResponse<Model>>({
-    queryKey: ["models", projectId, offset, limit],
+    queryKey: ["models", projectId, "list", offset, limit],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -22,7 +22,7 @@ export function useModel(id: string, enabled = true) {
   const { getToken } = useAuth();
 
   return useQuery<Model>({
-    queryKey: ["model", id],
+    queryKey: ["models", "detail", id],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");

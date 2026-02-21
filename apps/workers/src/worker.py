@@ -16,19 +16,16 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from src.activities.stubs import (
-    deploy_model,
-    get_document_info,
-    run_evaluation,
-    start_training,
-)
-from src.clients import close_clients, init_clients
 from src.config import WorkerSettings
+from src.infra import init_container
 from src.workflows.evaluate import EvaluateWorkflow
 from src.workflows.full_pipeline import FullPipelineWorkflow
 from src.workflows.ingest import IngestWorkflow
 from src.workflows.refine import RefineWorkflow
 from src.workflows.train import TrainWorkflow
+from src.workflows.train_aligned import TrainAlignedWorkflow
+from src.workflows.train_iterative import TrainIterativeWorkflow
+from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 
 async def main() -> None:
@@ -42,9 +39,9 @@ async def main() -> None:
     logging.basicConfig(level=getattr(logging, settings.log_level))
     logger = logging.getLogger("platform.worker")
 
-    # Initialize infrastructure clients (S3, DB, Redis)
-    logger.info("Initializing infrastructure clients...")
-    await init_clients(settings)
+    # Initialize infrastructure container (S3, DB, Redis)
+    logger.info("Initializing infrastructure...")
+    infra = await init_container(settings)
 
     logger.info("Connecting to Temporal at %s", settings.temporal_address)
     client = await Client.connect(
@@ -52,26 +49,35 @@ async def main() -> None:
         namespace=settings.temporal_namespace,
     )
 
-    # Import real activity implementations
-    from src.activities.build_dataset import build_dataset
-    from src.activities.chunk_text import chunk_text
-    from src.activities.generate_pairs import generate_synthetic_pairs
-    from src.activities.parse_document import parse_document
+    # Import and instantiate activity classes with injected infrastructure
+    from src.activities.build_dataset import BuildDatasetActivity
+    from src.activities.chunk_text import ChunkTextActivity
+    from src.activities.generate_pairs import GeneratePairsActivity
+    from src.activities.parse_document import ParseDocumentActivity
+    from src.activities.run_evaluation import RunEvaluationActivity
+    from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
+    from src.activities.train_model import (
+        EvaluateHoldoutActivity,
+        StartTrainingActivity,
+        TrainSftRoundActivity,
+    )
 
     # CPU-bound activities (parsing, data generation, dataset building)
     cpu_activities = [
-        parse_document,
-        generate_synthetic_pairs,
-        chunk_text,
-        build_dataset,
-        get_document_info,
+        ParseDocumentActivity(infra),
+        GeneratePairsActivity(infra),
+        ChunkTextActivity(infra),
+        BuildDatasetActivity(infra),
+        GetDocumentInfoActivity(infra),
     ]
 
     # GPU-bound activities (training, evaluation)
     gpu_activities = [
-        start_training,
-        run_evaluation,
-        deploy_model,
+        StartTrainingActivity(infra),
+        TrainSftRoundActivity(infra),
+        EvaluateHoldoutActivity(infra),
+        RunEvaluationActivity(infra),
+        DeployModelActivity(infra),
     ]
 
     # All workflows (registered on every worker mode)
@@ -79,6 +85,9 @@ async def main() -> None:
         IngestWorkflow,
         RefineWorkflow,
         TrainWorkflow,
+        TrainIterativeWorkflow,
+        TrainAlignedWorkflow,
+        TrainReasoningWorkflow,
         EvaluateWorkflow,
         FullPipelineWorkflow,
     ]
@@ -110,7 +119,9 @@ async def main() -> None:
     try:
         await worker.run()
     finally:
-        await close_clients()
+        from src.infra import close_container
+
+        await close_container()
 
 
 if __name__ == "__main__":

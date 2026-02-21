@@ -1,26 +1,33 @@
-"""Train workflow — runs a fine-tuning job.
+"""Train workflow — mode dispatcher for fine-tuning jobs.
 
-Triggered when a user starts training from a prepared dataset.
+Routes to the appropriate child workflow based on training mode:
+  - quick:     Direct activity call (single SFT round)
+  - iterative: TrainIterativeWorkflow (loop + early stopping in workflow)
+  - aligned:   TrainAlignedWorkflow (SFT → DPO, in-memory)
+  - reasoning: TrainReasoningWorkflow (SFT → GRPO, in-memory)
+
+FullPipelineWorkflow still calls TrainWorkflow.run — this dispatcher
+is transparent to upstream callers.
 """
 
 from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from src.activities.stubs import (
-        StartTrainingInput,
-        StartTrainingOutput,
-        start_training,
-    )
+    from src.activities.stubs import StartTrainingInput, StartTrainingOutput
+    from src.workflows.train_aligned import TrainAlignedWorkflow
+    from src.workflows.train_iterative import TrainIterativeWorkflow
+    from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 
 @workflow.defn
 class TrainWorkflow:
-    """Execute a fine-tuning training job.
+    """Dispatch training to the appropriate mode-specific workflow.
 
-    Input: tenant_id, training_job_id, dataset details, model config.
-    Runs the training activity with extended timeout for GPU workloads.
+    Input unchanged: tenant_id, training_job_id, dataset details, model config.
+    Output unchanged: StartTrainingOutput (adapter_path, size, metrics).
     """
 
     @workflow.run
@@ -35,22 +42,74 @@ class TrainWorkflow:
         hyperparams: dict,
         gpu_class: str | None = None,
     ) -> StartTrainingOutput:
-        result = await workflow.execute_activity(
-            start_training,
-            StartTrainingInput(
-                tenant_id=tenant_id,
-                training_job_id=training_job_id,
-                dataset_path=dataset_path,
-                base_model=base_model,
-                method=method,
-                mode=mode,
-                hyperparams=hyperparams,
-                gpu_class=gpu_class,
-            ),
-            task_queue="ml-pipeline-gpu",
-            start_to_close_timeout=timedelta(hours=6),
-            heartbeat_timeout=timedelta(minutes=5),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=1),
-        )
+        workflow.set_current_details(f"Training mode: {mode}")
 
-        return result
+        if mode == "quick":
+            # Direct activity — single SFT round, no multi-phase
+            return await workflow.execute_activity(
+                "start_training",
+                StartTrainingInput(
+                    tenant_id=tenant_id,
+                    training_job_id=training_job_id,
+                    dataset_path=dataset_path,
+                    base_model=base_model,
+                    method=method,
+                    mode="quick",
+                    hyperparams=hyperparams,
+                    gpu_class=gpu_class,
+                ),
+                task_queue="ml-pipeline-gpu",
+                start_to_close_timeout=timedelta(hours=6),
+                heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=workflow.RetryPolicy(maximum_attempts=1),
+            )
+
+        elif mode == "iterative":
+            return await workflow.execute_child_workflow(
+                TrainIterativeWorkflow.run,
+                args=[
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
+                ],
+                id=f"train-iterative-{training_job_id}",
+            )
+
+        elif mode == "aligned":
+            return await workflow.execute_child_workflow(
+                TrainAlignedWorkflow.run,
+                args=[
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
+                ],
+                id=f"train-aligned-{training_job_id}",
+            )
+
+        elif mode == "reasoning":
+            return await workflow.execute_child_workflow(
+                TrainReasoningWorkflow.run,
+                args=[
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
+                ],
+                id=f"train-reasoning-{training_job_id}",
+            )
+
+        else:
+            raise ApplicationError(
+                f"Unknown training mode: {mode}. Valid modes: quick, iterative, aligned, reasoning"
+            )

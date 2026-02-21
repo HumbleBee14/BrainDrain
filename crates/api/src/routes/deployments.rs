@@ -26,8 +26,14 @@ async fn deploy_model(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
-    let result =
-        DeploymentService::deploy(state.db(), state.config(), user.tenant_id, model_id).await?;
+    let result = DeploymentService::deploy(
+        state.model_repo(),
+        state.billing_event_repo(),
+        state.config(),
+        user.tenant_id,
+        model_id,
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -38,7 +44,8 @@ async fn undeploy_model(
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
     let result =
-        DeploymentService::undeploy(state.db(), state.config(), user.tenant_id, model_id).await?;
+        DeploymentService::undeploy(state.model_repo(), state.config(), user.tenant_id, model_id)
+            .await?;
     Ok(Json(result))
 }
 
@@ -48,6 +55,6 @@ async fn get_deployment_status(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<DeploymentStatusResponse>> {
-    let status = DeploymentService::status(state.db(), user.tenant_id, model_id).await?;
+    let status = DeploymentService::status(state.model_repo(), user.tenant_id, model_id).await?;
     Ok(Json(status))
 }

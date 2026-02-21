@@ -1,31 +1,41 @@
 use chrono::{DateTime, Utc};
+use platform_shared::enums::ProjectStatus;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use uuid::Uuid;
 
 /// Request body for creating a new project.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export)]
 pub struct CreateProjectRequest {
     pub name: String,
+    #[ts(optional)]
     pub description: Option<String>,
+    #[ts(optional)]
     pub task_type: Option<String>,
 }
 
 /// Request body for updating an existing project.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export)]
 pub struct UpdateProjectRequest {
+    #[ts(optional)]
     pub name: Option<String>,
+    #[ts(optional)]
     pub description: Option<String>,
+    #[ts(optional)]
     pub task_type: Option<String>,
 }
 
 /// API response for a project.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ProjectResponse {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
     pub task_type: Option<String>,
-    pub status: String,
+    pub status: ProjectStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,7 +47,7 @@ impl From<platform_db::models::Project> for ProjectResponse {
             name: p.name,
             description: p.description,
             task_type: p.task_type,
-            status: p.status,
+            status: p.status.parse().unwrap_or(ProjectStatus::Created),
             created_at: p.created_at,
             updated_at: p.updated_at,
         }

@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import httpx
 from temporalio import activity
 
-from src import clients, s3_paths
+from src import s3_paths
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.generate")
 
@@ -61,81 +62,85 @@ class GenerateSyntheticPairsOutput:
     storage_path: str
 
 
-@activity.defn
-async def generate_synthetic_pairs(
-    input: GenerateSyntheticPairsInput,
-) -> GenerateSyntheticPairsOutput:
-    """Generate instruction/response pairs from chunked text using LLM API."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
-    settings = clients.get_settings()
+class GeneratePairsActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-    if not settings.llm_api_key:
-        raise ValueError("LLM API key not configured. Set APP_LLM_API_KEY environment variable.")
+    @activity.defn(name="generate_synthetic_pairs")
+    async def run(self, input: GenerateSyntheticPairsInput) -> GenerateSyntheticPairsOutput:
+        """Generate instruction/response pairs from chunked text using LLM API."""
+        s3 = self.infra.s3
+        bucket = self.infra.s3_bucket
+        settings = self.infra.settings
 
-    # Download chunks
-    if not input.chunks_storage_path:
-        return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
-
-    response = s3.get_object(Bucket=bucket, Key=input.chunks_storage_path)
-    chunks_data = response["Body"].read().decode("utf-8")
-    chunks = [json.loads(line) for line in chunks_data.strip().split("\n") if line.strip()]
-
-    if not chunks:
-        return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
-
-    # Select prompt template
-    prompt_template = PROMPTS.get(input.task_type, DEFAULT_PROMPT)
-
-    all_pairs = []
-    async with httpx.AsyncClient(timeout=120.0) as http:
-        for chunk in chunks:
-            activity.heartbeat()
-            chunk_text = chunk.get("text", "")
-            if len(chunk_text) < 50:
-                continue
-
-            prompt = prompt_template.format(
-                count=input.pairs_per_chunk,
-                text=chunk_text[:3000],  # limit context to avoid token overflow
+        if not settings.llm_api_key:
+            raise ValueError(
+                "LLM API key not configured. Set APP_LLM_API_KEY environment variable."
             )
 
-            try:
-                pairs = await _call_llm(http, settings, prompt)
-                for pair in pairs:
-                    all_pairs.append(
-                        {
-                            "id": str(uuid.uuid4()),
-                            "doc_id": chunk.get("doc_id"),
-                            "chunk_id": chunk.get("chunk_id"),
-                            "task_type": input.task_type,
-                            "instruction": pair.get("question") or pair.get("instruction", ""),
-                            "response": pair.get("answer") or pair.get("response", ""),
-                            "source_text": chunk_text[:500],
-                        }
-                    )
-            except Exception as e:
-                activity.logger.warning(
-                    "LLM call failed for chunk %s: %s", chunk.get("chunk_id"), e
+        # Download chunks
+        if not input.chunks_storage_path:
+            return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
+
+        response = s3.get_object(Bucket=bucket, Key=input.chunks_storage_path)
+        chunks_data = response["Body"].read().decode("utf-8")
+        chunks = [json.loads(line) for line in chunks_data.strip().split("\n") if line.strip()]
+
+        if not chunks:
+            return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
+
+        # Select prompt template
+        prompt_template = PROMPTS.get(input.task_type, DEFAULT_PROMPT)
+
+        all_pairs = []
+        async with httpx.AsyncClient(timeout=120.0) as http:
+            for chunk in chunks:
+                activity.heartbeat()
+                chunk_text = chunk.get("text", "")
+                if len(chunk_text) < 50:
+                    continue
+
+                prompt = prompt_template.format(
+                    count=input.pairs_per_chunk,
+                    text=chunk_text[:3000],  # limit context to avoid token overflow
                 )
-                continue
 
-    if not all_pairs:
-        return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
+                try:
+                    pairs = await _call_llm(http, settings, prompt)
+                    for pair in pairs:
+                        all_pairs.append(
+                            {
+                                "id": str(uuid.uuid4()),
+                                "doc_id": chunk.get("doc_id"),
+                                "chunk_id": chunk.get("chunk_id"),
+                                "task_type": input.task_type,
+                                "instruction": pair.get("question") or pair.get("instruction", ""),
+                                "response": pair.get("answer") or pair.get("response", ""),
+                                "source_text": chunk_text[:500],
+                            }
+                        )
+                except Exception as e:
+                    activity.logger.warning(
+                        "LLM call failed for chunk %s: %s", chunk.get("chunk_id"), e
+                    )
+                    continue
 
-    # Upload pairs as JSONL
-    batch_id = str(uuid.uuid4())
-    pairs_key = s3_paths.pairs_path(input.tenant_id, input.project_id, batch_id)
-    lines = [json.dumps(p, ensure_ascii=False) for p in all_pairs]
-    s3.put_object(
-        Bucket=bucket,
-        Key=pairs_key,
-        Body="\n".join(lines).encode("utf-8"),
-        ContentType="application/jsonl",
-    )
+        if not all_pairs:
+            return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
 
-    activity.logger.info("Generated %d pairs from %d chunks", len(all_pairs), len(chunks))
-    return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)
+        # Upload pairs as JSONL
+        batch_id = str(uuid.uuid4())
+        pairs_key = s3_paths.pairs_path(input.tenant_id, input.project_id, batch_id)
+        lines = [json.dumps(p, ensure_ascii=False) for p in all_pairs]
+        s3.put_object(
+            Bucket=bucket,
+            Key=pairs_key,
+            Body="\n".join(lines).encode("utf-8"),
+            ContentType="application/jsonl",
+        )
+
+        activity.logger.info("Generated %d pairs from %d chunks", len(all_pairs), len(chunks))
+        return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)
 
 
 async def _call_llm(

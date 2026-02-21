@@ -1,0 +1,64 @@
+// Auto-generated barrel file for ts-rs types.
+// Re-run `cargo test --workspace` to regenerate individual type files.
+// Only this index.ts is manually maintained — all other files are generated.
+
+// Enums (from crates/shared/src/enums.rs)
+export type { BillingOperation } from "./BillingOperation";
+export type { DatasetStatus } from "./DatasetStatus";
+export type { DeploymentStatus } from "./DeploymentStatus";
+export type { DocumentStatus } from "./DocumentStatus";
+export type { EvaluationStatus } from "./EvaluationStatus";
+export type { GpuClass } from "./GpuClass";
+export type { PipelineStage } from "./PipelineStage";
+export type { Plan } from "./Plan";
+export type { ProjectStatus } from "./ProjectStatus";
+export type { TaskType } from "./TaskType";
+export type { TrainingJobStatus } from "./TrainingJobStatus";
+export type { TrainingMethod } from "./TrainingMethod";
+export type { TrainingMode } from "./TrainingMode";
+
+// Typed structs (from crates/shared/src/types.rs)
+export type { ABComparisonScores } from "./ABComparisonScores";
+export type { DeploymentConfig } from "./DeploymentConfig";
+export type { DomainScores } from "./DomainScores";
+export type { EvaluationScores } from "./EvaluationScores";
+export type { GeneralScores } from "./GeneralScores";
+export type { Hyperparams } from "./Hyperparams";
+export type { SafetyScores } from "./SafetyScores";
+export type { TrainingMetrics } from "./TrainingMetrics";
+
+// API responses (from crates/api/src/dto/)
+export type { ApiKeyResponse } from "./ApiKeyResponse";
+export type { BillingEventResponse } from "./BillingEventResponse";
+export type { CreateApiKeyRequest } from "./CreateApiKeyRequest";
+export type { CreateApiKeyResponse } from "./CreateApiKeyResponse";
+export type { CreateEvaluationRequest } from "./CreateEvaluationRequest";
+export type { CreateProjectRequest } from "./CreateProjectRequest";
+export type { CreateTrainingJobRequest } from "./CreateTrainingJobRequest";
+export type { DatasetResponse } from "./DatasetResponse";
+export type { DatasetStatusCounts } from "./DatasetStatusCounts";
+export type { DeploymentStatusResponse } from "./DeploymentStatusResponse";
+export type { DocumentResponse } from "./DocumentResponse";
+export type { DocumentStatusCounts } from "./DocumentStatusCounts";
+export type { EvaluationResponse } from "./EvaluationResponse";
+export type { EvaluationStatusCounts } from "./EvaluationStatusCounts";
+export type { ModelResponse } from "./ModelResponse";
+export type { ModelStatusCounts } from "./ModelStatusCounts";
+export type { ProjectPipelineStatus } from "./ProjectPipelineStatus";
+export type { ProjectResponse } from "./ProjectResponse";
+export type { TrainingJobResponse } from "./TrainingJobResponse";
+export type { TrainingJobStatusCounts } from "./TrainingJobStatusCounts";
+export type { TriggerParseResponse } from "./TriggerParseResponse";
+export type { TriggerRefineRequest } from "./TriggerRefineRequest";
+export type { TriggerRefineResponse } from "./TriggerRefineResponse";
+export type { TriggerTrainResponse } from "./TriggerTrainResponse";
+export type { UpdateProjectRequest } from "./UpdateProjectRequest";
+export type { UploadResponse } from "./UploadResponse";
+
+// Generic wrapper — manually defined (ts-rs doesn't export generics directly)
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  offset: number;
+  limit: number;
+}

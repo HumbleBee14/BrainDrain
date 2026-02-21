@@ -1,0 +1,207 @@
+"""Iterative training workflow — multiple SFT rounds with early stopping.
+
+Extracts the iteration loop from the monolithic training activity into a
+proper Temporal workflow. Each iteration is a pair of activities:
+  1. train_sft_round — one SFT pass, saves adapter checkpoint
+  2. evaluate_holdout — validation eval on held-out data
+
+The workflow manages the loop, early stopping (eval_loss regression),
+progress tracking (signals/queries), and Temporal UI visibility.
+"""
+
+from datetime import timedelta
+
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from src.activities.stubs import (
+        EvaluateHoldoutInput,
+        EvaluateHoldoutOutput,
+        StartTrainingOutput,
+        TrainSftRoundInput,
+        TrainSftRoundOutput,
+    )
+
+
+@workflow.defn
+class TrainIterativeWorkflow:
+    """Multi-round SFT training with holdout evaluation and early stopping.
+
+    Each iteration: train_sft_round → evaluate_holdout → decision.
+    Stops early if eval_loss regresses or a signal is received.
+    """
+
+    def __init__(self) -> None:
+        self._early_stop_requested = False
+        self._current_iteration = 0
+        self._total_iterations = 0
+        self._best_eval_loss = float("inf")
+        self._best_adapter_path = ""
+        self._iteration_metrics: dict = {}
+
+    @workflow.signal
+    async def request_early_stop(self) -> None:
+        """Signal from user or external system to stop after current iteration."""
+        self._early_stop_requested = True
+        workflow.logger.info("Early stop requested, will stop after current iteration")
+
+    @workflow.query
+    def get_progress(self) -> dict:
+        """Query current training progress."""
+        return {
+            "current_iteration": self._current_iteration,
+            "total_iterations": self._total_iterations,
+            "best_eval_loss": self._best_eval_loss,
+            "best_adapter_path": self._best_adapter_path,
+            "early_stop_requested": self._early_stop_requested,
+            "iteration_metrics": self._iteration_metrics,
+        }
+
+    @workflow.run
+    async def run(
+        self,
+        tenant_id: str,
+        training_job_id: str,
+        dataset_path: str,
+        base_model: str,
+        method: str,
+        hyperparams: dict,
+        gpu_class: str | None = None,
+    ) -> StartTrainingOutput:
+        num_iterations = hyperparams.get("num_iterations", 3)
+        self._total_iterations = num_iterations
+
+        workflow.logger.info(
+            "Starting iterative training: %d iterations for job %s",
+            num_iterations,
+            training_job_id,
+        )
+
+        previous_adapter_path: str | None = None
+        previous_eval_loss: float = float("inf")
+        best_adapter_path: str = ""
+        best_adapter_size: int = 0
+        all_metrics: dict = {}
+
+        for iteration in range(num_iterations):
+            self._current_iteration = iteration + 1
+            workflow.set_current_details(
+                f"Iteration {iteration + 1}/{num_iterations} "
+                f"(best eval_loss: {self._best_eval_loss:.4f})"
+                if self._best_eval_loss < float("inf")
+                else f"Iteration {iteration + 1}/{num_iterations}"
+            )
+
+            # Check early stop signal before starting new iteration
+            if self._early_stop_requested:
+                workflow.logger.info(
+                    "Early stop: halting at iteration %d/%d",
+                    iteration,
+                    num_iterations,
+                )
+                all_metrics["early_stopped"] = True
+                all_metrics["early_stop_reason"] = "user_signal"
+                break
+
+            # Activity 1: Train one SFT round
+            sft_result: TrainSftRoundOutput = await workflow.execute_activity(
+                "train_sft_round",
+                TrainSftRoundInput(
+                    tenant_id=tenant_id,
+                    training_job_id=training_job_id,
+                    dataset_path=dataset_path,
+                    base_model=base_model,
+                    method=method,
+                    hyperparams=hyperparams,
+                    iteration=iteration,
+                    adapter_path=previous_adapter_path,
+                    gpu_class=gpu_class,
+                ),
+                task_queue="ml-pipeline-gpu",
+                start_to_close_timeout=timedelta(hours=4),
+                heartbeat_timeout=timedelta(minutes=5),
+                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            )
+
+            all_metrics[f"iter_{iteration}"] = sft_result.metrics
+
+            # Activity 2: Evaluate on holdout set
+            try:
+                eval_result: EvaluateHoldoutOutput = await workflow.execute_activity(
+                    "evaluate_holdout",
+                    EvaluateHoldoutInput(
+                        tenant_id=tenant_id,
+                        training_job_id=training_job_id,
+                        adapter_path=sft_result.adapter_path,
+                        base_model=base_model,
+                        method=method,
+                        dataset_path=dataset_path,
+                        hyperparams=hyperparams,
+                        iteration=iteration,
+                    ),
+                    task_queue="ml-pipeline-gpu",
+                    start_to_close_timeout=timedelta(hours=1),
+                    heartbeat_timeout=timedelta(minutes=5),
+                    retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                )
+                eval_loss = eval_result.eval_loss
+                all_metrics[f"iter_{iteration}_eval_loss"] = eval_loss
+                all_metrics[f"iter_{iteration}_eval"] = eval_result.metrics
+            except Exception as e:
+                # If holdout eval fails (e.g., no _val.jsonl), use train loss as proxy
+                workflow.logger.warning(
+                    "Holdout eval failed for iteration %d: %s. Using train loss.",
+                    iteration,
+                    str(e),
+                )
+                eval_loss = sft_result.metrics.get(f"iter_{iteration}_train_loss", 0.0)
+                all_metrics[f"iter_{iteration}_eval_loss"] = eval_loss
+
+            # Track best
+            if eval_loss < self._best_eval_loss:
+                self._best_eval_loss = eval_loss
+                self._best_adapter_path = sft_result.adapter_path
+                best_adapter_path = sft_result.adapter_path
+                best_adapter_size = sft_result.adapter_size_bytes
+
+            self._iteration_metrics[f"iter_{iteration}"] = {
+                "train_metrics": sft_result.metrics,
+                "eval_loss": eval_loss,
+            }
+
+            # Early stopping: eval_loss regressed
+            if iteration > 0 and eval_loss > previous_eval_loss:
+                workflow.logger.info(
+                    "Early stop: eval_loss regressed (%.4f > %.4f) at iteration %d",
+                    eval_loss,
+                    previous_eval_loss,
+                    iteration + 1,
+                )
+                all_metrics["early_stopped"] = True
+                all_metrics["early_stop_reason"] = "eval_loss_regression"
+                break
+
+            previous_adapter_path = sft_result.adapter_path
+            previous_eval_loss = eval_loss
+
+        all_metrics["total_iterations"] = self._current_iteration
+        all_metrics["best_eval_loss"] = self._best_eval_loss
+        all_metrics["best_iteration"] = next(
+            (
+                k
+                for k, v in self._iteration_metrics.items()
+                if isinstance(v, dict) and v.get("eval_loss") == self._best_eval_loss
+            ),
+            "iter_0",
+        )
+
+        workflow.set_current_details(
+            f"Complete: {self._current_iteration} iterations, "
+            f"best eval_loss: {self._best_eval_loss:.4f}"
+        )
+
+        return StartTrainingOutput(
+            adapter_path=best_adapter_path,
+            adapter_size_bytes=best_adapter_size,
+            metrics=all_metrics,
+        )
