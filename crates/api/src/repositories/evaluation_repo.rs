@@ -20,11 +20,7 @@ impl PgEvaluationRepo {
 }
 
 impl EvaluationRepository for PgEvaluationRepo {
-    fn create(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Evaluation>> {
+    fn create(&self, tenant_id: Uuid, model_id: Uuid) -> BoxFuture<'_, AppResult<Evaluation>> {
         Box::pin(async move {
             let eval = sqlx::query_as::<_, Evaluation>(
                 r#"
@@ -87,11 +83,7 @@ impl EvaluationRepository for PgEvaluationRepo {
         })
     }
 
-    fn count_by_model(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>> {
+    fn count_by_model(&self, tenant_id: Uuid, model_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM evaluations WHERE model_id = $1 AND tenant_id = $2",
@@ -105,11 +97,7 @@ impl EvaluationRepository for PgEvaluationRepo {
         })
     }
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>> {
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let count = sqlx::query_scalar::<_, i64>(
                 r#"

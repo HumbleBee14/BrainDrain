@@ -4,7 +4,7 @@ Provides:
   - TrainingEngine Protocol: abstract interface for model loading + adapter setup
   - UnslothEngine: concrete implementation using Unsloth + TRL
   - TrainingStrategy Protocol: abstract interface per training mode
-  - Strategy registry: SFT, DPO, GRPO, Iterative strategies
+  - Strategy registry: Quick (SFT), Aligned (SFT→DPO), Reasoning (SFT→GRPO)
 
 Services depend on Protocols, not concrete implementations.
 Swapping from Unsloth to HuggingFace PEFT or another library

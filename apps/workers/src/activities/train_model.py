@@ -132,7 +132,10 @@ class TrainSftRoundActivity:
 
             # Download dataset
             dataset_local = tmpdir_path / "dataset.jsonl"
-            _download_dataset(input.dataset_path, dataset_local, self.infra.s3, self.infra.s3_bucket)
+            _download_dataset(
+                input.dataset_path, dataset_local,
+                self.infra.s3, self.infra.s3_bucket,
+            )
             dataset = _load_chatml_dataset(dataset_local)
 
             # Load model
@@ -161,8 +164,13 @@ class TrainSftRoundActivity:
             if input.adapter_path:
                 prev_adapter_dir = tmpdir_path / "prev_adapter"
                 prev_adapter_dir.mkdir(parents=True)
-                _download_adapter(input.adapter_path, prev_adapter_dir, self.infra.s3, self.infra.s3_bucket)
-                model.load_adapter(str(prev_adapter_dir), adapter_name="default")
+                _download_adapter(
+                    input.adapter_path, prev_adapter_dir,
+                    self.infra.s3, self.infra.s3_bucket,
+                )
+                model.load_adapter(
+                    str(prev_adapter_dir), adapter_name="default",
+                )
                 logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
 
             # Train one SFT round
@@ -177,8 +185,14 @@ class TrainSftRoundActivity:
             adapter_dir = tmpdir_path / "adapter"
             engine.save_adapter(model, tokenizer, adapter_dir)
 
-            ckpt_s3_path = s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
-            adapter_size = _upload_adapter(adapter_dir, ckpt_s3_path, self.infra.s3, self.infra.s3_bucket)
+            ckpt_s3_path = (
+                s3_paths.checkpoint_prefix(input.tenant_id, job_id)
+                + f"iter-{iteration}/"
+            )
+            adapter_size = _upload_adapter(
+                adapter_dir, ckpt_s3_path,
+                self.infra.s3, self.infra.s3_bucket,
+            )
 
             logger.info(
                 "Iteration %d complete for job %s, checkpoint: %s",
@@ -207,7 +221,8 @@ class EvaluateHoldoutActivity:
         engine = get_engine()
         hp = input.hyperparams
 
-        with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{input.training_job_id[:8]}-") as tmpdir:
+        job_prefix = input.training_job_id[:8]
+        with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
             tmpdir_path = Path(tmpdir)
 
             # Download validation dataset
@@ -347,7 +362,7 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
         )
 
 
-# ── Training Strategies ─────────────────────────────────────────────
+# -- Training Strategies --
 
 
 @register_strategy("quick")
@@ -418,7 +433,7 @@ class ReasoningStrategy:
         return {**metrics_sft, "grpo": metrics_grpo}
 
 
-# ── SFT Training ────────────────────────────────────────────────────
+# -- SFT Training --
 
 
 def _train_sft(
@@ -479,7 +494,7 @@ def _train_sft(
     }
 
 
-# ── DPO Training ────────────────────────────────────────────────────
+# -- DPO Training --
 
 
 def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
@@ -525,7 +540,7 @@ def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
     }
 
 
-# ── GRPO Training ───────────────────────────────────────────────────
+# -- GRPO Training --
 
 
 def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
@@ -602,7 +617,7 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
     return eval_result.get("eval_loss", 0.0)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# -- Helpers --
 
 _sync_redis_client = None
 

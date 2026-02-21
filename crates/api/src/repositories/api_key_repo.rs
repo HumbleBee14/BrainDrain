@@ -92,11 +92,7 @@ impl ApiKeyRepository for PgApiKeyRepo {
         })
     }
 
-    fn revoke(
-        &self,
-        tenant_id: Uuid,
-        key_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Option<ApiKey>>> {
+    fn revoke(&self, tenant_id: Uuid, key_id: Uuid) -> BoxFuture<'_, AppResult<Option<ApiKey>>> {
         Box::pin(async move {
             let key = sqlx::query_as::<_, ApiKey>(
                 r#"

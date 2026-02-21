@@ -100,11 +100,7 @@ impl DeploymentService {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 model_repo
-                    .update_deployment_status(
-                        tenant_id,
-                        model_id,
-                        DeploymentStatus::Undeployed,
-                    )
+                    .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
                     .await?;
                 tracing::error!(model_id = %model_id, status = %status, body = %body, "vLLM deploy failed");
                 Err(AppError::Internal(anyhow::anyhow!(
@@ -113,11 +109,7 @@ impl DeploymentService {
             }
             Err(e) => {
                 model_repo
-                    .update_deployment_status(
-                        tenant_id,
-                        model_id,
-                        DeploymentStatus::Undeployed,
-                    )
+                    .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
                     .await?;
                 tracing::error!(model_id = %model_id, error = %e, "vLLM unreachable");
                 Err(AppError::Internal(anyhow::anyhow!(

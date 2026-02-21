@@ -14,44 +14,44 @@ export const queryKeys = {
   projects: {
     all: ["projects"] as const,
     list: (offset: number, limit: number) =>
-      ["projects", offset, limit] as const,
-    detail: (id: string) => ["project", id] as const,
+      ["projects", "list", offset, limit] as const,
+    detail: (id: string) => ["projects", "detail", id] as const,
   },
 
   documents: {
     all: (projectId: string) => ["documents", projectId] as const,
     list: (projectId: string, offset: number, limit: number) =>
-      ["documents", projectId, offset, limit] as const,
+      ["documents", projectId, "list", offset, limit] as const,
   },
 
   datasets: {
     all: (projectId: string) => ["datasets", projectId] as const,
     list: (projectId: string, offset: number, limit: number) =>
-      ["datasets", projectId, offset, limit] as const,
-    detail: (id: string) => ["dataset", id] as const,
+      ["datasets", projectId, "list", offset, limit] as const,
+    detail: (id: string) => ["datasets", "detail", id] as const,
     preview: (id: string, maxRows: number) =>
-      ["dataset-preview", id, maxRows] as const,
+      ["datasets", "preview", id, maxRows] as const,
   },
 
   trainingJobs: {
     all: (projectId: string) => ["training-jobs", projectId] as const,
     list: (projectId: string, offset: number, limit: number) =>
-      ["training-jobs", projectId, offset, limit] as const,
-    detail: (id: string) => ["training-job", id] as const,
+      ["training-jobs", projectId, "list", offset, limit] as const,
+    detail: (id: string) => ["training-jobs", "detail", id] as const,
   },
 
   models: {
     all: (projectId: string) => ["models", projectId] as const,
     list: (projectId: string, offset: number, limit: number) =>
-      ["models", projectId, offset, limit] as const,
-    detail: (id: string) => ["model", id] as const,
+      ["models", projectId, "list", offset, limit] as const,
+    detail: (id: string) => ["models", "detail", id] as const,
   },
 
   evaluations: {
     all: (modelId: string) => ["evaluations", modelId] as const,
     list: (modelId: string, offset: number, limit: number) =>
-      ["evaluations", modelId, offset, limit] as const,
-    detail: (id: string) => ["evaluation", id] as const,
+      ["evaluations", modelId, "list", offset, limit] as const,
+    detail: (id: string) => ["evaluations", "detail", id] as const,
   },
 
   deployments: {

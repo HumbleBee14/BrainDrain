@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn no_extension_returns_empty() {
+    fn no_dot_returns_full_filename_lowercased() {
         assert_eq!(extract_ext("Makefile"), "makefile");
     }
 

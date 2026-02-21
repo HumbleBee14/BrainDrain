@@ -12,7 +12,7 @@ export function useDatasets(projectId: string, offset = 0, limit = 20) {
   const { getToken } = useAuth();
 
   return useQuery<PaginatedResponse<Dataset>>({
-    queryKey: ["datasets", projectId, offset, limit],
+    queryKey: ["datasets", projectId, "list", offset, limit],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -26,7 +26,7 @@ export function useDataset(id: string) {
   const { getToken } = useAuth();
 
   return useQuery<Dataset>({
-    queryKey: ["dataset", id],
+    queryKey: ["datasets", "detail", id],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -40,7 +40,7 @@ export function useDatasetPreview(id: string, maxRows = 20) {
   const { getToken } = useAuth();
 
   return useQuery<Record<string, unknown>[]>({
-    queryKey: ["dataset-preview", id, maxRows],
+    queryKey: ["datasets", "preview", id, maxRows],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");

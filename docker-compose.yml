@@ -15,14 +15,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
+    cpus: 2
+    mem_limit: 1g
 
   redis:
     image: redis:7-alpine
@@ -36,14 +30,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
+    cpus: 1
+    mem_limit: 512m
 
   minio:
     image: minio/minio:latest
@@ -61,14 +49,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
+    cpus: 2
+    mem_limit: 1g
 
   # vLLM inference server with LoRA adapter support
   # Requires NVIDIA GPU. Uncomment to enable model deployment.

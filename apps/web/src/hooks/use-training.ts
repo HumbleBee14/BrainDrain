@@ -11,7 +11,7 @@ import { useAuthedQuery, useAuthedMutation } from "@/hooks/use-authed-query";
 
 export function useTrainingJobs(projectId: string, offset = 0, limit = 20) {
   return useAuthedQuery<PaginatedResponse<TrainingJob>>({
-    queryKey: ["training-jobs", projectId, offset, limit],
+    queryKey: ["training-jobs", projectId, "list", offset, limit],
     queryFn: (token) => api.trainingJobs.list(token, projectId, offset, limit),
     enabled: !!projectId,
   });
@@ -19,7 +19,7 @@ export function useTrainingJobs(projectId: string, offset = 0, limit = 20) {
 
 export function useTrainingJob(id: string, enabled = true) {
   return useAuthedQuery<TrainingJob>({
-    queryKey: ["training-job", id],
+    queryKey: ["training-jobs", "detail", id],
     queryFn: (token) => api.trainingJobs.get(token, id),
     enabled: !!id && enabled,
     refetchInterval: (query) => {

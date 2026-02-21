@@ -111,20 +111,15 @@ impl AppState {
         let http_client = reqwest::Client::new();
 
         // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone)
-        let project_repo: Arc<dyn ProjectRepository> =
-            Arc::new(PgProjectRepo::new(db.clone()));
-        let document_repo: Arc<dyn DocumentRepository> =
-            Arc::new(PgDocumentRepo::new(db.clone()));
-        let dataset_repo: Arc<dyn DatasetRepository> =
-            Arc::new(PgDatasetRepo::new(db.clone()));
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db.clone()));
+        let document_repo: Arc<dyn DocumentRepository> = Arc::new(PgDocumentRepo::new(db.clone()));
+        let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db.clone()));
         let training_job_repo: Arc<dyn TrainingJobRepository> =
             Arc::new(PgTrainingJobRepo::new(db.clone()));
-        let model_repo: Arc<dyn ModelRepository> =
-            Arc::new(PgModelRepo::new(db.clone()));
+        let model_repo: Arc<dyn ModelRepository> = Arc::new(PgModelRepo::new(db.clone()));
         let evaluation_repo: Arc<dyn EvaluationRepository> =
             Arc::new(PgEvaluationRepo::new(db.clone()));
-        let api_key_repo: Arc<dyn ApiKeyRepository> =
-            Arc::new(PgApiKeyRepo::new(db.clone()));
+        let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
             Arc::new(PgBillingEventRepo::new(db.clone()));
 

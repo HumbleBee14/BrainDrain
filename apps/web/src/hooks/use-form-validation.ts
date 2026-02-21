@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { ZodSchema, ZodError } from "zod";
+import type { ZodSchema, ZodError, ZodObject, ZodRawShape } from "zod";
 
 interface UseFormValidationResult<T> {
   /** Per-field error messages */
@@ -46,23 +46,44 @@ export function useFormValidation<T>(
 
   const validateField = useCallback(
     (field: keyof T, value: unknown): string | null => {
-      // Create a partial object for single-field validation
-      const result = schema.safeParse({ [field]: value });
-      if (result.success) {
-        setErrors((prev) => {
-          const next = { ...prev };
-          delete next[field];
-          return next;
-        });
-        return null;
+      // Extract the individual field schema if possible (ZodObject),
+      // otherwise fall back to full-schema parse filtering for our field.
+      const fieldKey = field as string;
+      let fieldError: string | null = null;
+
+      const shape = (schema as unknown as ZodObject<ZodRawShape>).shape;
+      if (shape && fieldKey in shape) {
+        const fieldSchema = shape[fieldKey];
+        const result = fieldSchema.safeParse(value);
+        if (result.success) {
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next[field];
+            return next;
+          });
+          return null;
+        }
+        fieldError =
+          (result.error as ZodError).issues[0]?.message || "Invalid";
+      } else {
+        // Fallback: parse full object and filter for our field's error
+        const result = schema.safeParse({ [field]: value });
+        if (result.success) {
+          setErrors((prev) => {
+            const next = { ...prev };
+            delete next[field];
+            return next;
+          });
+          return null;
+        }
+        const issue = (result.error as ZodError).issues.find(
+          (i) => i.path[0] === field
+        );
+        fieldError = issue?.message || "Invalid";
       }
 
-      const issue = (result.error as ZodError).issues.find(
-        (i) => i.path[0] === field
-      );
-      const message = issue?.message || "Invalid";
-      setErrors((prev) => ({ ...prev, [field]: message }));
-      return message;
+      setErrors((prev) => ({ ...prev, [field]: fieldError }));
+      return fieldError;
     },
     [schema]
   );

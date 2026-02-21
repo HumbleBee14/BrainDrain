@@ -35,9 +35,13 @@ async fn list_projects(
     user: AuthenticatedUser,
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<ProjectResponse>>> {
-    let result =
-        ProjectService::list(state.project_repo(), user.tenant_id, params.offset, params.limit)
-            .await?;
+    let result = ProjectService::list(
+        state.project_repo(),
+        user.tenant_id,
+        params.offset,
+        params.limit,
+    )
+    .await?;
     Ok(Json(result))
 }
 

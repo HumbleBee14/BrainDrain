@@ -34,9 +34,16 @@ class WebSocketClient {
   private token: string | null = null;
   private connecting = false;
 
-  /** Set the auth token (call when token refreshes) */
+  /** Set the auth token. Reconnects if the token changed and a connection is active. */
   setToken(token: string) {
+    if (this.token === token) return;
     this.token = token;
+
+    // Reconnect with the new token if we have an active connection
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.close();
+      // onclose handler will trigger scheduleReconnect → connect() with new token
+    }
   }
 
   /** Connect to the WebSocket server */

@@ -62,10 +62,8 @@ impl ProjectService {
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<ProjectResponse>> {
-        let (projects, total) = tokio::try_join!(
-            repo.list(tenant_id, offset, limit),
-            repo.count(tenant_id),
-        )?;
+        let (projects, total) =
+            tokio::try_join!(repo.list(tenant_id, offset, limit), repo.count(tenant_id),)?;
 
         Ok(PaginatedResponse {
             data: projects.into_iter().map(Into::into).collect(),

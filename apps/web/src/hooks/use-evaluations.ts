@@ -13,7 +13,7 @@ export function useEvaluations(modelId: string, offset = 0, limit = 20) {
   const { getToken } = useAuth();
 
   return useQuery<PaginatedResponse<Evaluation>>({
-    queryKey: ["evaluations", modelId, offset, limit],
+    queryKey: ["evaluations", modelId, "list", offset, limit],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -27,7 +27,7 @@ export function useEvaluation(id: string, enabled = true) {
   const { getToken } = useAuth();
 
   return useQuery<Evaluation>({
-    queryKey: ["evaluation", id],
+    queryKey: ["evaluations", "detail", id],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");

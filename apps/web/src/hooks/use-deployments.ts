@@ -37,7 +37,7 @@ export function useDeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["model", modelId] });
+      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
     },
   });
 }
@@ -56,7 +56,7 @@ export function useUndeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["model", modelId] });
+      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
     },
   });
 }

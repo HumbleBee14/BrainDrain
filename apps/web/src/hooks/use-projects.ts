@@ -6,14 +6,14 @@ import { useAuthedQuery, useAuthedMutation } from "@/hooks/use-authed-query";
 
 export function useProjects(offset = 0, limit = 20) {
   return useAuthedQuery<PaginatedResponse<Project>>({
-    queryKey: ["projects", offset, limit],
+    queryKey: ["projects", "list", offset, limit],
     queryFn: (token) => api.projects.list(token, offset, limit),
   });
 }
 
 export function useProject(id: string) {
   return useAuthedQuery<Project>({
-    queryKey: ["project", id],
+    queryKey: ["projects", "detail", id],
     queryFn: (token) => api.projects.get(token, id),
     enabled: !!id,
   });

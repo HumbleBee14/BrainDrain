@@ -34,8 +34,9 @@ impl PipelineService {
                 .to_string(),
         })?;
 
-        let docs =
-            doc_repo.list_by_status(tenant_id, project_id, DocumentStatus::Uploaded).await?;
+        let docs = doc_repo
+            .list_by_status(tenant_id, project_id, DocumentStatus::Uploaded)
+            .await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -82,8 +83,9 @@ impl PipelineService {
                 .to_string(),
         })?;
 
-        let docs =
-            doc_repo.list_by_status(tenant_id, project_id, DocumentStatus::Parsed).await?;
+        let docs = doc_repo
+            .list_by_status(tenant_id, project_id, DocumentStatus::Parsed)
+            .await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -159,16 +161,8 @@ impl PipelineService {
             dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Approved),
             training_repo.count_by_project(tenant_id, project_id),
             training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Pending),
-            training_repo.count_by_status(
-                tenant_id,
-                project_id,
-                TrainingJobStatus::Training
-            ),
-            training_repo.count_by_status(
-                tenant_id,
-                project_id,
-                TrainingJobStatus::Completed
-            ),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Training),
+            training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Completed),
             training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Failed),
             model_repo.count_by_project(tenant_id, project_id),
             model_repo.count_by_deployment_status(
@@ -176,27 +170,11 @@ impl PipelineService {
                 project_id,
                 DeploymentStatus::Undeployed
             ),
-            model_repo.count_by_deployment_status(
-                tenant_id,
-                project_id,
-                DeploymentStatus::Active
-            ),
+            model_repo.count_by_deployment_status(tenant_id, project_id, DeploymentStatus::Active),
             eval_repo.count_by_project(tenant_id, project_id),
-            eval_repo.count_by_project_status(
-                tenant_id,
-                project_id,
-                EvaluationStatus::Running
-            ),
-            eval_repo.count_by_project_status(
-                tenant_id,
-                project_id,
-                EvaluationStatus::Completed
-            ),
-            eval_repo.count_by_project_status(
-                tenant_id,
-                project_id,
-                EvaluationStatus::Failed
-            ),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Running),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Completed),
+            eval_repo.count_by_project_status(tenant_id, project_id, EvaluationStatus::Failed),
         )?;
 
         Ok(ProjectPipelineStatus {

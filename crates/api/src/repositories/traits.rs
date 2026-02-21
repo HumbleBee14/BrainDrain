@@ -104,11 +104,7 @@ pub trait DocumentRepository: Send + Sync {
         error_message: Option<&str>,
     ) -> BoxFuture<'_, AppResult<bool>>;
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for dataset database operations.
@@ -127,11 +123,7 @@ pub trait DatasetRepository: Send + Sync {
         dataset_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn count_by_status(
         &self,
@@ -171,11 +163,7 @@ pub trait TrainingJobRepository: Send + Sync {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<TrainingJob>>>;
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn count_by_status(
         &self,
@@ -200,11 +188,8 @@ pub trait TrainingJobRepository: Send + Sync {
 
 /// Contract for model database operations.
 pub trait ModelRepository: Send + Sync {
-    fn get_by_id(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Option<Model>>>;
+    fn get_by_id(&self, tenant_id: Uuid, model_id: Uuid)
+    -> BoxFuture<'_, AppResult<Option<Model>>>;
 
     fn list_by_project(
         &self,
@@ -214,11 +199,7 @@ pub trait ModelRepository: Send + Sync {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Model>>>;
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn count_by_deployment_status(
         &self,
@@ -253,11 +234,7 @@ pub trait ModelRepository: Send + Sync {
 
 /// Contract for evaluation database operations.
 pub trait EvaluationRepository: Send + Sync {
-    fn create(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Evaluation>>;
+    fn create(&self, tenant_id: Uuid, model_id: Uuid) -> BoxFuture<'_, AppResult<Evaluation>>;
 
     fn get_by_id(
         &self,
@@ -273,17 +250,9 @@ pub trait EvaluationRepository: Send + Sync {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Evaluation>>>;
 
-    fn count_by_model(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_model(&self, tenant_id: Uuid, model_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn count_by_project_status(
         &self,
@@ -325,11 +294,7 @@ pub trait ApiKeyRepository: Send + Sync {
         model_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Vec<ApiKey>>>;
 
-    fn revoke(
-        &self,
-        tenant_id: Uuid,
-        key_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Option<ApiKey>>>;
+    fn revoke(&self, tenant_id: Uuid, key_id: Uuid) -> BoxFuture<'_, AppResult<Option<ApiKey>>>;
 
     fn update_last_used(&self, key_id: Uuid) -> BoxFuture<'_, AppResult<()>>;
 }

@@ -65,11 +65,7 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
-    fn count_by_project(
-        &self,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<i64>> {
+    fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM models WHERE project_id = $1 AND tenant_id = $2",

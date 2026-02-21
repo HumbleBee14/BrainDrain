@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::{
-        State,
+        Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
@@ -40,19 +40,34 @@ pub enum WsMessage {
     Error { message: String },
 }
 
+#[derive(Debug, Deserialize)]
+struct WsQuery {
+    token: Option<String>,
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/ws", get(ws_handler))
 }
 
 /// WebSocket upgrade handler.
-/// Authentication is handled via the standard Bearer token extractor since
-/// the WebSocket handshake is an HTTP request that carries headers.
+///
+/// Browsers cannot set custom headers on WebSocket connections, so auth is
+/// handled via a `?token=` query parameter. The handler extracts the token,
+/// authenticates through the same auth chain used for REST endpoints, then
+/// upgrades the connection.
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    user: AuthenticatedUser,
-    State(_state): State<AppState>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, user))
+    Query(query): Query<WsQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, crate::error::AppError> {
+    let token = query
+        .token
+        .as_deref()
+        .ok_or(crate::error::AppError::Unauthorized)?;
+
+    let user = state.auth_chain().authenticate(token, state.db()).await?;
+
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, user)))
 }
 
 async fn handle_socket(socket: WebSocket, user: AuthenticatedUser) {

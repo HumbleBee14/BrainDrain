@@ -852,7 +852,7 @@ The fixes are surgical. You're not rebuilding anything — you're extracting pro
 
 | ID | Issue | Status | Implementation |
 |---|---|---|---|
-| P2-1 | Repositories Not Trait-Based | **FIXED** | Repo methods remain static (valid for current stage) but comprehensive unit tests added to validate service logic without DB. 93 Rust tests total. |
+| P2-1 | Repositories Not Trait-Based | **FIXED** | Full trait-based pattern implemented. 8 repository traits in `traits.rs`, `Arc<dyn XxxRepository>` in AppState, services take `&dyn XxxRepository`. 159 Rust tests total. |
 | P2-2 | Monolithic Frontend Page Components | **FIXED** | Extracted components from `projects/[id]/page.tsx` into `apps/web/src/app/(dashboard)/projects/[id]/components/` with `StatusBadge`, `DocStatusBadge`, `TrainingStatusBadge`, `PipelineStageCard`, `DocumentRow`. |
 | P2-3 | Hook Boilerplate Duplication | **FIXED** | Created `apps/web/src/hooks/use-authed-query.ts` with `useAuthedQuery` and `useAuthedMutation` factories. Centralizes `getToken()` pattern. |
 | P2-4 | No TypeScript Type Generation from Rust | **FIXED** | Implemented end-to-end Rust → TypeScript auto-generation via `ts-rs` v12. All 24 DTOs and 13 enums annotated with `#[derive(TS)]` + `#[ts(export)]`. Generated types output to `apps/web/src/lib/generated/` (48 files). `api-client.ts` imports from generated types with aliases. DTO enum fields changed from `String` to proper Rust enums (`ProjectStatus`, `TrainingJobStatus`, etc.) so TypeScript gets union types instead of `string`. `make typegen` regenerates. Zero manual type sync needed. |
@@ -924,9 +924,7 @@ All checks pass after fixes:
 
 ### Rust API (9.0 — missing 1.0)
 
-1. **Repositories are still concrete static methods, not trait-based.** P2-1 was addressed by adding comprehensive tests, but the actual pattern is unchanged — `ProjectRepo::list(db, ...)` is still a concrete call. You can't mock the DB layer for true isolated unit tests. This was a deliberate choice (valid for current team size and stage) but it's not a 10/10 architecture.
-
-2. **AppState still holds concrete `PgPool` and `redis::ConnectionManager`.** We abstracted Temporal (`Arc<dyn WorkflowOrchestrator>`) and auth (`AuthProviderChain`), but Redis and Postgres are still concrete types, not behind traits. Swapping cache backends (Redis → Memcached, DragonflyDB) would still require modifying `AppState`.
+1. **AppState still holds concrete `redis::ConnectionManager`.** We abstracted Temporal (`Arc<dyn WorkflowOrchestrator>`), auth (`AuthProviderChain`), and repositories (`Arc<dyn XxxRepository>`), but Redis is still a concrete type, not behind a trait. Swapping cache backends (Redis → Memcached, DragonflyDB) would still require modifying `AppState`.
 
 ### Python Worker (8.0 — missing 2.0)
 

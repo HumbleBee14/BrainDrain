@@ -34,12 +34,13 @@ impl TrainingJobService {
             })?;
 
         // Verify dataset exists and belongs to tenant
-        let dataset = dataset_repo
-            .get_by_id(tenant_id, dataset_id)
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Dataset not found".to_string(),
-            })?;
+        let dataset =
+            dataset_repo
+                .get_by_id(tenant_id, dataset_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: "Dataset not found".to_string(),
+                })?;
 
         // Validate base_model
         if req.base_model.trim().is_empty() {
@@ -165,7 +166,10 @@ impl TrainingJobService {
         tenant_id: Uuid,
         job_id: Uuid,
     ) -> AppResult<TrainingJobResponse> {
-        let job = repo.cancel(tenant_id, job_id).await?.ok_or(AppError::BadRequest {
+        let job = repo
+            .cancel(tenant_id, job_id)
+            .await?
+            .ok_or(AppError::BadRequest {
             message:
                 "Cannot cancel: job not found or not in a cancellable state (pending/cost_approval)"
                     .to_string(),
