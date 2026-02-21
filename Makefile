@@ -36,13 +36,16 @@ typegen:
 # Run all tests
 test:
 	cargo test --workspace
-	-cd apps/web && pnpm test
+	cd apps/web && pnpm test
 
-# Lint everything
+# Lint everything (Rust + Frontend + Python) — fails fast on first error
 lint:
-	cargo clippy --workspace -- -D warnings
 	cargo fmt --all -- --check
-	-cd apps/web && pnpm lint
+	cargo clippy --workspace -- -D warnings
+	cd apps/web && pnpm lint
+	cd apps/web && pnpm type-check
+	cd apps/workers && uv run ruff check src/
+	cd apps/workers && uv run ruff format --check src/
 
 # Build all
 build:

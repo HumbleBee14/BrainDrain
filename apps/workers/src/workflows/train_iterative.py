@@ -73,7 +73,8 @@ class TrainIterativeWorkflow:
 
         workflow.logger.info(
             "Starting iterative training: %d iterations for job %s",
-            num_iterations, training_job_id,
+            num_iterations,
+            training_job_id,
         )
 
         previous_adapter_path: str | None = None
@@ -95,7 +96,8 @@ class TrainIterativeWorkflow:
             if self._early_stop_requested:
                 workflow.logger.info(
                     "Early stop: halting at iteration %d/%d",
-                    iteration, num_iterations,
+                    iteration,
+                    num_iterations,
                 )
                 all_metrics["early_stopped"] = True
                 all_metrics["early_stop_reason"] = "user_signal"
@@ -149,7 +151,8 @@ class TrainIterativeWorkflow:
                 # If holdout eval fails (e.g., no _val.jsonl), use train loss as proxy
                 workflow.logger.warning(
                     "Holdout eval failed for iteration %d: %s. Using train loss.",
-                    iteration, str(e),
+                    iteration,
+                    str(e),
                 )
                 eval_loss = sft_result.metrics.get(f"iter_{iteration}_train_loss", 0.0)
                 all_metrics[f"iter_{iteration}_eval_loss"] = eval_loss
@@ -170,7 +173,9 @@ class TrainIterativeWorkflow:
             if iteration > 0 and eval_loss > previous_eval_loss:
                 workflow.logger.info(
                     "Early stop: eval_loss regressed (%.4f > %.4f) at iteration %d",
-                    eval_loss, previous_eval_loss, iteration + 1,
+                    eval_loss,
+                    previous_eval_loss,
+                    iteration + 1,
                 )
                 all_metrics["early_stopped"] = True
                 all_metrics["early_stop_reason"] = "eval_loss_regression"
@@ -182,8 +187,11 @@ class TrainIterativeWorkflow:
         all_metrics["total_iterations"] = self._current_iteration
         all_metrics["best_eval_loss"] = self._best_eval_loss
         all_metrics["best_iteration"] = next(
-            (k for k, v in self._iteration_metrics.items()
-             if isinstance(v, dict) and v.get("eval_loss") == self._best_eval_loss),
+            (
+                k
+                for k, v in self._iteration_metrics.items()
+                if isinstance(v, dict) and v.get("eval_loss") == self._best_eval_loss
+            ),
             "iter_0",
         )
 

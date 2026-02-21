@@ -74,7 +74,9 @@ class GeneratePairsActivity:
         settings = self.infra.settings
 
         if not settings.llm_api_key:
-            raise ValueError("LLM API key not configured. Set APP_LLM_API_KEY environment variable.")
+            raise ValueError(
+                "LLM API key not configured. Set APP_LLM_API_KEY environment variable."
+            )
 
         # Download chunks
         if not input.chunks_storage_path:

@@ -20,17 +20,17 @@ from typing import Any, Protocol
 
 from temporalio import activity
 
-from src.infra import InfraContainer
 from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
 from src.constants import EvaluationStatus
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.evaluation")
 
 _BENCHMARKS_DIR = Path(__file__).parent / "benchmarks"
 
 
-# ── EvaluationSuite Protocol & Registry ─────────────────────────────
+# -- EvaluationSuite Protocol & Registry --
 
 
 class EvaluationSuite(Protocol):
@@ -77,7 +77,7 @@ def get_registered_suites() -> list[EvaluationSuite]:
     return [cls() for cls in _SUITE_REGISTRY]
 
 
-# ── Main Activity ───────────────────────────────────────────────────
+# -- Main Activity --
 
 
 class RunEvaluationActivity:
@@ -92,8 +92,7 @@ class RunEvaluationActivity:
 
         try:
             await db.execute(
-                "UPDATE evaluations SET status = $1,"
-                " started_at = NOW() WHERE id = $2",
+                "UPDATE evaluations SET status = $1, started_at = NOW() WHERE id = $2",
                 EvaluationStatus.RUNNING,
                 eval_id,
             )
@@ -211,7 +210,7 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
         return scores, report
 
 
-# ── Suite 1: Domain Evaluation ──────────────────────────────────────
+# -- Suite 1: Domain Evaluation --
 
 
 @register_suite
@@ -269,7 +268,7 @@ class DomainSuite:
         )
 
 
-# ── Suite 2: General Capability ─────────────────────────────────────
+# -- Suite 2: General Capability --
 
 
 @register_suite
@@ -345,7 +344,7 @@ class GeneralCapabilitySuite:
         )
 
 
-# ── Suite 3: A/B Comparison ─────────────────────────────────────────
+# -- Suite 3: A/B Comparison --
 
 
 @register_suite
@@ -417,7 +416,7 @@ class ABComparisonSuite:
         )
 
 
-# ── Suite 4: Safety Check ───────────────────────────────────────────
+# -- Suite 4: Safety Check --
 
 
 @register_suite
@@ -475,7 +474,7 @@ class SafetySuite:
         )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# -- Helpers --
 
 
 def _generate(model, tokenizer, prompt: str, max_new_tokens: int = 512) -> str:

@@ -54,8 +54,7 @@ class StartTrainingActivity:
 
         try:
             await db.execute(
-                "UPDATE training_jobs SET status = $1,"
-                " started_at = NOW() WHERE id = $2",
+                "UPDATE training_jobs SET status = $1, started_at = NOW() WHERE id = $2",
                 TrainingJobStatus.TRAINING,
                 job_id,
             )
@@ -133,8 +132,10 @@ class TrainSftRoundActivity:
             # Download dataset
             dataset_local = tmpdir_path / "dataset.jsonl"
             _download_dataset(
-                input.dataset_path, dataset_local,
-                self.infra.s3, self.infra.s3_bucket,
+                input.dataset_path,
+                dataset_local,
+                self.infra.s3,
+                self.infra.s3_bucket,
             )
             dataset = _load_chatml_dataset(dataset_local)
 
@@ -165,20 +166,30 @@ class TrainSftRoundActivity:
                 prev_adapter_dir = tmpdir_path / "prev_adapter"
                 prev_adapter_dir.mkdir(parents=True)
                 _download_adapter(
-                    input.adapter_path, prev_adapter_dir,
-                    self.infra.s3, self.infra.s3_bucket,
+                    input.adapter_path,
+                    prev_adapter_dir,
+                    self.infra.s3,
+                    self.infra.s3_bucket,
                 )
                 model.load_adapter(
-                    str(prev_adapter_dir), adapter_name="default",
+                    str(prev_adapter_dir),
+                    adapter_name="default",
                 )
                 logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
 
             # Train one SFT round
             phase = f"iter_{iteration}"
             metrics = _train_sft(
-                model, tokenizer, dataset, hp, job_id, max_seq_length,
-                phase=phase, tenant_id=input.tenant_id,
-                s3=self.infra.s3, bucket=self.infra.s3_bucket,
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                phase=phase,
+                tenant_id=input.tenant_id,
+                s3=self.infra.s3,
+                bucket=self.infra.s3_bucket,
             )
 
             # Save adapter checkpoint
@@ -186,17 +197,20 @@ class TrainSftRoundActivity:
             engine.save_adapter(model, tokenizer, adapter_dir)
 
             ckpt_s3_path = (
-                s3_paths.checkpoint_prefix(input.tenant_id, job_id)
-                + f"iter-{iteration}/"
+                s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
             )
             adapter_size = _upload_adapter(
-                adapter_dir, ckpt_s3_path,
-                self.infra.s3, self.infra.s3_bucket,
+                adapter_dir,
+                ckpt_s3_path,
+                self.infra.s3,
+                self.infra.s3_bucket,
             )
 
             logger.info(
                 "Iteration %d complete for job %s, checkpoint: %s",
-                iteration, job_id, ckpt_s3_path,
+                iteration,
+                job_id,
+                ckpt_s3_path,
             )
 
             return TrainSftRoundOutput(
@@ -264,7 +278,9 @@ class EvaluateHoldoutActivity:
 
             logger.info(
                 "Holdout eval iteration %d for job %s: eval_loss=%.4f",
-                input.iteration, input.training_job_id, eval_loss,
+                input.iteration,
+                input.training_job_id,
+                eval_loss,
             )
 
             return EvaluateHoldoutOutput(
@@ -281,7 +297,7 @@ def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
     response = s3.list_objects_v2(Bucket=bucket, Prefix=s3_prefix)
     for obj in response.get("Contents", []):
         key = obj["Key"]
-        relative = key[len(s3_prefix):]
+        relative = key[len(s3_prefix) :]
         if not relative:
             continue
         local_file = local_dir / relative
@@ -376,8 +392,15 @@ class QuickStrategy:
         s3 = kwargs.get("s3")
         bucket = kwargs.get("bucket")
         return _train_sft(
-            model, tokenizer, dataset, hp, job_id, max_seq_length,
-            tenant_id=tenant_id, s3=s3, bucket=bucket,
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
         )
 
 
@@ -437,8 +460,16 @@ class ReasoningStrategy:
 
 
 def _train_sft(
-    model, tokenizer, dataset, hp, job_id, max_seq_length,
-    phase=None, tenant_id=None, s3=None, bucket=None,
+    model,
+    tokenizer,
+    dataset,
+    hp,
+    job_id,
+    max_seq_length,
+    phase=None,
+    tenant_id=None,
+    s3=None,
+    bucket=None,
 ):
     """Run SFT (Supervised Fine-Tuning) training."""
     from trl import SFTConfig, SFTTrainer

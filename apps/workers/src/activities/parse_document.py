@@ -334,8 +334,7 @@ class ParseDocumentActivity:
 
         # Update status to parsing
         await db.execute(
-            "UPDATE documents SET status = $1,"
-            " updated_at = now() WHERE id = $2",
+            "UPDATE documents SET status = $1, updated_at = now() WHERE id = $2",
             DocumentStatus.PARSING,
             input.document_id,
         )

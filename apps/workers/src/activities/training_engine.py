@@ -18,7 +18,7 @@ from typing import Any, Protocol
 logger = logging.getLogger("platform.training.engine")
 
 
-# ── TrainingEngine Protocol ─────────────────────────────────────────
+# -- TrainingEngine Protocol --
 
 
 class TrainingEngine(Protocol):
@@ -113,7 +113,7 @@ class UnslothEngine:
         tokenizer.save_pretrained(str(output_dir))
 
 
-# ── TrainingStrategy Protocol ───────────────────────────────────────
+# -- TrainingStrategy Protocol --
 
 
 class TrainingStrategy(Protocol):
@@ -142,7 +142,7 @@ class TrainingStrategy(Protocol):
         ...
 
 
-# ── Strategy Registry ───────────────────────────────────────────────
+# -- Strategy Registry --
 
 _STRATEGY_REGISTRY: dict[str, type] = {}
 

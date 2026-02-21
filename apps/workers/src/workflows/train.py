@@ -68,8 +68,13 @@ class TrainWorkflow:
             return await workflow.execute_child_workflow(
                 TrainIterativeWorkflow.run,
                 args=[
-                    tenant_id, training_job_id, dataset_path,
-                    base_model, method, hyperparams, gpu_class,
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
                 ],
                 id=f"train-iterative-{training_job_id}",
             )
@@ -78,8 +83,13 @@ class TrainWorkflow:
             return await workflow.execute_child_workflow(
                 TrainAlignedWorkflow.run,
                 args=[
-                    tenant_id, training_job_id, dataset_path,
-                    base_model, method, hyperparams, gpu_class,
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
                 ],
                 id=f"train-aligned-{training_job_id}",
             )
@@ -88,14 +98,18 @@ class TrainWorkflow:
             return await workflow.execute_child_workflow(
                 TrainReasoningWorkflow.run,
                 args=[
-                    tenant_id, training_job_id, dataset_path,
-                    base_model, method, hyperparams, gpu_class,
+                    tenant_id,
+                    training_job_id,
+                    dataset_path,
+                    base_model,
+                    method,
+                    hyperparams,
+                    gpu_class,
                 ],
                 id=f"train-reasoning-{training_job_id}",
             )
 
         else:
             raise ApplicationError(
-                f"Unknown training mode: {mode}. "
-                f"Valid modes: quick, iterative, aligned, reasoning"
+                f"Unknown training mode: {mode}. Valid modes: quick, iterative, aligned, reasoning"
             )
