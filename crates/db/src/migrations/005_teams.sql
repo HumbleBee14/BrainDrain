@@ -47,3 +47,13 @@ CREATE TRIGGER update_team_members_updated_at BEFORE UPDATE ON team_members
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_invitations_updated_at BEFORE UPDATE ON invitations
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- CHECK constraints for role and status columns
+ALTER TABLE team_members ADD CONSTRAINT chk_team_members_role
+    CHECK (role IN ('owner', 'admin', 'member', 'viewer'));
+
+ALTER TABLE invitations ADD CONSTRAINT chk_invitations_role
+    CHECK (role IN ('owner', 'admin', 'member', 'viewer'));
+
+ALTER TABLE invitations ADD CONSTRAINT chk_invitations_status
+    CHECK (status IN ('pending', 'accepted', 'expired', 'revoked'));

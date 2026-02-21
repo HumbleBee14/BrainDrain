@@ -1,4 +1,5 @@
 use chrono::Utc;
+use platform_shared::enums::TeamRole;
 use uuid::Uuid;
 
 use crate::dto::team::{InvitationResponse, InviteRequest, TeamMemberResponse};
@@ -32,15 +33,17 @@ impl TeamService {
             });
         }
 
-        let role = req.role.as_deref().unwrap_or("member");
-        // Validate role
-        if !["viewer", "member", "admin"].contains(&role) {
+        let role = req.role.unwrap_or(TeamRole::Member);
+        // Block inviting as owner — owners are bootstrapped, not invited
+        if role == TeamRole::Owner {
             return Err(AppError::BadRequest {
-                message: "Invalid role. Must be viewer, member, or admin".to_string(),
+                message: "Cannot invite as owner".to_string(),
             });
         }
+        let role_str = role.to_string();
 
         // Check if user is already a member
+        // TODO: Replace with SELECT EXISTS query for O(1) lookup
         let members = team_repo.list_by_tenant(tenant_id).await?;
         if members.iter().any(|m| m.email == email) {
             return Err(AppError::Conflict {
@@ -53,13 +56,13 @@ impl TeamService {
 
         let expires_at = Utc::now() + chrono::Duration::days(7);
         let invitation = invite_repo
-            .create(tenant_id, &email, role, &token, invited_by, expires_at)
+            .create(tenant_id, &email, &role_str, &token, invited_by, expires_at)
             .await?;
 
         tracing::info!(
             tenant_id = %tenant_id,
             email = %email,
-            role = role,
+            role = %role_str,
             "Team invitation created"
         );
 
@@ -142,7 +145,15 @@ impl TeamService {
         tenant_id: Uuid,
         target_user_id: &str,
         new_role: &str,
+        caller_user_id: &str,
     ) -> AppResult<TeamMemberResponse> {
+        // Block self-demotion — owners must ask another owner to change their role
+        if target_user_id == caller_user_id {
+            return Err(AppError::BadRequest {
+                message: "Cannot change your own role".to_string(),
+            });
+        }
+
         // Validate role
         if !["viewer", "member", "admin", "owner"].contains(&new_role) {
             return Err(AppError::BadRequest {
@@ -177,6 +188,7 @@ impl TeamService {
         repo: &dyn TeamMemberRepository,
         tenant_id: Uuid,
         target_user_id: &str,
+        caller_role: &str,
     ) -> AppResult<()> {
         // Prevent removing the last owner
         let target =
@@ -187,6 +199,13 @@ impl TeamService {
                 })?;
 
         if target.role == "owner" {
+            // Only an owner can remove another owner
+            if caller_role != "owner" {
+                return Err(AppError::Forbidden {
+                    message: "Only an owner can remove another owner".to_string(),
+                });
+            }
+
             let members = repo.list_by_tenant(tenant_id).await?;
             let owner_count = members.iter().filter(|m| m.role == "owner").count();
             if owner_count <= 1 {

@@ -13,6 +13,16 @@ pub struct DashboardService;
 
 impl DashboardService {
     /// Gather high-level counts across all projects for a tenant.
+    ///
+    /// **Pool exhaustion risk:** This method fires 7 parallel `COUNT(*)` queries,
+    /// each holding a connection from the pool for the duration. Under high
+    /// concurrency this can starve other requests of connections.
+    ///
+    /// Planned optimisation (not yet implemented):
+    /// - **Short-term:** cache each count in Redis with a 30-60s TTL keyed per
+    ///   tenant, so only the first request per window hits the database.
+    /// - **Long-term:** collapse into a single query using
+    ///   `COUNT(*) FILTER (WHERE ...)` expressions to reduce the round-trips to 1.
     pub async fn get_stats(
         project_repo: &dyn ProjectRepository,
         document_repo: &dyn DocumentRepository,

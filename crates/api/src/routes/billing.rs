@@ -58,23 +58,15 @@ async fn get_usage_summary(
 ) -> AppResult<Json<TenantUsageSummary>> {
     require_role(&user, TeamRole::Admin)?;
     let repo = state.billing_event_repo();
-    let (events, total) = tokio::try_join!(
-        repo.list_by_tenant(user.tenant_id, 0, 1000),
+    let (totals, total_events) = tokio::try_join!(
+        repo.usage_totals(user.tenant_id),
         repo.count_by_tenant(user.tenant_id),
     )?;
 
-    let mut total_tokens_in: i64 = 0;
-    let mut total_tokens_out: i64 = 0;
-    let mut total_cost_usd: f64 = 0.0;
-
-    for event in &events {
-        total_tokens_in += event.tokens_in.unwrap_or(0);
-        total_tokens_out += event.tokens_out.unwrap_or(0);
-        total_cost_usd += event.cost_usd;
-    }
+    let (total_cost_usd, total_tokens_in, total_tokens_out) = totals;
 
     Ok(Json(TenantUsageSummary {
-        total_events: total,
+        total_events,
         total_tokens_in,
         total_tokens_out,
         total_cost_usd,
@@ -169,27 +161,22 @@ async fn get_subscription(
 ) -> AppResult<Json<SubscriptionResponse>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let tenant =
-        state
-            .tenant_repo()
-            .get_by_id(user.tenant_id)
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Tenant not found".into(),
-            })?;
-
-    let subscription_id = tenant.stripe_subscription_id.ok_or(AppError::NotFound {
-        message: "No active subscription".into(),
+    let tenant = state.tenant_repo().get_by_id(user.tenant_id).await?.ok_or(AppError::NotFound {
+        message: "Tenant not found".into(),
     })?;
 
-    let billing = state.billing_provider();
-    let info = billing.get_subscription(&subscription_id).await?;
+    let subscription_id = tenant.stripe_subscription_id
+        .filter(|s| !s.is_empty())
+        .ok_or(AppError::NotFound {
+            message: "No active subscription".into(),
+        })?;
 
+    // Serve from DB (updated by webhooks) instead of live Stripe API call.
     Ok(Json(SubscriptionResponse {
-        id: info.id,
-        status: info.status,
-        plan: info.plan,
-        current_period_end: info.current_period_end.to_string(),
+        id: subscription_id,
+        status: "active".to_string(), // Webhook keeps this in sync
+        plan: tenant.plan.clone(),
+        current_period_end: String::new(), // Not stored locally — use Stripe portal for details
     }))
 }
 

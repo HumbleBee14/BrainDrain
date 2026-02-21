@@ -22,6 +22,7 @@ pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T
 ///
 /// All queries enforce multi-tenancy via `tenant_id`.
 pub trait ProjectRepository: Send + Sync {
+    #[allow(dead_code)]
     fn create(
         &self,
         tenant_id: Uuid,
@@ -29,6 +30,17 @@ pub trait ProjectRepository: Send + Sync {
         description: Option<&str>,
         task_type: Option<&str>,
     ) -> BoxFuture<'_, AppResult<Project>>;
+
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current count < max_count. Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        name: &str,
+        description: Option<&str>,
+        task_type: Option<&str>,
+        max_count: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>>;
 
     fn get_by_id(
         &self,

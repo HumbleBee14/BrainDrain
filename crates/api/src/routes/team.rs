@@ -130,11 +130,13 @@ async fn update_role(
     Json(body): Json<UpdateRoleRequest>,
 ) -> AppResult<Json<TeamMemberResponse>> {
     require_role(&user, TeamRole::Owner)?;
+    let role_str = body.role.to_string();
     let member = TeamService::update_role(
         state.team_member_repo(),
         user.tenant_id,
         &target_user_id,
-        &body.role,
+        &role_str,
+        &user.user_id,
     )
     .await?;
 
@@ -144,7 +146,7 @@ async fn update_role(
         "update_role",
         "team_member",
         None,
-        serde_json::json!({"target_user_id": target_user_id, "new_role": body.role}),
+        serde_json::json!({"target_user_id": target_user_id, "new_role": role_str}),
     )
     .await;
 
@@ -157,7 +159,7 @@ async fn remove_member(
     Path(target_user_id): Path<String>,
 ) -> AppResult<StatusCode> {
     require_role(&user, TeamRole::Admin)?;
-    TeamService::remove_member(state.team_member_repo(), user.tenant_id, &target_user_id).await?;
+    TeamService::remove_member(state.team_member_repo(), user.tenant_id, &target_user_id, &user.role.to_string()).await?;
 
     AuditLogger::log(
         state.audit_log_repo(),

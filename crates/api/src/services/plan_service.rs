@@ -37,13 +37,18 @@ impl PlanLimits {
                 max_storage_gb: 500,
             },
             // starter/free — default tier
-            _ => PlanLimits {
-                max_projects: 2,
-                max_models: 2,
-                max_team_members: 1,
-                max_training_pairs: 1_000,
-                max_storage_gb: 5,
-            },
+            _ => {
+                if plan != "starter" && plan != "free" && !plan.is_empty() {
+                    tracing::warn!(plan = plan, "Unknown plan — defaulting to starter limits");
+                }
+                PlanLimits {
+                    max_projects: 2,
+                    max_models: 2,
+                    max_team_members: 1,
+                    max_training_pairs: 1_000,
+                    max_storage_gb: 5,
+                }
+            }
         }
     }
 }
@@ -75,7 +80,10 @@ impl PlanService {
             "models" => limits.max_models,
             "team_members" => limits.max_team_members,
             "training_pairs" => limits.max_training_pairs,
-            _ => return Ok(()),
+            _ => {
+                tracing::warn!(resource = resource, "Unknown resource type in plan limit check — allowing");
+                return Ok(());
+            }
         };
 
         if current_count >= max {

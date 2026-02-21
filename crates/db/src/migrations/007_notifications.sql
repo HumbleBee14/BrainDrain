@@ -16,7 +16,7 @@ CREATE POLICY tenant_isolation_notification_prefs ON notification_preferences
 
 CREATE TABLE IF NOT EXISTS notification_deliveries (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL,
+    tenant_id       UUID NOT NULL REFERENCES tenants(id),
     preference_id   UUID NOT NULL REFERENCES notification_preferences(id),
     event_type      TEXT NOT NULL,
     channel         TEXT NOT NULL,
@@ -40,6 +40,10 @@ CREATE INDEX idx_notification_preferences_enabled
 -- Index for delivery queries scoped by tenant and status
 CREATE INDEX idx_notification_deliveries_tenant_status
     ON notification_deliveries(tenant_id, status, created_at DESC);
+
+-- Index for list_deliveries query (tenant_id ORDER BY created_at DESC)
+CREATE INDEX idx_notification_deliveries_tenant_created
+    ON notification_deliveries(tenant_id, created_at DESC);
 
 CREATE TRIGGER update_notification_prefs_updated_at BEFORE UPDATE ON notification_preferences
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

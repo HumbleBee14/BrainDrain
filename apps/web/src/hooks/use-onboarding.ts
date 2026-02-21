@@ -47,7 +47,16 @@ export function useOnboarding() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        setState(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        // Validate shape before setting state
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          Array.isArray(parsed.completedSteps) &&
+          typeof parsed.dismissed === "boolean"
+        ) {
+          setState(parsed);
+        }
       }
     } catch {
       // Ignore parse errors

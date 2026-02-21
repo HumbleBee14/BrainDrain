@@ -60,12 +60,12 @@ impl From<platform_db::models::Invitation> for InvitationResponse {
 pub struct InviteRequest {
     pub email: String,
     #[ts(optional)]
-    pub role: Option<String>,
+    pub role: Option<TeamRole>,
 }
 
 /// Request body for updating a team member's role.
 #[derive(Debug, Deserialize, TS)]
 #[ts(export)]
 pub struct UpdateRoleRequest {
-    pub role: String,
+    pub role: TeamRole,
 }

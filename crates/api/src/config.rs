@@ -164,7 +164,7 @@ fn default_app_name() -> String {
     "Platform API".to_string()
 }
 fn default_environment() -> String {
-    "development".to_string()
+    "production".to_string()
 }
 fn default_log_level() -> String {
     "debug".to_string()

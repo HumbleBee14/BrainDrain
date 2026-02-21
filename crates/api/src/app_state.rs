@@ -114,16 +114,20 @@ impl AppState {
                 None
             };
 
-        // Auth provider chain
+        // Shared HTTP client for outbound requests (connection pooling, 10s default timeout)
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+
+        // Auth provider chain (uses shared HTTP client for JWKS fetching)
         let auth_chain = AuthProviderChain::new().add(ClerkAuthProvider::new(
             config.clerk_jwks_url.clone(),
             config.is_dev(),
+            http_client.clone(),
         ));
 
         tracing::info!("Auth provider chain initialized");
-
-        // Shared HTTP client for outbound requests (connection pooling)
-        let http_client = reqwest::Client::new();
 
         // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone)
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db.clone()));

@@ -26,17 +26,40 @@ async fn handle_stripe_webhook(
         .and_then(|v| v.to_str().ok())
         .ok_or(StatusCode::BAD_REQUEST)?;
 
-    let webhook_secret = state
-        .config()
-        .stripe_webhook_secret
-        .as_deref()
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    let webhook_secret = match state.config().stripe_webhook_secret.as_deref() {
+        Some(s) => s,
+        None => {
+            tracing::warn!("Stripe webhook secret not configured — ignoring event");
+            return Ok(StatusCode::OK);
+        }
+    };
 
     verify_stripe_signature(&body, signature, webhook_secret)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let event: serde_json::Value =
         serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Idempotency: deduplicate webhook deliveries using Redis SETNX with 24h TTL
+    let event_id = event["id"].as_str().unwrap_or("");
+    if !event_id.is_empty() {
+        let key = format!("stripe_event:{event_id}");
+        let mut redis = state.redis();
+        let was_set: Option<String> = redis::cmd("SET")
+            .arg(&key)
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(86400)
+            .query_async(&mut redis)
+            .await
+            .unwrap_or(None);
+
+        if was_set.is_none() {
+            tracing::debug!(event_id, "Duplicate Stripe event — skipping");
+            return Ok(StatusCode::OK);
+        }
+    }
 
     let event_type = event["type"].as_str().unwrap_or("");
 
@@ -223,6 +246,8 @@ async fn handle_subscription_deleted(
     let limits = PlanLimits::for_plan("starter");
     let limits_json = serde_json::to_value(&limits).unwrap_or_default();
 
+    // NOTE: Empty string for subscription_id — treated as "no active subscription" by the billing route.
+    // A proper fix would use Option<&str> in the TenantRepository trait.
     tenant_repo
         .update_subscription(tenant.id, "", "starter", limits_json)
         .await

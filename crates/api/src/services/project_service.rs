@@ -12,6 +12,7 @@ use crate::repositories::traits::ProjectRepository;
 pub struct ProjectService;
 
 impl ProjectService {
+    #[allow(dead_code)]
     pub async fn create(
         repo: &dyn ProjectRepository,
         tenant_id: Uuid,
@@ -36,6 +37,45 @@ impl ProjectService {
             project_id = %project.id,
             tenant_id = %tenant_id,
             "Project created"
+        );
+
+        Ok(project.into())
+    }
+
+    /// Create a project with atomic plan limit enforcement.
+    /// Returns Forbidden if the plan limit would be exceeded.
+    pub async fn create_with_limit(
+        repo: &dyn ProjectRepository,
+        tenant_id: Uuid,
+        req: CreateProjectRequest,
+        max_count: i64,
+    ) -> AppResult<ProjectResponse> {
+        if req.name.trim().is_empty() {
+            return Err(AppError::BadRequest {
+                message: "Project name cannot be empty".to_string(),
+            });
+        }
+
+        let project = repo
+            .create_with_limit(
+                tenant_id,
+                req.name.trim(),
+                req.description.as_deref(),
+                req.task_type.as_deref(),
+                max_count,
+            )
+            .await?
+            .ok_or(AppError::Forbidden {
+                message: format!(
+                    "Plan limit reached: maximum {} projects on your current plan",
+                    max_count
+                ),
+            })?;
+
+        tracing::info!(
+            project_id = %project.id,
+            tenant_id = %tenant_id,
+            "Project created (atomic limit check)"
         );
 
         Ok(project.into())

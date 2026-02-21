@@ -32,9 +32,15 @@ async fn create_project(
     Json(body): Json<CreateProjectRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectResponse>)> {
     require_role(&user, TeamRole::Member)?;
-    let current_count = state.project_repo().count(user.tenant_id).await?;
-    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "projects", current_count).await?;
-    let project = ProjectService::create(state.project_repo(), user.tenant_id, body).await?;
+    // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
+    let limits = PlanService::get_limits(state.tenant_repo(), user.tenant_id).await?;
+    let project = ProjectService::create_with_limit(
+        state.project_repo(),
+        user.tenant_id,
+        body,
+        limits.max_projects,
+    )
+    .await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,

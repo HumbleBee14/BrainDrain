@@ -130,10 +130,9 @@ function isRetryable(error: unknown): boolean {
   if (error instanceof ApiClientError) {
     return error.status >= 500;
   }
-  return (
-    error instanceof TypeError ||
-    (error instanceof DOMException && error.name === "AbortError")
-  );
+  // Only retry on network errors (TypeError). AbortError means timeout —
+  // retrying timed-out requests can cause duplicate mutations server-side.
+  return error instanceof TypeError;
 }
 
 function sleep(ms: number): Promise<void> {

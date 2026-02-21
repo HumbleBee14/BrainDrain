@@ -70,6 +70,7 @@ impl BillingProvider for StripeBillingProvider {
                 ("name", name),
                 ("metadata[tenant_id]", &tenant_id.to_string()),
             ])
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Stripe request failed: {e}")))?;
@@ -109,6 +110,7 @@ impl BillingProvider for StripeBillingProvider {
                 ("success_url", success_url),
                 ("cancel_url", cancel_url),
             ])
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Stripe request failed: {e}")))?;
@@ -137,6 +139,7 @@ impl BillingProvider for StripeBillingProvider {
             .post("https://api.stripe.com/v1/billing_portal/sessions")
             .bearer_auth(&self.secret_key)
             .form(&[("customer", customer_id), ("return_url", return_url)])
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Stripe request failed: {e}")))?;
@@ -162,6 +165,7 @@ impl BillingProvider for StripeBillingProvider {
             .client
             .get(&url)
             .bearer_auth(&self.secret_key)
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Stripe request failed: {e}")))?;
@@ -201,6 +205,7 @@ impl BillingProvider for StripeBillingProvider {
             .client
             .delete(&url)
             .bearer_auth(&self.secret_key)
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("Stripe request failed: {e}")))?;
