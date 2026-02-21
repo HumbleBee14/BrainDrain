@@ -11,7 +11,6 @@ with workflow.unsafe.imports_passed_through():
     from src.activities.stubs import (
         StartTrainingInput,
         StartTrainingOutput,
-        start_training,
     )
 
 
@@ -36,7 +35,7 @@ class TrainWorkflow:
         gpu_class: str | None = None,
     ) -> StartTrainingOutput:
         result = await workflow.execute_activity(
-            start_training,
+            "start_training",
             StartTrainingInput(
                 tenant_id=tenant_id,
                 training_job_id=training_job_id,

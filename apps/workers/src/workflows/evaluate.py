@@ -11,7 +11,6 @@ with workflow.unsafe.imports_passed_through():
     from src.activities.stubs import (
         RunEvaluationInput,
         RunEvaluationOutput,
-        run_evaluation,
     )
 
 
@@ -36,7 +35,7 @@ class EvaluateWorkflow:
         judge_api_base: str = "",
     ) -> RunEvaluationOutput:
         result = await workflow.execute_activity(
-            run_evaluation,
+            "run_evaluation",
             RunEvaluationInput(
                 tenant_id=tenant_id,
                 model_id=model_id,
