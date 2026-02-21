@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 from temporalio import activity
 
-from src import clients, s3_paths
+from src import s3_paths
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.chunk")
 
@@ -30,63 +31,67 @@ class ChunkTextOutput:
     chunks_storage_path: str
 
 
-@activity.defn
-async def chunk_text(input: ChunkTextInput) -> ChunkTextOutput:
-    """Download parsed JSONs from S3, split into chunks, upload as JSONL."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
+class ChunkTextActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-    all_chunks = []
+    @activity.defn(name="chunk_text")
+    async def run(self, input: ChunkTextInput) -> ChunkTextOutput:
+        """Download parsed JSONs from S3, split into chunks, upload as JSONL."""
+        s3 = self.infra.s3
+        bucket = self.infra.s3_bucket
 
-    for doc_id in input.document_ids:
-        activity.heartbeat(f"chunking {doc_id}")
-        # Download parsed JSON
-        parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, doc_id)
-        try:
-            response = s3.get_object(Bucket=bucket, Key=parsed_key)
-            parsed_data = json.loads(response["Body"].read())
-        except Exception as e:
-            activity.logger.warning("Could not read parsed data for %s: %s", doc_id, e)
-            continue
+        all_chunks = []
 
-        # Extract full text from pages
-        for page in parsed_data.get("pages", []):
-            text = page.get("text", "")
-            if not text.strip():
+        for doc_id in input.document_ids:
+            activity.heartbeat(f"chunking {doc_id}")
+            # Download parsed JSON
+            parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, doc_id)
+            try:
+                response = s3.get_object(Bucket=bucket, Key=parsed_key)
+                parsed_data = json.loads(response["Body"].read())
+            except Exception as e:
+                activity.logger.warning("Could not read parsed data for %s: %s", doc_id, e)
                 continue
 
-            # Recursive chunking
-            chunks = _split_text(text, input.chunk_size, input.overlap)
-            for i, chunk_text_content in enumerate(chunks):
-                all_chunks.append(
-                    {
-                        "chunk_id": str(uuid.uuid4()),
-                        "doc_id": doc_id,
-                        "page_num": page.get("page_num", 1),
-                        "chunk_index": i,
-                        "text": chunk_text_content,
-                        "char_count": len(chunk_text_content),
-                    }
-                )
+            # Extract full text from pages
+            for page in parsed_data.get("pages", []):
+                text = page.get("text", "")
+                if not text.strip():
+                    continue
 
-    if not all_chunks:
-        return ChunkTextOutput(chunk_count=0, chunks_storage_path="")
+                # Recursive chunking
+                chunks = _split_text(text, input.chunk_size, input.overlap)
+                for i, chunk_text_content in enumerate(chunks):
+                    all_chunks.append(
+                        {
+                            "chunk_id": str(uuid.uuid4()),
+                            "doc_id": doc_id,
+                            "page_num": page.get("page_num", 1),
+                            "chunk_index": i,
+                            "text": chunk_text_content,
+                            "char_count": len(chunk_text_content),
+                        }
+                    )
 
-    # Upload chunks as JSONL
-    batch_id = str(uuid.uuid4())
-    chunks_key = s3_paths.chunks_path(input.tenant_id, input.project_id, batch_id)
-    lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
-    s3.put_object(
-        Bucket=bucket,
-        Key=chunks_key,
-        Body="\n".join(lines).encode("utf-8"),
-        ContentType="application/jsonl",
-    )
+        if not all_chunks:
+            return ChunkTextOutput(chunk_count=0, chunks_storage_path="")
 
-    activity.logger.info(
-        "Chunked %d documents into %d chunks", len(input.document_ids), len(all_chunks)
-    )
-    return ChunkTextOutput(chunk_count=len(all_chunks), chunks_storage_path=chunks_key)
+        # Upload chunks as JSONL
+        batch_id = str(uuid.uuid4())
+        chunks_key = s3_paths.chunks_path(input.tenant_id, input.project_id, batch_id)
+        lines = [json.dumps(c, ensure_ascii=False) for c in all_chunks]
+        s3.put_object(
+            Bucket=bucket,
+            Key=chunks_key,
+            Body="\n".join(lines).encode("utf-8"),
+            ContentType="application/jsonl",
+        )
+
+        activity.logger.info(
+            "Chunked %d documents into %d chunks", len(input.document_ids), len(all_chunks)
+        )
+        return ChunkTextOutput(chunk_count=len(all_chunks), chunks_storage_path=chunks_key)
 
 
 def _split_text(text: str, chunk_size: int, overlap: int) -> list[str]:

@@ -115,3 +115,9 @@ def get_container() -> InfraContainer:
     if _container is None:
         raise RuntimeError("Infrastructure not initialized. Call init_container() first.")
     return _container
+
+
+def set_container_for_testing(container: InfraContainer) -> None:
+    """Override the global container for tests. Not for production use."""
+    global _container  # noqa: PLW0603
+    _container = container

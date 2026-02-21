@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use platform_shared::constants::SUPPORTED_EXTENSIONS;
@@ -9,7 +8,7 @@ use platform_storage::ObjectStorage;
 use crate::dto::common::PaginatedResponse;
 use crate::dto::document::{DocumentResponse, UploadResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::document_repo::DocumentRepo;
+use crate::repositories::traits::DocumentRepository;
 
 /// Business logic for document operations.
 ///
@@ -19,7 +18,7 @@ pub struct DocumentService;
 impl DocumentService {
     /// Upload a document: validate → store in S3 → create DB record.
     pub async fn upload(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         storage: &impl ObjectStorage,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -57,16 +56,16 @@ impl DocumentService {
             .map_err(AppError::Storage)?;
 
         // Create DB record
-        let doc = DocumentRepo::create(
-            db,
-            tenant_id,
-            project_id,
-            filename,
-            file_size,
-            content_type,
-            &storage_path,
-        )
-        .await?;
+        let doc = repo
+            .create(
+                tenant_id,
+                project_id,
+                filename,
+                file_size,
+                content_type,
+                &storage_path,
+            )
+            .await?;
 
         tracing::info!(
             document_id = %doc.id,
@@ -89,15 +88,15 @@ impl DocumentService {
 
     /// List documents for a project.
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         tenant_id: Uuid,
         project_id: Uuid,
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<DocumentResponse>> {
         let (docs, total) = tokio::try_join!(
-            DocumentRepo::list_by_project(db, tenant_id, project_id, offset, limit),
-            DocumentRepo::count_by_project(db, tenant_id, project_id),
+            repo.list_by_project(tenant_id, project_id, offset, limit),
+            repo.count_by_project(tenant_id, project_id),
         )?;
 
         Ok(PaginatedResponse {
@@ -110,11 +109,12 @@ impl DocumentService {
 
     /// Get a single document.
     pub async fn get(
-        db: &PgPool,
+        repo: &dyn DocumentRepository,
         tenant_id: Uuid,
         document_id: Uuid,
     ) -> AppResult<DocumentResponse> {
-        let doc = DocumentRepo::get_by_id(db, tenant_id, document_id)
+        let doc = repo
+            .get_by_id(tenant_id, document_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Document not found".to_string(),
@@ -158,7 +158,6 @@ mod tests {
     #[test]
     fn no_extension_returns_empty() {
         assert_eq!(extract_ext("Makefile"), "makefile");
-        // A file with no dot gives back the whole name lowercased
     }
 
     #[test]

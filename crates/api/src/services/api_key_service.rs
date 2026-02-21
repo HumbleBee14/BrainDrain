@@ -1,12 +1,10 @@
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::api_key::{ApiKeyResponse, CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::api_key_repo::ApiKeyRepo;
-use crate::repositories::model_repo::ModelRepo;
+use crate::repositories::traits::{ApiKeyRepository, ModelRepository};
 
 /// Business logic for API key operations.
 pub struct ApiKeyService;
@@ -21,13 +19,15 @@ pub struct AuthenticatedApiKey {
 impl ApiKeyService {
     /// Create a new API key for a model.
     pub async fn create(
-        db: &PgPool,
+        api_key_repo: &dyn ApiKeyRepository,
+        model_repo: &dyn ModelRepository,
         tenant_id: Uuid,
         model_id: Uuid,
         req: CreateApiKeyRequest,
     ) -> AppResult<CreateApiKeyResponse> {
         // Verify model exists and belongs to tenant
-        ModelRepo::get_by_id(db, tenant_id, model_id)
+        model_repo
+            .get_by_id(tenant_id, model_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Model not found".to_string(),
@@ -49,17 +49,17 @@ impl ApiKeyService {
             .expires_in_days
             .map(|days| Utc::now() + Duration::days(days));
 
-        let key_record = ApiKeyRepo::create(
-            db,
-            tenant_id,
-            model_id,
-            &req.name,
-            &key_prefix,
-            &key_hash,
-            rate_limit,
-            expires_at,
-        )
-        .await?;
+        let key_record = api_key_repo
+            .create(
+                tenant_id,
+                model_id,
+                &req.name,
+                &key_prefix,
+                &key_hash,
+                rate_limit,
+                expires_at,
+            )
+            .await?;
 
         tracing::info!(
             model_id = %model_id,
@@ -80,17 +80,22 @@ impl ApiKeyService {
 
     /// List API keys for a model (without full key — only prefix).
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn ApiKeyRepository,
         tenant_id: Uuid,
         model_id: Uuid,
     ) -> AppResult<Vec<ApiKeyResponse>> {
-        let keys = ApiKeyRepo::list_by_model(db, tenant_id, model_id).await?;
+        let keys = repo.list_by_model(tenant_id, model_id).await?;
         Ok(keys.into_iter().map(Into::into).collect())
     }
 
     /// Revoke an API key.
-    pub async fn revoke(db: &PgPool, tenant_id: Uuid, key_id: Uuid) -> AppResult<ApiKeyResponse> {
-        let key = ApiKeyRepo::revoke(db, tenant_id, key_id)
+    pub async fn revoke(
+        repo: &dyn ApiKeyRepository,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> AppResult<ApiKeyResponse> {
+        let key = repo
+            .revoke(tenant_id, key_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "API key not found".to_string(),
@@ -102,13 +107,14 @@ impl ApiKeyService {
 
     /// Authenticate a raw API key. Returns the key's identity on success.
     pub async fn authenticate(
-        db: &PgPool,
+        repo: &dyn ApiKeyRepository,
         redis: &mut redis::aio::ConnectionManager,
         raw_key: &str,
     ) -> AppResult<AuthenticatedApiKey> {
         let key_hash = hash_key(raw_key);
 
-        let key = ApiKeyRepo::get_by_hash(db, &key_hash)
+        let key = repo
+            .get_by_hash(&key_hash)
             .await?
             .ok_or(AppError::Unauthorized)?;
 
@@ -147,14 +153,10 @@ impl ApiKeyService {
             return Err(AppError::RateLimited);
         }
 
-        // Update last_used_at (fire-and-forget)
-        let db_clone = db.clone();
-        let key_id = key.id;
-        tokio::spawn(async move {
-            if let Err(e) = ApiKeyRepo::update_last_used(&db_clone, key_id).await {
-                tracing::warn!(key_id = %key_id, error = %e, "Failed to update API key last_used_at");
-            }
-        });
+        // Update last_used_at inline (can't spawn with &dyn trait)
+        if let Err(e) = repo.update_last_used(key.id).await {
+            tracing::warn!(key_id = %key.id, error = %e, "Failed to update API key last_used_at");
+        }
 
         Ok(AuthenticatedApiKey {
             key_id: key.id,

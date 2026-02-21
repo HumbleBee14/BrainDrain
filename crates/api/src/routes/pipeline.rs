@@ -29,7 +29,7 @@ async fn trigger_parse(
     Path(project_id): Path<Uuid>,
 ) -> AppResult<(StatusCode, Json<TriggerParseResponse>)> {
     let result = PipelineService::trigger_parse(
-        state.db(),
+        state.document_repo(),
         state.orchestrator(),
         user.tenant_id,
         project_id,
@@ -51,7 +51,7 @@ async fn trigger_refine(
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
     let result = PipelineService::trigger_refine(
-        state.db(),
+        state.document_repo(),
         state.orchestrator(),
         user.tenant_id,
         project_id,
@@ -71,7 +71,16 @@ async fn get_status(
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
 ) -> AppResult<Json<ProjectPipelineStatus>> {
-    let status = PipelineService::get_status(state.db(), user.tenant_id, project_id).await?;
+    let status = PipelineService::get_status(
+        state.document_repo(),
+        state.dataset_repo(),
+        state.training_job_repo(),
+        state.model_repo(),
+        state.evaluation_repo(),
+        user.tenant_id,
+        project_id,
+    )
+    .await?;
 
     Ok(Json(status))
 }

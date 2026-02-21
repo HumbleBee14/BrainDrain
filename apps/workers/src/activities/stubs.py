@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from temporalio import activity
 
-from src import clients
+from src.infra import InfraContainer
 
 # ── Document info (lightweight DB lookup for workflows) ──
 
@@ -25,25 +25,28 @@ class DocumentInfo:
     status: str
 
 
-@activity.defn
-async def get_document_info(document_id: str) -> DocumentInfo:
-    """Fetch document metadata from DB. Used by workflows before calling parse."""
-    db = await clients.get_db()
-    row = await db.fetchrow(
-        "SELECT id, tenant_id, project_id, storage_path, mime_type, status "
-        "FROM documents WHERE id = $1",
-        document_id,
-    )
-    if row is None:
-        raise ValueError(f"Document not found: {document_id}")
-    return DocumentInfo(
-        document_id=str(row["id"]),
-        tenant_id=str(row["tenant_id"]),
-        project_id=str(row["project_id"]),
-        storage_path=row["storage_path"],
-        mime_type=row["mime_type"],
-        status=row["status"],
-    )
+class GetDocumentInfoActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="get_document_info")
+    async def run(self, document_id: str) -> DocumentInfo:
+        db = self.infra.db
+        row = await db.fetchrow(
+            "SELECT id, tenant_id, project_id, storage_path, mime_type, status "
+            "FROM documents WHERE id = $1",
+            document_id,
+        )
+        if row is None:
+            raise ValueError(f"Document not found: {document_id}")
+        return DocumentInfo(
+            document_id=str(row["id"]),
+            tenant_id=str(row["tenant_id"]),
+            project_id=str(row["project_id"]),
+            storage_path=row["storage_path"],
+            mime_type=row["mime_type"],
+            status=row["status"],
+        )
 
 
 # ── Training (Phase 2 — real implementation in train_model.py) ──
@@ -68,10 +71,6 @@ class StartTrainingOutput:
     metrics: dict
 
 
-# Re-export from real implementation
-from src.activities.train_model import start_training  # noqa: E402, F401, I001
-
-
 # ── Evaluation (Phase 3 — real implementation in run_evaluation.py) ──
 
 
@@ -93,10 +92,6 @@ class RunEvaluationOutput:
     report: dict
 
 
-# Re-export from real implementation
-from src.activities.run_evaluation import run_evaluation  # noqa: E402, F401, I001
-
-
 # ── Deployment (Phase 4) ──
 
 
@@ -115,8 +110,11 @@ class DeployModelOutput:
     deployment_status: str
 
 
-@activity.defn
-async def deploy_model(input: DeployModelInput) -> DeployModelOutput:
-    """Deploy a fine-tuned model. Phase 4 implementation."""
-    activity.logger.info("Stub: deploy_model for %s", input.model_id)
-    return DeployModelOutput(endpoint_url="", deployment_status="pending")
+class DeployModelActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="deploy_model")
+    async def run(self, input: DeployModelInput) -> DeployModelOutput:
+        activity.logger.info("Stub: deploy_model for %s", input.model_id)
+        return DeployModelOutput(endpoint_url="", deployment_status="pending")

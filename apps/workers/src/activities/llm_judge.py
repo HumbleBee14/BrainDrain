@@ -194,11 +194,16 @@ def _heuristic_reasoning_score(completion: str) -> float:
     return min(1.0, max(-1.0, score))
 
 
-def create_judge_from_settings() -> OpenAICompatibleJudge:
-    """Create a judge using the worker's configured LLM settings."""
-    from src import clients
+def create_judge_from_settings(settings=None) -> OpenAICompatibleJudge:
+    """Create a judge using the worker's configured LLM settings.
 
-    settings = clients.get_settings()
+    Accepts an optional settings object for explicit injection.
+    Falls back to the global container for backward compatibility.
+    """
+    if settings is None:
+        from src.infra import get_container
+
+        settings = get_container().settings
     return OpenAICompatibleJudge(
         api_base=settings.llm_api_base_url,
         api_key=settings.llm_api_key,

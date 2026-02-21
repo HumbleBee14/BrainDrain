@@ -18,8 +18,9 @@ from langdetect import LangDetectException, detect
 from markdown import markdown
 from temporalio import activity
 
-from src import clients, s3_paths
+from src import s3_paths
 from src.constants import DocumentStatus
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.parse")
 
@@ -311,102 +312,106 @@ def _parser_name(mime_type: str) -> str:
 # ── Main activity ──
 
 
-@activity.defn
-async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
-    """Parse an uploaded document into structured JSON and store in S3."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
-    db = await clients.get_db()
+class ParseDocumentActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-    # Idempotency: skip if already parsed
-    status = await db.fetchval("SELECT status FROM documents WHERE id = $1", input.document_id)
-    if status == DocumentStatus.PARSED:
-        parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, input.document_id)
-        activity.logger.info("Document %s already parsed, skipping", input.document_id)
-        return ParseDocumentOutput(
-            page_count=0, language=None, parse_quality=1.0, parsed_storage_path=parsed_key
-        )
+    @activity.defn(name="parse_document")
+    async def run(self, input: ParseDocumentInput) -> ParseDocumentOutput:
+        """Parse an uploaded document into structured JSON and store in S3."""
+        s3 = self.infra.s3
+        bucket = self.infra.s3_bucket
+        db = self.infra.db
 
-    # Update status to parsing
-    await db.execute(
-        f"UPDATE documents SET status = '{DocumentStatus.PARSING}',"
-        " updated_at = now() WHERE id = $1",
-        input.document_id,
-    )
+        # Idempotency: skip if already parsed
+        status = await db.fetchval("SELECT status FROM documents WHERE id = $1", input.document_id)
+        if status == DocumentStatus.PARSED:
+            parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, input.document_id)
+            activity.logger.info("Document %s already parsed, skipping", input.document_id)
+            return ParseDocumentOutput(
+                page_count=0, language=None, parse_quality=1.0, parsed_storage_path=parsed_key
+            )
 
-    try:
-        # Download raw file from S3
-        activity.heartbeat("downloading")
-        response = s3.get_object(Bucket=bucket, Key=input.storage_path)
-        raw_bytes = response["Body"].read()
-
-        # Route to parser by mime type
-        activity.heartbeat("parsing")
-        pages = _parse_by_type(raw_bytes, input.mime_type, input.storage_path)
-
-        # Detect language from combined text
-        full_text = " ".join(p["text"] for p in pages if p.get("text"))
-        language = _detect_language(full_text)
-
-        # Compute quality score
-        parse_quality = _compute_quality(pages, len(raw_bytes))
-
-        # Build structured output
-        parsed_output = {
-            "version": "1.0",
-            "doc_id": input.document_id,
-            "parser": _parser_name(input.mime_type),
-            "page_count": len(pages),
-            "language": language,
-            "parse_quality": parse_quality,
-            "pages": pages,
-        }
-
-        # Upload parsed JSON to S3
-        activity.heartbeat("uploading_result")
-        parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, input.document_id)
-        parsed_json = json.dumps(parsed_output, ensure_ascii=False)
-        s3.put_object(
-            Bucket=bucket,
-            Key=parsed_key,
-            Body=parsed_json.encode("utf-8"),
-            ContentType="application/json",
-        )
-
-        # Update DB
+        # Update status to parsing
         await db.execute(
-            f"UPDATE documents SET status = '{DocumentStatus.PARSED}', parse_quality = $2, "
-            "page_count = $3, language = $4, updated_at = now() WHERE id = $1",
+            f"UPDATE documents SET status = '{DocumentStatus.PARSING}',"
+            " updated_at = now() WHERE id = $1",
             input.document_id,
-            parse_quality,
-            len(pages),
-            language,
         )
 
-        activity.logger.info(
-            "Parsed document %s: %d pages, quality=%.2f, lang=%s",
-            input.document_id,
-            len(pages),
-            parse_quality,
-            language,
-        )
+        try:
+            # Download raw file from S3
+            activity.heartbeat("downloading")
+            response = s3.get_object(Bucket=bucket, Key=input.storage_path)
+            raw_bytes = response["Body"].read()
 
-        return ParseDocumentOutput(
-            page_count=len(pages),
-            language=language,
-            parse_quality=parse_quality,
-            parsed_storage_path=parsed_key,
-        )
+            # Route to parser by mime type
+            activity.heartbeat("parsing")
+            pages = _parse_by_type(raw_bytes, input.mime_type, input.storage_path)
 
-    except Exception as e:
-        # Mark as failed in DB
-        await db.execute(
-            f"UPDATE documents SET status = '{DocumentStatus.FAILED}', error_message = $2, "
-            "updated_at = now() WHERE id = $1",
-            input.document_id,
-            str(e)[:500],
-        )
-        raise
+            # Detect language from combined text
+            full_text = " ".join(p["text"] for p in pages if p.get("text"))
+            language = _detect_language(full_text)
+
+            # Compute quality score
+            parse_quality = _compute_quality(pages, len(raw_bytes))
+
+            # Build structured output
+            parsed_output = {
+                "version": "1.0",
+                "doc_id": input.document_id,
+                "parser": _parser_name(input.mime_type),
+                "page_count": len(pages),
+                "language": language,
+                "parse_quality": parse_quality,
+                "pages": pages,
+            }
+
+            # Upload parsed JSON to S3
+            activity.heartbeat("uploading_result")
+            parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, input.document_id)
+            parsed_json = json.dumps(parsed_output, ensure_ascii=False)
+            s3.put_object(
+                Bucket=bucket,
+                Key=parsed_key,
+                Body=parsed_json.encode("utf-8"),
+                ContentType="application/json",
+            )
+
+            # Update DB
+            await db.execute(
+                f"UPDATE documents SET status = '{DocumentStatus.PARSED}', parse_quality = $2, "
+                "page_count = $3, language = $4, updated_at = now() WHERE id = $1",
+                input.document_id,
+                parse_quality,
+                len(pages),
+                language,
+            )
+
+            activity.logger.info(
+                "Parsed document %s: %d pages, quality=%.2f, lang=%s",
+                input.document_id,
+                len(pages),
+                parse_quality,
+                language,
+            )
+
+            return ParseDocumentOutput(
+                page_count=len(pages),
+                language=language,
+                parse_quality=parse_quality,
+                parsed_storage_path=parsed_key,
+            )
+
+        except Exception as e:
+            # Mark as failed in DB
+            await db.execute(
+                f"UPDATE documents SET status = '{DocumentStatus.FAILED}', error_message = $2, "
+                "updated_at = now() WHERE id = $1",
+                input.document_id,
+                str(e)[:500],
+            )
+            raise
 
 
 # ── Helpers ──

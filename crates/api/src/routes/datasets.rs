@@ -28,7 +28,7 @@ async fn list_datasets(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<DatasetResponse>>> {
     let result = DatasetService::list(
-        state.db(),
+        state.dataset_repo(),
         user.tenant_id,
         project_id,
         params.offset,
@@ -45,7 +45,7 @@ async fn get_dataset(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<DatasetResponse>> {
-    let dataset = DatasetService::get(state.db(), user.tenant_id, id).await?;
+    let dataset = DatasetService::get(state.dataset_repo(), user.tenant_id, id).await?;
     Ok(Json(dataset))
 }
 
@@ -67,7 +67,7 @@ async fn preview_dataset(
     Query(params): Query<PreviewParams>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
     let rows = DatasetService::preview(
-        state.db(),
+        state.dataset_repo(),
         state.storage(),
         user.tenant_id,
         id,
@@ -87,8 +87,12 @@ async fn get_parsed_content(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ParsedContentResponse>> {
     let doc =
-        crate::services::document_service::DocumentService::get(state.db(), user.tenant_id, id)
-            .await?;
+        crate::services::document_service::DocumentService::get(
+            state.document_repo(),
+            user.tenant_id,
+            id,
+        )
+        .await?;
 
     let url =
         DatasetService::get_parsed_url(state.storage(), user.tenant_id, doc.project_id, id).await?;

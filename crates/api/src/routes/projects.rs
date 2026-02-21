@@ -26,7 +26,7 @@ async fn create_project(
     user: AuthenticatedUser,
     Json(body): Json<CreateProjectRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectResponse>)> {
-    let project = ProjectService::create(state.db(), user.tenant_id, body).await?;
+    let project = ProjectService::create(state.project_repo(), user.tenant_id, body).await?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -36,7 +36,8 @@ async fn list_projects(
     Query(params): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<ProjectResponse>>> {
     let result =
-        ProjectService::list(state.db(), user.tenant_id, params.offset, params.limit).await?;
+        ProjectService::list(state.project_repo(), user.tenant_id, params.offset, params.limit)
+            .await?;
     Ok(Json(result))
 }
 
@@ -45,7 +46,7 @@ async fn get_project(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ProjectResponse>> {
-    let project = ProjectService::get(state.db(), user.tenant_id, id).await?;
+    let project = ProjectService::get(state.project_repo(), user.tenant_id, id).await?;
     Ok(Json(project))
 }
 
@@ -55,7 +56,7 @@ async fn update_project(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateProjectRequest>,
 ) -> AppResult<Json<ProjectResponse>> {
-    let project = ProjectService::update(state.db(), user.tenant_id, id, body).await?;
+    let project = ProjectService::update(state.project_repo(), user.tenant_id, id, body).await?;
     Ok(Json(project))
 }
 
@@ -64,6 +65,6 @@ async fn delete_project(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
-    ProjectService::delete(state.db(), user.tenant_id, id).await?;
+    ProjectService::delete(state.project_repo(), user.tenant_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -1,12 +1,10 @@
 use platform_shared::enums::DeploymentStatus;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
-use crate::repositories::billing_event_repo::BillingEventRepo;
-use crate::repositories::model_repo::ModelRepo;
+use crate::repositories::traits::{BillingEventRepository, ModelRepository};
 
 /// Business logic for model deployment via vLLM.
 ///
@@ -17,17 +15,18 @@ pub struct DeploymentService;
 impl DeploymentService {
     /// Deploy a fine-tuned model by loading its LoRA adapter into vLLM.
     pub async fn deploy(
-        db: &PgPool,
+        model_repo: &dyn ModelRepository,
+        billing_repo: &dyn BillingEventRepository,
         config: &Config,
         tenant_id: Uuid,
         model_id: Uuid,
     ) -> AppResult<ModelResponse> {
-        let model =
-            ModelRepo::get_by_id(db, tenant_id, model_id)
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Model not found".to_string(),
-                })?;
+        let model = model_repo
+            .get_by_id(tenant_id, model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found".to_string(),
+            })?;
 
         let adapter_path = model.adapter_path.clone().ok_or(AppError::BadRequest {
             message: "Model has no adapter — training may not be complete".to_string(),
@@ -40,7 +39,8 @@ impl DeploymentService {
         }
 
         // Update status to deploying
-        ModelRepo::update_deployment_status(db, tenant_id, model_id, DeploymentStatus::Deploying)
+        model_repo
+            .update_deployment_status(tenant_id, model_id, DeploymentStatus::Deploying)
             .await?;
 
         // Build a unique adapter name for vLLM
@@ -67,31 +67,31 @@ impl DeploymentService {
                     "base_model": model.base_model,
                 });
 
-                let updated = ModelRepo::update_deployment(
-                    db,
-                    tenant_id,
-                    model_id,
-                    DeploymentStatus::Active,
-                    deployment_config,
-                )
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Model not found after deploy".to_string(),
-                })?;
+                let updated = model_repo
+                    .update_deployment(
+                        tenant_id,
+                        model_id,
+                        DeploymentStatus::Active,
+                        deployment_config,
+                    )
+                    .await?
+                    .ok_or(AppError::NotFound {
+                        message: "Model not found after deploy".to_string(),
+                    })?;
 
                 // Create billing event for deployment
-                let _ = BillingEventRepo::create(
-                    db,
-                    tenant_id,
-                    "deploy",
-                    Some(model_id),
-                    0,
-                    0,
-                    0,
-                    0.0,
-                    serde_json::json!({"action": "deploy", "adapter_name": adapter_name}),
-                )
-                .await;
+                let _ = billing_repo
+                    .create(
+                        tenant_id,
+                        "deploy",
+                        Some(model_id),
+                        0,
+                        0,
+                        0,
+                        0.0,
+                        serde_json::json!({"action": "deploy", "adapter_name": adapter_name}),
+                    )
+                    .await;
 
                 tracing::info!(model_id = %model_id, adapter_name = %adapter_name, "Model deployed");
                 Ok(updated.into())
@@ -99,26 +99,26 @@ impl DeploymentService {
             Ok(resp) => {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                ModelRepo::update_deployment_status(
-                    db,
-                    tenant_id,
-                    model_id,
-                    DeploymentStatus::Undeployed,
-                )
-                .await?;
+                model_repo
+                    .update_deployment_status(
+                        tenant_id,
+                        model_id,
+                        DeploymentStatus::Undeployed,
+                    )
+                    .await?;
                 tracing::error!(model_id = %model_id, status = %status, body = %body, "vLLM deploy failed");
                 Err(AppError::Internal(anyhow::anyhow!(
                     "vLLM adapter load failed: {status}"
                 )))
             }
             Err(e) => {
-                ModelRepo::update_deployment_status(
-                    db,
-                    tenant_id,
-                    model_id,
-                    DeploymentStatus::Undeployed,
-                )
-                .await?;
+                model_repo
+                    .update_deployment_status(
+                        tenant_id,
+                        model_id,
+                        DeploymentStatus::Undeployed,
+                    )
+                    .await?;
                 tracing::error!(model_id = %model_id, error = %e, "vLLM unreachable");
                 Err(AppError::Internal(anyhow::anyhow!(
                     "Cannot reach vLLM service: {e}"
@@ -129,17 +129,17 @@ impl DeploymentService {
 
     /// Undeploy a model by unloading its LoRA adapter from vLLM.
     pub async fn undeploy(
-        db: &PgPool,
+        model_repo: &dyn ModelRepository,
         config: &Config,
         tenant_id: Uuid,
         model_id: Uuid,
     ) -> AppResult<ModelResponse> {
-        let model =
-            ModelRepo::get_by_id(db, tenant_id, model_id)
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Model not found".to_string(),
-                })?;
+        let model = model_repo
+            .get_by_id(tenant_id, model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found".to_string(),
+            })?;
 
         if model.deployment_status != DeploymentStatus::Active.to_string() {
             return Err(AppError::BadRequest {
@@ -168,16 +168,12 @@ impl DeploymentService {
             tracing::warn!(model_id = %model_id, error = %e, "vLLM unload request failed — marking as undeployed anyway");
         }
 
-        let updated = ModelRepo::update_deployment_status(
-            db,
-            tenant_id,
-            model_id,
-            DeploymentStatus::Undeployed,
-        )
-        .await?
-        .ok_or(AppError::NotFound {
-            message: "Model not found after undeploy".to_string(),
-        })?;
+        let updated = model_repo
+            .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found after undeploy".to_string(),
+            })?;
 
         tracing::info!(model_id = %model_id, "Model undeployed");
         Ok(updated.into())
@@ -185,16 +181,16 @@ impl DeploymentService {
 
     /// Get the deployment status and config for a model.
     pub async fn status(
-        db: &PgPool,
+        model_repo: &dyn ModelRepository,
         tenant_id: Uuid,
         model_id: Uuid,
     ) -> AppResult<DeploymentStatusResponse> {
-        let model =
-            ModelRepo::get_by_id(db, tenant_id, model_id)
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Model not found".to_string(),
-                })?;
+        let model = model_repo
+            .get_by_id(tenant_id, model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found".to_string(),
+            })?;
 
         Ok(DeploymentStatusResponse {
             model_id: model.id.to_string(),

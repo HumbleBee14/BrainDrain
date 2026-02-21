@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from temporalio import activity
 
-from src import clients
+from src.infra import InfraContainer
 from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
 from src.constants import EvaluationStatus
@@ -80,54 +80,58 @@ def get_registered_suites() -> list[EvaluationSuite]:
 # ── Main Activity ───────────────────────────────────────────────────
 
 
-@activity.defn
-async def run_evaluation(input: RunEvaluationInput) -> RunEvaluationOutput:
-    """Evaluate a fine-tuned model across registered test suites."""
-    db = await clients.get_db()
-    eval_id = input.evaluation_id
+class RunEvaluationActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-    try:
-        await db.execute(
-            f"UPDATE evaluations SET status = '{EvaluationStatus.RUNNING}',"
-            " started_at = NOW() WHERE id = $1",
-            eval_id,
-        )
+    @activity.defn(name="run_evaluation")
+    async def run(self, input: RunEvaluationInput) -> RunEvaluationOutput:
+        """Evaluate a fine-tuned model across registered test suites."""
+        db = self.infra.db
+        eval_id = input.evaluation_id
 
-        scores, report = await _run_all_suites(input)
+        try:
+            await db.execute(
+                f"UPDATE evaluations SET status = '{EvaluationStatus.RUNNING}',"
+                " started_at = NOW() WHERE id = $1",
+                eval_id,
+            )
 
-        await db.execute(
-            f"""UPDATE evaluations
-            SET status = '{EvaluationStatus.COMPLETED}', scores = $2,
-                report = $3, completed_at = NOW()
-            WHERE id = $1""",
-            eval_id,
-            json.dumps(scores),
-            json.dumps(report),
-        )
+            scores, report = await _run_all_suites(input, self.infra)
 
-        await db.execute(
-            "UPDATE models SET eval_scores = $2, updated_at = NOW() WHERE id = $1",
-            input.model_id,
-            json.dumps(scores),
-        )
+            await db.execute(
+                f"""UPDATE evaluations
+                SET status = '{EvaluationStatus.COMPLETED}', scores = $2,
+                    report = $3, completed_at = NOW()
+                WHERE id = $1""",
+                eval_id,
+                json.dumps(scores),
+                json.dumps(report),
+            )
 
-        overall_score = scores.get("overall")
-        logger.info("Evaluation completed for %s, overall score: %s", eval_id, overall_score)
-        return RunEvaluationOutput(scores=scores, report=report)
+            await db.execute(
+                "UPDATE models SET eval_scores = $2, updated_at = NOW() WHERE id = $1",
+                input.model_id,
+                json.dumps(scores),
+            )
 
-    except Exception as e:
-        logger.exception("Evaluation failed for %s", eval_id)
-        await db.execute(
-            f"""UPDATE evaluations
-            SET status = '{EvaluationStatus.FAILED}', report = $2, completed_at = NOW()
-            WHERE id = $1""",
-            eval_id,
-            json.dumps({"error": str(e)[:2000]}),
-        )
-        raise
+            overall_score = scores.get("overall")
+            logger.info("Evaluation completed for %s, overall score: %s", eval_id, overall_score)
+            return RunEvaluationOutput(scores=scores, report=report)
+
+        except Exception as e:
+            logger.exception("Evaluation failed for %s", eval_id)
+            await db.execute(
+                f"""UPDATE evaluations
+                SET status = '{EvaluationStatus.FAILED}', report = $2, completed_at = NOW()
+                WHERE id = $1""",
+                eval_id,
+                json.dumps({"error": str(e)[:2000]}),
+            )
+            raise
 
 
-async def _run_all_suites(input: RunEvaluationInput) -> tuple[dict, dict]:
+async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> tuple[dict, dict]:
     """Run all registered evaluation suites and aggregate results."""
     from unsloth import FastLanguageModel
 
@@ -145,7 +149,7 @@ async def _run_all_suites(input: RunEvaluationInput) -> tuple[dict, dict]:
 
         adapter_local = tmpdir_path / "adapter"
         adapter_local.mkdir()
-        _download_adapter(input.adapter_path, adapter_local)
+        _download_adapter(input.adapter_path, adapter_local, infra.s3, infra.s3_bucket)
 
         from peft import PeftModel
 
@@ -165,7 +169,7 @@ async def _run_all_suites(input: RunEvaluationInput) -> tuple[dict, dict]:
         activity.heartbeat("models_loaded")
 
         # Create judge using unified module
-        settings = clients.get_settings()
+        settings = infra.settings
         judge_api_base = input.judge_api_base or settings.llm_api_base_url
         judge_model = input.judge_model or settings.llm_model
         judge_api_key = settings.llm_api_key
@@ -177,7 +181,7 @@ async def _run_all_suites(input: RunEvaluationInput) -> tuple[dict, dict]:
         try:
             val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
             val_local = tmpdir_path / "val.jsonl"
-            _download_from_s3(val_s3_path, val_local)
+            _download_from_s3(val_s3_path, val_local, infra.s3, infra.s3_bucket)
             val_dataset = _load_jsonl(val_local)
             logger.info("Loaded %d validation samples", len(val_dataset))
         except Exception as e:
@@ -520,18 +524,13 @@ def _load_jsonl(path: Path) -> list[dict]:
     return records
 
 
-def _download_from_s3(s3_path: str, local_path: Path):
+def _download_from_s3(s3_path: str, local_path: Path, s3, bucket: str):
     """Download a file from S3."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
     s3.download_file(bucket, s3_path, str(local_path))
 
 
-def _download_adapter(s3_prefix: str, local_dir: Path):
+def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
     """Download all files under an S3 prefix to a local directory."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
-
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix):
         for obj in page.get("Contents", []):

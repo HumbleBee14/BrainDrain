@@ -1,11 +1,9 @@
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
 use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::dataset_repo::DatasetRepo;
-use crate::repositories::training_job_repo::TrainingJobRepo;
+use crate::repositories::traits::{DatasetRepository, TrainingJobRepository};
 use crate::temporal::WorkflowOrchestrator;
 use platform_shared::enums::{TrainingMethod, TrainingMode};
 
@@ -15,7 +13,8 @@ pub struct TrainingJobService;
 impl TrainingJobService {
     /// Create a new training job and auto-trigger the TrainWorkflow.
     pub async fn create(
-        db: &PgPool,
+        training_repo: &dyn TrainingJobRepository,
+        dataset_repo: &dyn DatasetRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -35,7 +34,8 @@ impl TrainingJobService {
             })?;
 
         // Verify dataset exists and belongs to tenant
-        let dataset = DatasetRepo::get_by_id(db, tenant_id, dataset_id)
+        let dataset = dataset_repo
+            .get_by_id(tenant_id, dataset_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Dataset not found".to_string(),
@@ -68,19 +68,19 @@ impl TrainingJobService {
         );
 
         // Create the job in DB
-        let job = TrainingJobRepo::create(
-            db,
-            tenant_id,
-            project_id,
-            dataset_id,
-            &req.base_model,
-            &method_str,
-            &mode_str,
-            hyperparams.clone(),
-            req.gpu_class.as_deref(),
-            Some(cost_estimate),
-        )
-        .await?;
+        let job = training_repo
+            .create(
+                tenant_id,
+                project_id,
+                dataset_id,
+                &req.base_model,
+                &method_str,
+                &mode_str,
+                hyperparams.clone(),
+                req.gpu_class.as_deref(),
+                Some(cost_estimate),
+            )
+            .await?;
 
         // Build dataset S3 path
         let dataset_path = dataset.storage_path.unwrap_or_else(|| {
@@ -105,7 +105,9 @@ impl TrainingJobService {
             })?;
 
         // Update job with workflow ID
-        TrainingJobRepo::update_workflow_id(db, tenant_id, job.id, &result.workflow_id).await?;
+        training_repo
+            .update_workflow_id(tenant_id, job.id, &result.workflow_id)
+            .await?;
 
         tracing::info!(
             project_id = %project_id,
@@ -121,8 +123,13 @@ impl TrainingJobService {
     }
 
     /// Get a single training job.
-    pub async fn get(db: &PgPool, tenant_id: Uuid, job_id: Uuid) -> AppResult<TrainingJobResponse> {
-        let job = TrainingJobRepo::get_by_id(db, tenant_id, job_id)
+    pub async fn get(
+        repo: &dyn TrainingJobRepository,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> AppResult<TrainingJobResponse> {
+        let job = repo
+            .get_by_id(tenant_id, job_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Training job not found".to_string(),
@@ -133,15 +140,15 @@ impl TrainingJobService {
 
     /// List training jobs for a project.
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn TrainingJobRepository,
         tenant_id: Uuid,
         project_id: Uuid,
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<TrainingJobResponse>> {
         let (jobs, total) = tokio::try_join!(
-            TrainingJobRepo::list_by_project(db, tenant_id, project_id, offset, limit),
-            TrainingJobRepo::count_by_project(db, tenant_id, project_id),
+            repo.list_by_project(tenant_id, project_id, offset, limit),
+            repo.count_by_project(tenant_id, project_id),
         )?;
 
         Ok(PaginatedResponse {
@@ -154,13 +161,11 @@ impl TrainingJobService {
 
     /// Cancel a training job.
     pub async fn cancel(
-        db: &PgPool,
+        repo: &dyn TrainingJobRepository,
         tenant_id: Uuid,
         job_id: Uuid,
     ) -> AppResult<TrainingJobResponse> {
-        let job = TrainingJobRepo::cancel(db, tenant_id, job_id)
-            .await?
-            .ok_or(AppError::BadRequest {
+        let job = repo.cancel(tenant_id, job_id).await?.ok_or(AppError::BadRequest {
             message:
                 "Cannot cancel: job not found or not in a cancellable state (pending/cost_approval)"
                     .to_string(),
@@ -291,7 +296,6 @@ mod tests {
 
     #[test]
     fn non_object_override_is_ignored() {
-        // If the user provides a non-object (e.g. string), defaults are used
         let user = serde_json::json!("not an object");
         let merged = merge_hyperparams(Some(user));
         let defaults = merge_hyperparams(None);
@@ -364,7 +368,6 @@ mod tests {
 
     #[test]
     fn model_size_detected_from_name() {
-        // Verify the cost scaling picks up different model sizes
         let cost_3b = estimate_cost("some-model-3b", Some(5000), Some("t4"));
         let cost_7b = estimate_cost("some-model-7b", Some(5000), Some("t4"));
         let cost_13b = estimate_cost("some-model-13b", Some(5000), Some("t4"));
@@ -391,7 +394,7 @@ mod tests {
     fn invalid_training_method_rejected() {
         assert!(TrainingMethod::from_str("invalid").is_err());
         assert!(TrainingMethod::from_str("").is_err());
-        assert!(TrainingMethod::from_str("QLORA").is_err()); // case sensitive
+        assert!(TrainingMethod::from_str("QLORA").is_err());
     }
 
     #[test]

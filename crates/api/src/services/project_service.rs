@@ -1,10 +1,9 @@
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
 use crate::dto::project::{CreateProjectRequest, ProjectResponse, UpdateProjectRequest};
 use crate::error::{AppError, AppResult};
-use crate::repositories::project_repo::ProjectRepo;
+use crate::repositories::traits::ProjectRepository;
 
 /// Business logic for project operations.
 ///
@@ -14,7 +13,7 @@ pub struct ProjectService;
 
 impl ProjectService {
     pub async fn create(
-        db: &PgPool,
+        repo: &dyn ProjectRepository,
         tenant_id: Uuid,
         req: CreateProjectRequest,
     ) -> AppResult<ProjectResponse> {
@@ -24,14 +23,14 @@ impl ProjectService {
             });
         }
 
-        let project = ProjectRepo::create(
-            db,
-            tenant_id,
-            req.name.trim(),
-            req.description.as_deref(),
-            req.task_type.as_deref(),
-        )
-        .await?;
+        let project = repo
+            .create(
+                tenant_id,
+                req.name.trim(),
+                req.description.as_deref(),
+                req.task_type.as_deref(),
+            )
+            .await?;
 
         tracing::info!(
             project_id = %project.id,
@@ -42,8 +41,13 @@ impl ProjectService {
         Ok(project.into())
     }
 
-    pub async fn get(db: &PgPool, tenant_id: Uuid, project_id: Uuid) -> AppResult<ProjectResponse> {
-        let project = ProjectRepo::get_by_id(db, tenant_id, project_id)
+    pub async fn get(
+        repo: &dyn ProjectRepository,
+        tenant_id: Uuid,
+        project_id: Uuid,
+    ) -> AppResult<ProjectResponse> {
+        let project = repo
+            .get_by_id(tenant_id, project_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Project not found".to_string(),
@@ -53,14 +57,14 @@ impl ProjectService {
     }
 
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn ProjectRepository,
         tenant_id: Uuid,
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<ProjectResponse>> {
         let (projects, total) = tokio::try_join!(
-            ProjectRepo::list(db, tenant_id, offset, limit),
-            ProjectRepo::count(db, tenant_id),
+            repo.list(tenant_id, offset, limit),
+            repo.count(tenant_id),
         )?;
 
         Ok(PaginatedResponse {
@@ -72,29 +76,33 @@ impl ProjectService {
     }
 
     pub async fn update(
-        db: &PgPool,
+        repo: &dyn ProjectRepository,
         tenant_id: Uuid,
         project_id: Uuid,
         req: UpdateProjectRequest,
     ) -> AppResult<ProjectResponse> {
-        let project = ProjectRepo::update(
-            db,
-            tenant_id,
-            project_id,
-            req.name.as_deref(),
-            req.description.as_deref(),
-            req.task_type.as_deref(),
-        )
-        .await?
-        .ok_or(AppError::NotFound {
-            message: "Project not found".to_string(),
-        })?;
+        let project = repo
+            .update(
+                tenant_id,
+                project_id,
+                req.name.as_deref(),
+                req.description.as_deref(),
+                req.task_type.as_deref(),
+            )
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Project not found".to_string(),
+            })?;
 
         Ok(project.into())
     }
 
-    pub async fn delete(db: &PgPool, tenant_id: Uuid, project_id: Uuid) -> AppResult<()> {
-        let deleted = ProjectRepo::delete(db, tenant_id, project_id).await?;
+    pub async fn delete(
+        repo: &dyn ProjectRepository,
+        tenant_id: Uuid,
+        project_id: Uuid,
+    ) -> AppResult<()> {
+        let deleted = repo.delete(tenant_id, project_id).await?;
 
         if !deleted {
             return Err(AppError::NotFound {

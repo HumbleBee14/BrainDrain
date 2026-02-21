@@ -1,12 +1,11 @@
-use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
 use crate::dto::evaluation::{CreateEvaluationRequest, EvaluationResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::evaluation_repo::EvaluationRepo;
-use crate::repositories::model_repo::ModelRepo;
-use crate::repositories::training_job_repo::TrainingJobRepo;
+use crate::repositories::traits::{
+    DatasetRepository, EvaluationRepository, ModelRepository, TrainingJobRepository,
+};
 use crate::temporal::WorkflowOrchestrator;
 
 /// Business logic for evaluation operations.
@@ -14,8 +13,12 @@ pub struct EvaluationService;
 
 impl EvaluationService {
     /// Create a new evaluation and start the EvaluateWorkflow.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
-        db: &PgPool,
+        eval_repo: &dyn EvaluationRepository,
+        model_repo: &dyn ModelRepository,
+        training_repo: &dyn TrainingJobRepository,
+        dataset_repo: &dyn DatasetRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         model_id: Uuid,
@@ -27,19 +30,20 @@ impl EvaluationService {
         })?;
 
         // Verify model exists and belongs to tenant
-        let model =
-            ModelRepo::get_by_id(db, tenant_id, model_id)
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Model not found".to_string(),
-                })?;
+        let model = model_repo
+            .get_by_id(tenant_id, model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found".to_string(),
+            })?;
 
         let adapter_path = model.adapter_path.ok_or(AppError::BadRequest {
             message: "Model has no adapter — training may not be complete".to_string(),
         })?;
 
         // Get training job for dataset_path and base_model
-        let training_job = TrainingJobRepo::get_by_id(db, tenant_id, model.training_job_id)
+        let training_job = training_repo
+            .get_by_id(tenant_id, model.training_job_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Training job for this model not found".to_string(),
@@ -47,15 +51,12 @@ impl EvaluationService {
 
         // Build dataset path from training job's dataset
         let dataset_path = {
-            let dataset = crate::repositories::dataset_repo::DatasetRepo::get_by_id(
-                db,
-                tenant_id,
-                training_job.dataset_id,
-            )
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Dataset for this model's training job not found".to_string(),
-            })?;
+            let dataset = dataset_repo
+                .get_by_id(tenant_id, training_job.dataset_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: "Dataset for this model's training job not found".to_string(),
+                })?;
 
             dataset.storage_path.unwrap_or_else(|| {
                 platform_shared::s3_paths::dataset_path(
@@ -67,7 +68,7 @@ impl EvaluationService {
         };
 
         // Create evaluation record
-        let eval = EvaluationRepo::create(db, tenant_id, model_id).await?;
+        let eval = eval_repo.create(tenant_id, model_id).await?;
 
         // Start EvaluateWorkflow via orchestrator
         let result = orchestrator
@@ -87,7 +88,9 @@ impl EvaluationService {
             })?;
 
         // Update evaluation with workflow ID
-        EvaluationRepo::update_workflow_id(db, tenant_id, eval.id, &result.workflow_id).await?;
+        eval_repo
+            .update_workflow_id(tenant_id, eval.id, &result.workflow_id)
+            .await?;
 
         tracing::info!(
             model_id = %model_id,
@@ -100,8 +103,13 @@ impl EvaluationService {
     }
 
     /// Get a single evaluation.
-    pub async fn get(db: &PgPool, tenant_id: Uuid, eval_id: Uuid) -> AppResult<EvaluationResponse> {
-        let eval = EvaluationRepo::get_by_id(db, tenant_id, eval_id)
+    pub async fn get(
+        repo: &dyn EvaluationRepository,
+        tenant_id: Uuid,
+        eval_id: Uuid,
+    ) -> AppResult<EvaluationResponse> {
+        let eval = repo
+            .get_by_id(tenant_id, eval_id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Evaluation not found".to_string(),
@@ -112,15 +120,15 @@ impl EvaluationService {
 
     /// List evaluations for a model.
     pub async fn list(
-        db: &PgPool,
+        repo: &dyn EvaluationRepository,
         tenant_id: Uuid,
         model_id: Uuid,
         offset: i64,
         limit: i64,
     ) -> AppResult<PaginatedResponse<EvaluationResponse>> {
         let (evals, total) = tokio::try_join!(
-            EvaluationRepo::list_by_model(db, tenant_id, model_id, offset, limit),
-            EvaluationRepo::count_by_model(db, tenant_id, model_id),
+            repo.list_by_model(tenant_id, model_id, offset, limit),
+            repo.count_by_model(tenant_id, model_id),
         )?;
 
         Ok(PaginatedResponse {

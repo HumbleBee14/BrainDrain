@@ -27,7 +27,14 @@ async fn create_api_key(
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> AppResult<(StatusCode, Json<CreateApiKeyResponse>)> {
-    let result = ApiKeyService::create(state.db(), user.tenant_id, model_id, body).await?;
+    let result = ApiKeyService::create(
+        state.api_key_repo(),
+        state.model_repo(),
+        user.tenant_id,
+        model_id,
+        body,
+    )
+    .await?;
 
     Ok((StatusCode::CREATED, Json(result)))
 }
@@ -38,7 +45,7 @@ async fn list_api_keys(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<ApiKeyResponse>>> {
-    let keys = ApiKeyService::list(state.db(), user.tenant_id, model_id).await?;
+    let keys = ApiKeyService::list(state.api_key_repo(), user.tenant_id, model_id).await?;
     Ok(Json(keys))
 }
 
@@ -48,6 +55,6 @@ async fn revoke_api_key(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiKeyResponse>> {
-    let key = ApiKeyService::revoke(state.db(), user.tenant_id, id).await?;
+    let key = ApiKeyService::revoke(state.api_key_repo(), user.tenant_id, id).await?;
     Ok(Json(key))
 }

@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::error::{AppError, AppResult};
-use crate::repositories::billing_event_repo::BillingEventRepo;
-use crate::repositories::model_repo::ModelRepo;
 
 /// Inference routes — OpenAI-compatible API.
 /// These are mounted at `/v1/` (not `/api/v1/`) and use API key auth.
@@ -58,7 +56,9 @@ async fn chat_completions(
     Json(body): Json<ChatCompletionRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     // Verify model is actively deployed
-    let model = ModelRepo::get_by_id(state.db(), api_key.tenant_id, api_key.model_id)
+    let model = state
+        .model_repo()
+        .get_by_id(api_key.tenant_id, api_key.model_id)
         .await?
         .ok_or(AppError::NotFound {
             message: "Model not found".to_string(),
@@ -119,23 +119,24 @@ async fn chat_completions(
     let tokens_out = response["usage"]["completion_tokens"].as_i64().unwrap_or(0);
 
     if tokens_in > 0 || tokens_out > 0 {
-        let db = state.db().clone();
+        let state = state.clone();
         let tenant_id = api_key.tenant_id;
         let model_id = api_key.model_id;
         let key_id = api_key.key_id;
         tokio::spawn(async move {
-            if let Err(e) = BillingEventRepo::create(
-                &db,
-                tenant_id,
-                "inference",
-                Some(model_id),
-                tokens_in,
-                tokens_out,
-                0,
-                estimate_cost(tokens_in, tokens_out),
-                serde_json::json!({"api_key_id": key_id.to_string()}),
-            )
-            .await
+            if let Err(e) = state
+                .billing_event_repo()
+                .create(
+                    tenant_id,
+                    "inference",
+                    Some(model_id),
+                    tokens_in,
+                    tokens_out,
+                    0,
+                    estimate_cost(tokens_in, tokens_out),
+                    serde_json::json!({"api_key_id": key_id.to_string()}),
+                )
+                .await
             {
                 tracing::error!(
                     tenant_id = %tenant_id,

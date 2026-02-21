@@ -3,18 +3,26 @@ use platform_shared::enums::TrainingJobStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::error::AppResult;
+use crate::repositories::traits::{BoxFuture, TrainingJobRepository};
 
-/// Repository for training job database operations.
+/// PostgreSQL implementation of the training job repository.
 ///
 /// All queries require `tenant_id` — multi-tenancy enforced at this layer.
-pub struct TrainingJobRepo;
+pub struct PgTrainingJobRepo {
+    db: PgPool,
+}
 
-impl TrainingJobRepo {
-    /// Create a new training job.
+impl PgTrainingJobRepo {
+    pub fn new(db: PgPool) -> Self {
+        Self { db }
+    }
+}
+
+impl TrainingJobRepository for PgTrainingJobRepo {
     #[allow(clippy::too_many_arguments)]
-    pub async fn create(
-        db: &PgPool,
+    fn create(
+        &self,
         tenant_id: Uuid,
         project_id: Uuid,
         dataset_id: Uuid,
@@ -24,151 +32,164 @@ impl TrainingJobRepo {
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
-    ) -> Result<TrainingJob, AppError> {
-        let job = sqlx::query_as::<_, TrainingJob>(
-            r#"
-            INSERT INTO training_jobs
-                (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING *
-            "#,
-        )
-        .bind(tenant_id)
-        .bind(project_id)
-        .bind(dataset_id)
-        .bind(base_model)
-        .bind(method)
-        .bind(mode)
-        .bind(hyperparams)
-        .bind(gpu_class)
-        .bind(cost_estimate)
-        .fetch_one(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<TrainingJob>> {
+        let base_model = base_model.to_string();
+        let method = method.to_string();
+        let mode = mode.to_string();
+        let gpu_class = gpu_class.map(|s| s.to_string());
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                INSERT INTO training_jobs
+                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING *
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(project_id)
+            .bind(dataset_id)
+            .bind(&base_model)
+            .bind(&method)
+            .bind(&mode)
+            .bind(hyperparams)
+            .bind(gpu_class.as_deref())
+            .bind(cost_estimate)
+            .fetch_one(&self.db)
+            .await?;
 
-        Ok(job)
+            Ok(job)
+        })
     }
 
-    /// Get a single training job by ID.
-    pub async fn get_by_id(
-        db: &PgPool,
+    fn get_by_id(
+        &self,
         tenant_id: Uuid,
         job_id: Uuid,
-    ) -> Result<Option<TrainingJob>, AppError> {
-        let job = sqlx::query_as::<_, TrainingJob>(
-            "SELECT * FROM training_jobs WHERE id = $1 AND tenant_id = $2",
-        )
-        .bind(job_id)
-        .bind(tenant_id)
-        .fetch_optional(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                "SELECT * FROM training_jobs WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
 
-        Ok(job)
+            Ok(job)
+        })
     }
 
-    /// List training jobs for a project within a tenant.
-    pub async fn list_by_project(
-        db: &PgPool,
+    fn list_by_project(
+        &self,
         tenant_id: Uuid,
         project_id: Uuid,
         offset: i64,
         limit: i64,
-    ) -> Result<Vec<TrainingJob>, AppError> {
-        let jobs = sqlx::query_as::<_, TrainingJob>(
-            r#"
-            SELECT * FROM training_jobs
-            WHERE project_id = $1 AND tenant_id = $2
-            ORDER BY created_at DESC
-            LIMIT $3 OFFSET $4
-            "#,
-        )
-        .bind(project_id)
-        .bind(tenant_id)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<Vec<TrainingJob>>> {
+        Box::pin(async move {
+            let jobs = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                SELECT * FROM training_jobs
+                WHERE project_id = $1 AND tenant_id = $2
+                ORDER BY created_at DESC
+                LIMIT $3 OFFSET $4
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.db)
+            .await?;
 
-        Ok(jobs)
+            Ok(jobs)
+        })
     }
 
-    /// Count training jobs for a project.
-    pub async fn count_by_project(
-        db: &PgPool,
+    fn count_by_project(
+        &self,
         tenant_id: Uuid,
         project_id: Uuid,
-    ) -> Result<i64, AppError> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2",
-        )
-        .bind(project_id)
-        .bind(tenant_id)
-        .fetch_one(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2",
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .fetch_one(&self.db)
+            .await?;
 
-        Ok(count)
+            Ok(count)
+        })
     }
 
-    /// Count training jobs by status for a project.
-    pub async fn count_by_status(
-        db: &PgPool,
+    fn count_by_status(
+        &self,
         tenant_id: Uuid,
         project_id: Uuid,
         status: TrainingJobStatus,
-    ) -> Result<i64, AppError> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
-        )
-        .bind(project_id)
-        .bind(tenant_id)
-        .bind(status.to_string())
-        .fetch_one(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(status.to_string())
+            .fetch_one(&self.db)
+            .await?;
 
-        Ok(count)
+            Ok(count)
+        })
     }
 
-    /// Update the Temporal workflow ID after a workflow is started.
-    pub async fn update_workflow_id(
-        db: &PgPool,
+    fn update_workflow_id(
+        &self,
         tenant_id: Uuid,
         job_id: Uuid,
         workflow_id: &str,
-    ) -> Result<bool, AppError> {
-        let result = sqlx::query(
-            r#"
-            UPDATE training_jobs
-            SET temporal_workflow_id = $3
-            WHERE id = $1 AND tenant_id = $2
-            "#,
-        )
-        .bind(job_id)
-        .bind(tenant_id)
-        .bind(workflow_id)
-        .execute(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<bool>> {
+        let workflow_id = workflow_id.to_string();
+        Box::pin(async move {
+            let result = sqlx::query(
+                r#"
+                UPDATE training_jobs
+                SET temporal_workflow_id = $3
+                WHERE id = $1 AND tenant_id = $2
+                "#,
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .bind(&workflow_id)
+            .execute(&self.db)
+            .await?;
 
-        Ok(result.rows_affected() > 0)
+            Ok(result.rows_affected() > 0)
+        })
     }
 
-    /// Cancel a training job (only if pending or cost_approval).
-    pub async fn cancel(
-        db: &PgPool,
+    fn cancel(
+        &self,
         tenant_id: Uuid,
         job_id: Uuid,
-    ) -> Result<Option<TrainingJob>, AppError> {
-        let job = sqlx::query_as::<_, TrainingJob>(
-            r#"
-            UPDATE training_jobs
-            SET status = 'cancelled'
-            WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'cost_approval')
-            RETURNING *
-            "#,
-        )
-        .bind(job_id)
-        .bind(tenant_id)
-        .fetch_optional(db)
-        .await?;
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                UPDATE training_jobs
+                SET status = 'cancelled'
+                WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'cost_approval')
+                RETURNING *
+                "#,
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
 
-        Ok(job)
+            Ok(job)
+        })
     }
 }

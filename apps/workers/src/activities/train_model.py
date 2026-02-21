@@ -18,7 +18,7 @@ from pathlib import Path
 
 from temporalio import activity
 
-from src import clients, s3_paths
+from src import s3_paths
 from src.activities.llm_judge import create_judge_from_settings
 from src.activities.stubs import StartTrainingInput, StartTrainingOutput
 from src.activities.training_engine import (
@@ -27,81 +27,89 @@ from src.activities.training_engine import (
     register_strategy,
 )
 from src.constants import TrainingJobStatus
+from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.training")
 
 
-@activity.defn
-async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
-    """Run a fine-tuning job. Called by TrainWorkflow."""
-    db = await clients.get_db()
-    job_id = input.training_job_id
+class StartTrainingActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
 
-    try:
-        await db.execute(
-            f"UPDATE training_jobs SET status = '{TrainingJobStatus.TRAINING}',"
-            " started_at = NOW() WHERE id = $1",
-            job_id,
-        )
+    @activity.defn(name="start_training")
+    async def run(self, input: StartTrainingInput) -> StartTrainingOutput:
+        """Run a fine-tuning job. Called by TrainWorkflow."""
+        db = self.infra.db
+        job_id = input.training_job_id
 
-        result = await _run_training(input)
+        try:
+            await db.execute(
+                f"UPDATE training_jobs SET status = '{TrainingJobStatus.TRAINING}',"
+                " started_at = NOW() WHERE id = $1",
+                job_id,
+            )
 
-        await db.execute(
-            f"""UPDATE training_jobs
-            SET status = '{TrainingJobStatus.COMPLETED}',
-                metrics = $2,
-                actual_cost = $3,
-                completed_at = NOW()
-            WHERE id = $1""",
-            job_id,
-            json.dumps(result.metrics),
-            result.metrics.get("estimated_cost"),
-        )
+            result = await _run_training(input, self.infra)
 
-        model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
-        project_id = await _get_project_id(db, job_id)
+            await db.execute(
+                f"""UPDATE training_jobs
+                SET status = '{TrainingJobStatus.COMPLETED}',
+                    metrics = $2,
+                    actual_cost = $3,
+                    completed_at = NOW()
+                WHERE id = $1""",
+                job_id,
+                json.dumps(result.metrics),
+                result.metrics.get("estimated_cost"),
+            )
 
-        await db.execute(
-            """INSERT INTO models
-            (tenant_id, project_id, training_job_id, name, base_model,
-             adapter_path, adapter_size_bytes)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-            input.tenant_id,
-            project_id,
-            job_id,
-            model_name,
-            input.base_model,
-            result.adapter_path,
-            result.adapter_size_bytes,
-        )
+            model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
+            project_id = await _get_project_id(db, job_id)
 
-        logger.info("Training completed for job %s, model: %s", job_id, model_name)
-        return result
+            await db.execute(
+                """INSERT INTO models
+                (tenant_id, project_id, training_job_id, name, base_model,
+                 adapter_path, adapter_size_bytes)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                input.tenant_id,
+                project_id,
+                job_id,
+                model_name,
+                input.base_model,
+                result.adapter_path,
+                result.adapter_size_bytes,
+            )
 
-    except Exception as e:
-        logger.exception("Training failed for job %s", job_id)
-        await db.execute(
-            f"""UPDATE training_jobs
-            SET status = '{TrainingJobStatus.FAILED}', error_message = $2, completed_at = NOW()
-            WHERE id = $1""",
-            job_id,
-            str(e)[:2000],
-        )
-        raise
+            logger.info("Training completed for job %s, model: %s", job_id, model_name)
+            return result
+
+        except Exception as e:
+            logger.exception("Training failed for job %s", job_id)
+            await db.execute(
+                f"""UPDATE training_jobs
+                SET status = '{TrainingJobStatus.FAILED}', error_message = $2, completed_at = NOW()
+                WHERE id = $1""",
+                job_id,
+                str(e)[:2000],
+            )
+            raise
 
 
-async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
+async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
     """Load model via engine, dispatch to strategy, upload adapter."""
     engine = get_engine()
     hp = input.hyperparams
     job_id = input.training_job_id
+
+    # Ensure sync redis is initialized before any training callbacks use it
+    _get_sync_redis(infra.settings)
 
     with tempfile.TemporaryDirectory(prefix=f"train-{job_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
 
         # Download dataset from S3
         dataset_local = tmpdir_path / "dataset.jsonl"
-        _download_dataset(input.dataset_path, dataset_local)
+        _download_dataset(input.dataset_path, dataset_local, infra.s3, infra.s3_bucket)
 
         dataset = _load_chatml_dataset(dataset_local)
         logger.info("Loaded dataset: %d examples", len(dataset))
@@ -140,6 +148,8 @@ async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
             max_seq_length=max_seq_length,
             tenant_id=input.tenant_id,
             dataset_path=input.dataset_path,
+            s3=infra.s3,
+            bucket=infra.s3_bucket,
         )
 
         # Save adapter via engine protocol
@@ -148,7 +158,7 @@ async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
 
         # Upload adapter to S3
         adapter_s3_path = s3_paths.adapter_training_prefix(input.tenant_id, job_id)
-        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path)
+        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path, infra.s3, infra.s3_bucket)
 
         return StartTrainingOutput(
             adapter_path=adapter_s3_path,
@@ -168,8 +178,11 @@ class QuickStrategy:
 
     def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
         tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
         return _train_sft(
-            model, tokenizer, dataset, hp, job_id, max_seq_length, tenant_id=tenant_id
+            model, tokenizer, dataset, hp, job_id, max_seq_length,
+            tenant_id=tenant_id, s3=s3, bucket=bucket,
         )
 
 
@@ -181,6 +194,8 @@ class AlignedStrategy:
 
     def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
         tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
         metrics_sft = _train_sft(
             model,
             tokenizer,
@@ -190,6 +205,8 @@ class AlignedStrategy:
             max_seq_length,
             phase="sft",
             tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
         )
         metrics_dpo = _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
         return {**metrics_sft, "dpo": metrics_dpo}
@@ -203,6 +220,8 @@ class ReasoningStrategy:
 
     def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
         tenant_id = kwargs.get("tenant_id")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
         metrics_sft = _train_sft(
             model,
             tokenizer,
@@ -212,6 +231,8 @@ class ReasoningStrategy:
             max_seq_length,
             phase="sft",
             tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
         )
         metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
         return {**metrics_sft, "grpo": metrics_grpo}
@@ -226,6 +247,8 @@ class IterativeStrategy:
     def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
         tenant_id = kwargs.get("tenant_id")
         dataset_path = kwargs.get("dataset_path")
+        s3 = kwargs.get("s3")
+        bucket = kwargs.get("bucket")
         return _train_iterative(
             model,
             tokenizer,
@@ -235,13 +258,18 @@ class IterativeStrategy:
             max_seq_length,
             tenant_id=tenant_id,
             dataset_path=dataset_path,
+            s3=s3,
+            bucket=bucket,
         )
 
 
 # ── SFT Training ────────────────────────────────────────────────────
 
 
-def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None, tenant_id=None):
+def _train_sft(
+    model, tokenizer, dataset, hp, job_id, max_seq_length,
+    phase=None, tenant_id=None, s3=None, bucket=None,
+):
     """Run SFT (Supervised Fine-Tuning) training."""
     from trl import SFTConfig, SFTTrainer
 
@@ -253,7 +281,7 @@ def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None
     enable_checkpoints = tenant_id is not None
     callbacks = [callback]
     if enable_checkpoints:
-        CkptClass = _build_checkpoint_callback_class(tenant_id, job_id)
+        CkptClass = _build_checkpoint_callback_class(tenant_id, job_id, s3, bucket)
         callbacks.append(CkptClass())
 
     training_args = SFTConfig(
@@ -407,6 +435,8 @@ def _train_iterative(
     max_seq_length,
     tenant_id=None,
     dataset_path=None,
+    s3=None,
+    bucket=None,
 ):
     """Run multiple SFT rounds with hold-out validation between each."""
     num_iterations = hp.get("num_iterations", 3)
@@ -417,7 +447,7 @@ def _train_iterative(
         try:
             val_s3_path = dataset_path.replace(".jsonl", "_val.jsonl")
             val_local = Path(tempfile.mktemp(suffix="_val.jsonl"))
-            _download_dataset(val_s3_path, val_local)
+            _download_dataset(val_s3_path, val_local, s3, bucket)
             val_dataset = _load_chatml_dataset(val_local)
             logger.info("Loaded validation set: %d examples", len(val_dataset))
             val_local.unlink(missing_ok=True)
@@ -437,6 +467,8 @@ def _train_iterative(
             max_seq_length,
             phase=phase,
             tenant_id=tenant_id,
+            s3=s3,
+            bucket=bucket,
         )
         all_metrics[phase] = iteration_metrics
 
@@ -488,13 +520,14 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
 _sync_redis_client = None
 
 
-def _get_sync_redis():
+def _get_sync_redis(settings=None):
     """Get or create the module-level synchronous Redis client."""
     global _sync_redis_client  # noqa: PLW0603
     if _sync_redis_client is None:
         import redis as sync_redis
 
-        settings = clients.get_settings()
+        if settings is None:
+            raise RuntimeError("Settings required for first Redis initialization")
         _sync_redis_client = sync_redis.from_url(settings.redis_url)
     return _sync_redis_client
 
@@ -593,7 +626,7 @@ def _build_callback_class():
     return MetricsStreamingCallback
 
 
-def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
+def _build_checkpoint_callback_class(tenant_id: str, job_id: str, s3, bucket: str):
     """Build a TrainerCallback that uploads checkpoints to S3 on save."""
     try:
         from transformers import TrainerCallback
@@ -616,7 +649,7 @@ def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
                     s3_prefix = (
                         f"checkpoints/{self.tenant_id}/{self.job_id}/step-{state.global_step}/"
                     )
-                    _upload_adapter(ckpt_dir, s3_prefix)
+                    _upload_adapter(ckpt_dir, s3_prefix, s3, bucket)
                     logger.info("Uploaded checkpoint step %d to %s", state.global_step, s3_prefix)
             except Exception as e:
                 logger.warning("Failed to upload checkpoint: %s", e)
@@ -634,10 +667,8 @@ def _stream_metric(job_id: str, data: dict):
         logger.warning("Failed to stream metric event: %s", e)
 
 
-def _download_dataset(s3_path: str, local_path: Path):
+def _download_dataset(s3_path: str, local_path: Path, s3, bucket: str):
     """Download dataset from S3 to local file."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
     s3.download_file(bucket, s3_path, str(local_path))
     logger.info("Downloaded dataset: %s -> %s", s3_path, local_path)
 
@@ -726,10 +757,8 @@ def _create_grpo_prompts(dataset, tokenizer):
     return Dataset.from_list(prompts) if prompts else dataset
 
 
-def _upload_adapter(adapter_dir: Path, s3_prefix: str) -> int:
+def _upload_adapter(adapter_dir: Path, s3_prefix: str, s3, bucket: str) -> int:
     """Upload adapter directory to S3, return total size in bytes."""
-    s3 = clients.get_s3()
-    bucket = clients.get_s3_bucket()
     total_size = 0
 
     for file_path in adapter_dir.rglob("*"):
