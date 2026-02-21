@@ -7,12 +7,14 @@ use bytes::BytesMut;
 use uuid::Uuid;
 
 use platform_shared::constants::MAX_UPLOAD_SIZE_BYTES;
+use platform_shared::enums::TeamRole;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::document::{DocumentResponse, UploadResponse};
 use crate::error::{AppError, AppResult};
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::document_service::DocumentService;
 
@@ -30,6 +32,7 @@ async fn upload_document(
     Path(project_id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> AppResult<(StatusCode, Json<Vec<UploadResponse>>)> {
+    require_role(&user, TeamRole::Member)?;
     let mut uploads = Vec::new();
 
     while let Some(field) = multipart

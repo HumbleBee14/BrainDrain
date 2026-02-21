@@ -9,7 +9,8 @@ import { useDatasets } from "@/hooks/use-datasets";
 import { useTrainingJobs, useCreateTrainingJob, useCancelTrainingJob } from "@/hooks/use-training";
 import type { CreateTrainingJobInput } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useOnboarding } from "@/hooks/use-onboarding";
 import {
   StatusBadge,
   DocStatusBadge,
@@ -37,6 +38,24 @@ export default function ProjectDetailPage() {
   const triggerRefine = useTriggerRefine(params.id);
   const createTrainingJob = useCreateTrainingJob(params.id);
   const cancelTrainingJob = useCancelTrainingJob(params.id);
+  const { markStepComplete } = useOnboarding();
+
+  // Track onboarding steps when mutations succeed
+  useEffect(() => {
+    if (uploadDocs.isSuccess) markStepComplete("upload_document");
+  }, [uploadDocs.isSuccess, markStepComplete]);
+
+  useEffect(() => {
+    if (triggerParse.isSuccess) markStepComplete("parse_documents");
+  }, [triggerParse.isSuccess, markStepComplete]);
+
+  useEffect(() => {
+    if (triggerRefine.isSuccess) markStepComplete("generate_data");
+  }, [triggerRefine.isSuccess, markStepComplete]);
+
+  useEffect(() => {
+    if (createTrainingJob.isSuccess) markStepComplete("start_training");
+  }, [createTrainingJob.isSuccess, markStepComplete]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDragging, setIsDragging] = useState(false);

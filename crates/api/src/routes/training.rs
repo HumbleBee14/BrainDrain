@@ -8,12 +8,15 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::model::ModelResponse;
 use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
 use crate::services::training_job_service::TrainingJobService;
@@ -48,6 +51,7 @@ async fn create_training_job(
     Path(project_id): Path<Uuid>,
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let base_model = body.base_model.clone();
     let result = TrainingJobService::create(
         state.training_job_repo(),
@@ -107,6 +111,7 @@ async fn cancel_training_job(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
+    require_role(&user, TeamRole::Member)?;
     let job = TrainingJobService::cancel(state.training_job_repo(), user.tenant_id, id).await?;
     AuditLogger::log(
         state.audit_log_repo(),

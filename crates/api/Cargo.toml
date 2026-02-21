@@ -46,7 +46,12 @@ envy = { workspace = true }
 
 # Crypto
 sha2 = { workspace = true }
+hmac = { workspace = true }
 rand = { workspace = true }
+hex = { workspace = true }
+
+# Async traits
+async-trait = { workspace = true }
 
 # Utilities
 bytes = { workspace = true }

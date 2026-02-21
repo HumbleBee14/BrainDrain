@@ -4,6 +4,7 @@ use std::pin::Pin;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
+use platform_shared::enums::TeamRole;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -28,6 +29,8 @@ pub struct AuthenticatedUser {
     pub tenant_id: Uuid,
     /// External organization ID (raw), if any.
     pub org_id: Option<String>,
+    /// Team role for RBAC enforcement.
+    pub role: TeamRole,
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +132,7 @@ impl AuthProvider for ClerkAuthProvider {
                 user_id: claims.sub,
                 tenant_id,
                 org_id: claims.org_id,
+                role: TeamRole::Member,
             }))
         })
     }
@@ -155,7 +159,22 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .strip_prefix("Bearer ")
             .ok_or(AppError::Unauthorized)?;
 
-        state.auth_chain().authenticate(token, state.db()).await
+        let mut user = state.auth_chain().authenticate(token, state.db()).await?;
+
+        // Look up actual role from team_members table (separate from auth).
+        // Dev tokens keep their assigned role (Owner).
+        // If no team_member row exists, keep default Member role.
+        // The auto-create-owner logic runs in team_service::ensure_member.
+        if user.role == TeamRole::Member
+            && let Some(role_str) = state
+                .team_member_repo()
+                .get_role(user.tenant_id, &user.user_id)
+                .await?
+        {
+            user.role = role_str.parse().unwrap_or(TeamRole::Member);
+        }
+
+        Ok(user)
     }
 }
 
@@ -181,6 +200,7 @@ fn parse_dev_token(token: &str) -> Option<AuthenticatedUser> {
             user_id: parts[2].to_string(),
             tenant_id,
             org_id: None,
+            role: TeamRole::Owner,
         })
     } else {
         None

@@ -10,14 +10,21 @@ use crate::repositories::billing_event_repo::PgBillingEventRepo;
 use crate::repositories::dataset_repo::PgDatasetRepo;
 use crate::repositories::document_repo::PgDocumentRepo;
 use crate::repositories::evaluation_repo::PgEvaluationRepo;
+use crate::repositories::invitation_repo::PgInvitationRepo;
 use crate::repositories::model_repo::PgModelRepo;
+use crate::repositories::notification_repo::PgNotificationRepo;
 use crate::repositories::project_repo::PgProjectRepo;
+use crate::repositories::team_member_repo::PgTeamMemberRepo;
+use crate::repositories::tenant_repo::PgTenantRepo;
 use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
     ApiKeyRepository, AuditLogRepository, BillingEventRepository, DatasetRepository,
-    DocumentRepository, EvaluationRepository, ModelRepository, ProjectRepository,
+    DocumentRepository, EvaluationRepository, InvitationRepository, ModelRepository,
+    NotificationRepository, ProjectRepository, TeamMemberRepository, TenantRepository,
     TrainingJobRepository,
 };
+use crate::services::billing_provider::BillingProvider;
+use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
 /// Shared application state available to all route handlers.
@@ -47,6 +54,11 @@ struct AppStateInner {
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub billing_event_repo: Arc<dyn BillingEventRepository>,
     pub audit_log_repo: Arc<dyn AuditLogRepository>,
+    pub team_member_repo: Arc<dyn TeamMemberRepository>,
+    pub invitation_repo: Arc<dyn InvitationRepository>,
+    pub notification_repo: Arc<dyn NotificationRepository>,
+    pub tenant_repo: Arc<dyn TenantRepository>,
+    pub billing_provider: Arc<dyn BillingProvider>,
 }
 
 impl AppState {
@@ -126,6 +138,29 @@ impl AppState {
         let billing_event_repo: Arc<dyn BillingEventRepository> =
             Arc::new(PgBillingEventRepo::new(db.clone()));
         let audit_log_repo: Arc<dyn AuditLogRepository> = Arc::new(PgAuditLogRepo::new(db.clone()));
+        let team_member_repo: Arc<dyn TeamMemberRepository> =
+            Arc::new(PgTeamMemberRepo::new(db.clone()));
+        let invitation_repo: Arc<dyn InvitationRepository> =
+            Arc::new(PgInvitationRepo::new(db.clone()));
+        let notification_repo: Arc<dyn NotificationRepository> =
+            Arc::new(PgNotificationRepo::new(db.clone()));
+        let tenant_repo: Arc<dyn TenantRepository> = Arc::new(PgTenantRepo::new(db.clone()));
+
+        // Billing provider: Stripe when configured, no-op for dev
+        let billing_provider: Arc<dyn BillingProvider> =
+            if let Some(ref secret_key) = config.stripe_secret_key {
+                tracing::info!("Stripe billing provider configured");
+                Arc::new(StripeBillingProvider::new(
+                    http_client.clone(),
+                    secret_key.clone(),
+                    config.stripe_price_starter.clone(),
+                    config.stripe_price_growth.clone(),
+                    config.stripe_price_pro.clone(),
+                ))
+            } else {
+                tracing::warn!("Stripe not configured — billing provider is no-op");
+                Arc::new(NoOpBillingProvider)
+            };
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -145,6 +180,11 @@ impl AppState {
                 api_key_repo,
                 billing_event_repo,
                 audit_log_repo,
+                team_member_repo,
+                invitation_repo,
+                notification_repo,
+                tenant_repo,
+                billing_provider,
             }),
         })
     }
@@ -211,5 +251,25 @@ impl AppState {
 
     pub fn audit_log_repo(&self) -> &dyn AuditLogRepository {
         &*self.inner.audit_log_repo
+    }
+
+    pub fn team_member_repo(&self) -> &dyn TeamMemberRepository {
+        &*self.inner.team_member_repo
+    }
+
+    pub fn invitation_repo(&self) -> &dyn InvitationRepository {
+        &*self.inner.invitation_repo
+    }
+
+    pub fn notification_repo(&self) -> &dyn NotificationRepository {
+        &*self.inner.notification_repo
+    }
+
+    pub fn tenant_repo(&self) -> &dyn TenantRepository {
+        &*self.inner.tenant_repo
+    }
+
+    pub fn billing_provider(&self) -> &dyn BillingProvider {
+        &*self.inner.billing_provider
     }
 }

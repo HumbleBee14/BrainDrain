@@ -2,8 +2,9 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useModel } from "@/hooks/use-models";
+import { useOnboarding } from "@/hooks/use-onboarding";
 import { useDeploymentStatus, useDeployModel, useUndeployModel } from "@/hooks/use-deployments";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/hooks/use-api-keys";
 import { useEvaluations } from "@/hooks/use-evaluations";
@@ -51,6 +52,13 @@ export default function ModelDetailPage() {
   const undeployModel = useUndeployModel(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
   const revokeApiKey = useRevokeApiKey(params.modelId);
+
+  const { markStepComplete } = useOnboarding();
+
+  // Mark "view_results" onboarding step when viewing a model
+  useEffect(() => {
+    if (model) markStepComplete("view_results");
+  }, [model, markStepComplete]);
 
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [keyName, setKeyName] = useState("");

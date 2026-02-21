@@ -4,11 +4,14 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::project::{CreateProjectRequest, ProjectResponse, UpdateProjectRequest};
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::project_service::ProjectService;
 
@@ -27,6 +30,7 @@ async fn create_project(
     user: AuthenticatedUser,
     Json(body): Json<CreateProjectRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let project = ProjectService::create(state.project_repo(), user.tenant_id, body).await?;
     AuditLogger::log(
         state.audit_log_repo(),
@@ -70,6 +74,7 @@ async fn update_project(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateProjectRequest>,
 ) -> AppResult<Json<ProjectResponse>> {
+    require_role(&user, TeamRole::Member)?;
     let project = ProjectService::update(state.project_repo(), user.tenant_id, id, body).await?;
     AuditLogger::log(
         state.audit_log_repo(),
@@ -88,6 +93,7 @@ async fn delete_project(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
+    require_role(&user, TeamRole::Member)?;
     ProjectService::delete(state.project_repo(), user.tenant_id, id).await?;
     AuditLogger::log(
         state.audit_log_repo(),

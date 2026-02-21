@@ -1,0 +1,294 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import {
+  useNotificationPreferences,
+  useUpdatePreferences,
+  useDeliveryHistory,
+} from "@/hooks/use-notifications";
+
+const EVENT_TYPES = [
+  { id: "training_complete", label: "Training Complete" },
+  { id: "evaluation_complete", label: "Evaluation Complete" },
+  { id: "deployment_status", label: "Deployment Status" },
+  { id: "invitation", label: "Invitation" },
+];
+
+const CHANNELS = [
+  { id: "email", label: "Email" },
+  { id: "webhook", label: "Webhook" },
+];
+
+interface PreferenceState {
+  [key: string]: { enabled: boolean; config: Record<string, unknown> };
+}
+
+function buildKey(channel: string, eventType: string) {
+  return `${channel}:${eventType}`;
+}
+
+export default function NotificationsSettingsPage() {
+  const { data: preferences, isLoading: prefsLoading } = useNotificationPreferences();
+  const updatePreferences = useUpdatePreferences();
+  const { data: deliveries, isLoading: deliveriesLoading } = useDeliveryHistory();
+
+  const [localPrefs, setLocalPrefs] = useState<PreferenceState>({});
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [hasChanges, setHasChanges] = useState(false);
+
+  // Sync server preferences into local state
+  useEffect(() => {
+    if (!preferences) return;
+    const map: PreferenceState = {};
+    for (const pref of preferences) {
+      map[buildKey(pref.channel, pref.event_type)] = {
+        enabled: pref.enabled,
+        config: pref.config,
+      };
+    }
+    setLocalPrefs(map);
+
+    // Extract webhook URL from any webhook preference config
+    const webhookPref = preferences.find(
+      (p) => p.channel === "webhook" && p.config?.url
+    );
+    if (webhookPref?.config?.url) {
+      setWebhookUrl(webhookPref.config.url as string);
+    }
+  }, [preferences]);
+
+  const isEnabled = useCallback(
+    (channel: string, eventType: string) => {
+      return localPrefs[buildKey(channel, eventType)]?.enabled ?? false;
+    },
+    [localPrefs]
+  );
+
+  const togglePref = (channel: string, eventType: string) => {
+    const key = buildKey(channel, eventType);
+    setLocalPrefs((prev) => ({
+      ...prev,
+      [key]: {
+        enabled: !(prev[key]?.enabled ?? false),
+        config: prev[key]?.config ?? {},
+      },
+    }));
+    setHasChanges(true);
+  };
+
+  const hasWebhookEnabled = EVENT_TYPES.some((et) => isEnabled("webhook", et.id));
+
+  const handleSave = () => {
+    const prefs: Array<{
+      channel: string;
+      event_type: string;
+      enabled: boolean;
+      config?: Record<string, unknown>;
+    }> = [];
+
+    for (const channel of CHANNELS) {
+      for (const eventType of EVENT_TYPES) {
+        const key = buildKey(channel.id, eventType.id);
+        const entry = localPrefs[key];
+        const config: Record<string, unknown> =
+          channel.id === "webhook" && webhookUrl
+            ? { url: webhookUrl }
+            : {};
+
+        prefs.push({
+          channel: channel.id,
+          event_type: eventType.id,
+          enabled: entry?.enabled ?? false,
+          config,
+        });
+      }
+    }
+
+    updatePreferences.mutate(
+      { preferences: prefs },
+      { onSuccess: () => setHasChanges(false) }
+    );
+  };
+
+  return (
+    <div className="max-w-4xl">
+      <h1 className="text-2xl font-bold text-white mb-2">Notifications</h1>
+      <p className="text-zinc-400 mb-8">
+        Choose which events trigger notifications and how they are delivered.
+      </p>
+
+      {/* Preference Toggles */}
+      <div className="border border-zinc-800 rounded-lg mb-8">
+        <div className="p-4 border-b border-zinc-800">
+          <h2 className="text-lg font-semibold text-white">Preferences</h2>
+        </div>
+
+        {prefsLoading ? (
+          <div className="p-8 text-center text-zinc-500">Loading...</div>
+        ) : (
+          <>
+            {/* Table Header */}
+            <div className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-800">
+              <span className="text-xs text-zinc-500 uppercase tracking-wide">Event</span>
+              {CHANNELS.map((ch) => (
+                <span key={ch.id} className="text-xs text-zinc-500 uppercase tracking-wide text-center">
+                  {ch.label}
+                </span>
+              ))}
+            </div>
+
+            {/* Rows */}
+            {EVENT_TYPES.map((et) => (
+              <div
+                key={et.id}
+                className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-800 last:border-b-0"
+              >
+                <span className="text-sm text-white">{et.label}</span>
+                {CHANNELS.map((ch) => (
+                  <div key={ch.id} className="flex justify-center">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isEnabled(ch.id, et.id)}
+                      onClick={() => togglePref(ch.id, et.id)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        isEnabled(ch.id, et.id) ? "bg-emerald-600" : "bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          isEnabled(ch.id, et.id) ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+
+            {/* Webhook URL */}
+            {hasWebhookEnabled && (
+              <div className="px-4 py-4 border-t border-zinc-800">
+                <label className="block text-sm text-zinc-400 mb-2">
+                  Webhook URL
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://example.com/webhook"
+                  value={webhookUrl}
+                  onChange={(e) => {
+                    setWebhookUrl(e.target.value);
+                    setHasChanges(true);
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                />
+              </div>
+            )}
+
+            {/* Save Button */}
+            <div className="px-4 py-4 border-t border-zinc-800 flex items-center gap-3">
+              <button
+                onClick={handleSave}
+                disabled={!hasChanges || updatePreferences.isPending}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-md text-sm font-medium transition"
+              >
+                {updatePreferences.isPending ? "Saving..." : "Save Preferences"}
+              </button>
+              {updatePreferences.isError && (
+                <p className="text-red-400 text-sm">{updatePreferences.error.message}</p>
+              )}
+              {updatePreferences.isSuccess && !hasChanges && (
+                <p className="text-emerald-400 text-sm">Saved.</p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Delivery History */}
+      <div className="border border-zinc-800 rounded-lg">
+        <div className="p-4 border-b border-zinc-800">
+          <h2 className="text-lg font-semibold text-white">Delivery History</h2>
+        </div>
+
+        {deliveriesLoading ? (
+          <div className="p-8 text-center text-zinc-500">Loading...</div>
+        ) : !deliveries?.data?.length ? (
+          <div className="p-8 text-center text-zinc-500">No deliveries yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800">
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Event
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Channel
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Attempts
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Time
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {deliveries.data.map((d: { id: string; event_type: string; channel: string; status: string; attempts: number; last_error: string | null; created_at: string; sent_at: string | null }) => (
+                  <tr key={d.id}>
+                    <td className="px-4 py-3 text-white whitespace-nowrap">
+                      {formatEventType(d.event_type)}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400 capitalize whitespace-nowrap">
+                      {d.channel}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <StatusBadge status={d.status} />
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">
+                      {d.attempts}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-500 whitespace-nowrap text-xs">
+                      {d.sent_at
+                        ? new Date(d.sent_at).toLocaleString()
+                        : new Date(d.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatEventType(eventType: string): string {
+  return eventType
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function StatusBadge({ status }: { status: string }) {
+  let classes = "text-xs px-2 py-0.5 rounded ";
+  switch (status) {
+    case "delivered":
+      classes += "bg-emerald-500/10 text-emerald-400";
+      break;
+    case "failed":
+      classes += "bg-red-500/10 text-red-400";
+      break;
+    case "pending":
+      classes += "bg-amber-500/10 text-amber-400";
+      break;
+    default:
+      classes += "bg-zinc-700 text-zinc-400";
+  }
+  return <span className={classes}>{status}</span>;
+}
