@@ -122,6 +122,64 @@ export interface Dataset {
   updated_at: string;
 }
 
+// ── Training job types ──
+
+export interface TrainingJob {
+  id: string;
+  project_id: string;
+  dataset_id: string;
+  base_model: string;
+  method: string;
+  mode: string;
+  hyperparams: Record<string, unknown>;
+  gpu_class: string | null;
+  status: string;
+  cost_estimate: number | null;
+  actual_cost: number | null;
+  metrics: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateTrainingJobInput {
+  dataset_id: string;
+  base_model: string;
+  method?: string;
+  mode?: string;
+  hyperparams?: Record<string, unknown>;
+  gpu_class?: string;
+}
+
+// ── Model types ──
+
+export interface Model {
+  id: string;
+  project_id: string;
+  training_job_id: string;
+  name: string;
+  base_model: string;
+  deployment_status: string;
+  eval_scores: Record<string, unknown>;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Training metrics ──
+
+export interface TrainingMetricsEntry {
+  step: number;
+  epoch: number;
+  loss: number;
+  learning_rate: number;
+  grad_norm: number;
+  phase: string;
+  timestamp: string;
+}
+
 // ── Pipeline types ──
 
 export interface TriggerParseResponse {
@@ -148,6 +206,18 @@ export interface ProjectPipelineStatus {
     generating: number;
     review_pending: number;
     approved: number;
+  };
+  training_jobs: {
+    total: number;
+    pending: number;
+    training: number;
+    completed: number;
+    failed: number;
+  };
+  models: {
+    total: number;
+    undeployed: number;
+    active: number;
   };
 }
 
@@ -266,5 +336,46 @@ export const api = {
         `/api/v1/datasets/${id}/preview?max_rows=${maxRows}`,
         { token }
       ),
+  },
+
+  trainingJobs: {
+    list: (token: string, projectId: string, offset = 0, limit = 20) =>
+      request<PaginatedResponse<TrainingJob>>(
+        `/api/v1/projects/${projectId}/training-jobs?offset=${offset}&limit=${limit}`,
+        { token }
+      ),
+
+    get: (token: string, id: string) =>
+      request<TrainingJob>(`/api/v1/training-jobs/${id}`, { token }),
+
+    create: (token: string, projectId: string, data: CreateTrainingJobInput) =>
+      request<TrainingJob>(`/api/v1/projects/${projectId}/training-jobs`, {
+        token,
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    cancel: (token: string, id: string) =>
+      request<TrainingJob>(`/api/v1/training-jobs/${id}/cancel`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+
+    getMetrics: (token: string, id: string) =>
+      request<Record<string, unknown>>(`/api/v1/training-jobs/${id}/metrics`, {
+        token,
+      }),
+  },
+
+  models: {
+    list: (token: string, projectId: string, offset = 0, limit = 20) =>
+      request<PaginatedResponse<Model>>(
+        `/api/v1/projects/${projectId}/models?offset=${offset}&limit=${limit}`,
+        { token }
+      ),
+
+    get: (token: string, id: string) =>
+      request<Model>(`/api/v1/models/${id}`, { token }),
   },
 };

@@ -44,6 +44,8 @@ envy = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 base64 = { workspace = true }
+async-stream = { workspace = true }
+tokio-stream = { workspace = true }
 
 # Internal crates
 platform-shared = { workspace = true }

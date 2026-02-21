@@ -28,6 +28,11 @@ class WorkerSettings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     llm_max_tokens: int = 2000
 
+    # Training / ML
+    hf_token: str = ""
+    model_cache_dir: str = "/tmp/model_cache"
+    worker_mode: str = "all"  # "all" | "main" | "gpu"
+
     # Logging
     log_level: str = "INFO"
 

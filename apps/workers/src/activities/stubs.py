@@ -1,6 +1,7 @@
-"""Stub activities for pipeline stages not yet implemented.
+"""Stub activities and shared dataclasses for pipeline stages.
 
-Training, evaluation, and deployment are Phase 2+.
+Training has a real implementation in train_model.py.
+Evaluation and deployment are Phase 3+.
 Parsing, data generation, and dataset building have real implementations
 in their own modules (parse_document.py, generate_pairs.py, etc.).
 """
@@ -45,7 +46,7 @@ async def get_document_info(document_id: str) -> DocumentInfo:
     )
 
 
-# ── Training (Phase 2) ──
+# ── Training (Phase 2 — real implementation in train_model.py) ──
 
 
 @dataclass
@@ -67,11 +68,8 @@ class StartTrainingOutput:
     metrics: dict
 
 
-@activity.defn
-async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
-    """Run the fine-tuning job. Phase 2 implementation."""
-    activity.logger.info("Stub: start_training for %s", input.training_job_id)
-    return StartTrainingOutput(adapter_path="", adapter_size_bytes=0, metrics={})
+# Re-export from real implementation
+from src.activities.train_model import start_training  # noqa: E402, F401, I001
 
 
 # ── Evaluation (Phase 3) ──

@@ -1,0 +1,243 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::sse::{Event, Sse};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use uuid::Uuid;
+
+use crate::app_state::AppState;
+use crate::auth::AuthenticatedUser;
+use crate::dto::common::{PaginatedResponse, PaginationParams};
+use crate::dto::model::ModelResponse;
+use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
+use crate::error::AppResult;
+use crate::services::model_service::ModelService;
+use crate::services::training_job_service::TrainingJobService;
+
+/// Training and model routes.
+pub fn router() -> Router<AppState> {
+    Router::new()
+        // Training jobs
+        .route(
+            "/projects/{project_id}/training-jobs",
+            post(create_training_job).get(list_training_jobs),
+        )
+        .route("/training-jobs/{id}", get(get_training_job))
+        .route("/training-jobs/{id}/cancel", post(cancel_training_job))
+        // Training metrics
+        .route(
+            "/training-jobs/{id}/metrics/stream",
+            get(stream_training_metrics),
+        )
+        .route("/training-jobs/{id}/metrics", get(get_training_metrics))
+        // Models
+        .route("/projects/{project_id}/models", get(list_models))
+        .route("/models/{id}", get(get_model))
+}
+
+/// POST /api/v1/projects/:project_id/training-jobs
+///
+/// Create a training job and auto-trigger the TrainWorkflow.
+async fn create_training_job(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    Json(body): Json<CreateTrainingJobRequest>,
+) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
+    let result = TrainingJobService::create(
+        state.db(),
+        state.temporal(),
+        user.tenant_id,
+        project_id,
+        body,
+    )
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+/// GET /api/v1/projects/:project_id/training-jobs
+async fn list_training_jobs(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<Json<PaginatedResponse<TrainingJobResponse>>> {
+    let result = TrainingJobService::list(
+        state.db(),
+        user.tenant_id,
+        project_id,
+        params.offset,
+        params.limit,
+    )
+    .await?;
+
+    Ok(Json(result))
+}
+
+/// GET /api/v1/training-jobs/:id
+async fn get_training_job(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<TrainingJobResponse>> {
+    let job = TrainingJobService::get(state.db(), user.tenant_id, id).await?;
+    Ok(Json(job))
+}
+
+/// POST /api/v1/training-jobs/:id/cancel
+async fn cancel_training_job(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<TrainingJobResponse>> {
+    let job = TrainingJobService::cancel(state.db(), user.tenant_id, id).await?;
+    Ok(Json(job))
+}
+
+/// GET /api/v1/training-jobs/:id/metrics/stream
+///
+/// SSE endpoint that streams real-time training metrics from Redis.
+async fn stream_training_metrics(
+    State(state): State<AppState>,
+    _user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    let mut redis = state.redis();
+    let stream_key = format!(
+        "{}{}",
+        platform_shared::constants::REDIS_TRAINING_METRICS_STREAM,
+        id
+    );
+
+    let stream = async_stream::stream! {
+        let mut last_id = "0-0".to_string();
+
+        loop {
+            // XREAD with 3s block timeout
+            let result: Result<redis::Value, redis::RedisError> = redis::cmd("XREAD")
+                .arg("COUNT")
+                .arg(10)
+                .arg("BLOCK")
+                .arg(3000)
+                .arg("STREAMS")
+                .arg(&stream_key)
+                .arg(&last_id)
+                .query_async(&mut redis)
+                .await;
+
+            match result {
+                Ok(redis::Value::Array(streams)) => {
+                    for stream_data in streams {
+                        if let redis::Value::Array(stream_entries) = stream_data {
+                            // stream_entries: [stream_name, [[id, [field, value, ...]], ...]]
+                            if let Some(redis::Value::Array(entries)) = stream_entries.get(1) {
+                                for entry in entries {
+                                    if let redis::Value::Array(entry_parts) = entry {
+                                        // entry_parts: [id, [field, value, ...]]
+                                        if let Some(redis::Value::BulkString(entry_id)) = entry_parts.first() {
+                                            last_id = String::from_utf8_lossy(entry_id).to_string();
+                                        }
+
+                                        if let Some(redis::Value::Array(fields)) = entry_parts.get(1) {
+                                            let data = redis_fields_to_json(fields);
+                                            let event = Event::default()
+                                                .data(data.to_string())
+                                                .event("metrics");
+                                            yield Ok(event);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(redis::Value::Nil) => {
+                    // No new data (block timeout), send heartbeat
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Redis XREAD error in metrics stream");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    yield Ok(Event::default().comment("reconnecting"));
+                }
+                _ => {
+                    // Nil or other response, send heartbeat
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
+/// GET /api/v1/training-jobs/:id/metrics
+///
+/// Get the latest training metrics snapshot from the job record.
+async fn get_training_metrics(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<serde_json::Value>> {
+    let job = TrainingJobService::get(state.db(), user.tenant_id, id).await?;
+    Ok(Json(job.metrics))
+}
+
+/// GET /api/v1/projects/:project_id/models
+async fn list_models(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<PaginationParams>,
+) -> AppResult<Json<PaginatedResponse<ModelResponse>>> {
+    let result = ModelService::list(
+        state.db(),
+        user.tenant_id,
+        project_id,
+        params.offset,
+        params.limit,
+    )
+    .await?;
+
+    Ok(Json(result))
+}
+
+/// GET /api/v1/models/:id
+async fn get_model(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<ModelResponse>> {
+    let model = ModelService::get(state.db(), user.tenant_id, id).await?;
+    Ok(Json(model))
+}
+
+/// Convert Redis stream field/value pairs to a JSON object.
+fn redis_fields_to_json(fields: &[redis::Value]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    let mut iter = fields.iter();
+
+    while let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+        if let (redis::Value::BulkString(k), redis::Value::BulkString(v)) = (key, value) {
+            let key_str = String::from_utf8_lossy(k).to_string();
+            let val_str = String::from_utf8_lossy(v).to_string();
+
+            // Try to parse as number, fall back to string
+            if let Ok(n) = val_str.parse::<f64>() {
+                map.insert(key_str, serde_json::Value::from(n));
+            } else {
+                map.insert(key_str, serde_json::Value::from(val_str));
+            }
+        }
+    }
+
+    serde_json::Value::Object(map)
+}

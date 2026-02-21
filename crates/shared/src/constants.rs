@@ -41,6 +41,21 @@ pub const API_KEY_PREFIX: &str = "pl_sk_";
 /// Default rate limit per API key (requests per minute).
 pub const DEFAULT_RATE_LIMIT_RPM: u32 = 60;
 
+/// GPU hourly rates (USD) for training cost estimation.
+/// These are approximate market rates as of early 2026.
+/// Order matches `GpuClass` enum variants.
+pub const GPU_HOURLY_RATES: &[(&str, f64)] = &[
+    ("t4", 0.80),
+    ("a10g", 1.20),
+    ("l40s", 1.80),
+    ("a10040gb", 2.00),
+    ("a10080gb", 3.00),
+    ("h100", 4.50),
+];
+
+/// Default GPU hourly rate when class is unknown.
+pub const GPU_DEFAULT_HOURLY_RATE: f64 = 0.80;
+
 #[cfg(test)]
 mod tests {
     use super::*;

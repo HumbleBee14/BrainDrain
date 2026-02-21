@@ -1748,9 +1748,13 @@ dependencies = [
 
 [package.optional-dependencies]
 ml = [
+    { name = "accelerate" },
+    { name = "bitsandbytes" },
     { name = "datasets" },
     { name = "distilabel" },
+    { name = "peft" },
     { name = "transformers" },
+    { name = "trl" },
     { name = "unsloth" },
 ]
 
@@ -1761,22 +1765,26 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'ml'", specifier = ">=1.2.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "bitsandbytes", marker = "extra == 'ml'", specifier = ">=0.45.0" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "datasets", marker = "extra == 'ml'", specifier = ">=3.2.0" },
     { name = "distilabel", marker = "extra == 'ml'", specifier = ">=1.5.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langdetect", specifier = ">=1.0.9" },
     { name = "markdown", specifier = ">=3.6" },
+    { name = "peft", marker = "extra == 'ml'", specifier = ">=0.14.0" },
     { name = "pydantic", specifier = ">=2.10.0" },
     { name = "pydantic-settings", specifier = ">=2.7.0" },
     { name = "pymupdf", specifier = ">=1.24.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "redis", specifier = ">=5.0.0" },
     { name = "temporalio", specifier = ">=1.9.0" },
-    { name = "transformers", marker = "extra == 'ml'", specifier = ">=4.48.0" },
-    { name = "unsloth", marker = "extra == 'ml'", specifier = ">=2025.3" },
+    { name = "transformers", marker = "extra == 'ml'", specifier = ">=4.51.0,<5.0.0" },
+    { name = "trl", marker = "extra == 'ml'", specifier = ">=0.16.0" },
+    { name = "unsloth", marker = "extra == 'ml'", specifier = ">=2025.12" },
 ]
 provides-extras = ["ml"]
 

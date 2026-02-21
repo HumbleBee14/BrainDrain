@@ -47,6 +47,7 @@ class TrainWorkflow:
                 hyperparams=hyperparams,
                 gpu_class=gpu_class,
             ),
+            task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timedelta(hours=6),
             heartbeat_timeout=timedelta(minutes=5),
             retry_policy=workflow.RetryPolicy(maximum_attempts=1),

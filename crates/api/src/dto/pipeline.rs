@@ -22,12 +22,22 @@ pub struct TriggerRefineResponse {
     pub document_count: usize,
 }
 
+/// Response from triggering training.
+#[allow(dead_code)]
+#[derive(Debug, Serialize)]
+pub struct TriggerTrainResponse {
+    pub workflow_id: String,
+    pub training_job_id: String,
+}
+
 /// Aggregate pipeline status for a project.
 #[derive(Debug, Serialize)]
 pub struct ProjectPipelineStatus {
     pub project_id: String,
     pub documents: DocumentStatusCounts,
     pub datasets: DatasetStatusCounts,
+    pub training_jobs: TrainingJobStatusCounts,
+    pub models: ModelStatusCounts,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,4 +55,20 @@ pub struct DatasetStatusCounts {
     pub generating: i64,
     pub review_pending: i64,
     pub approved: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrainingJobStatusCounts {
+    pub total: i64,
+    pub pending: i64,
+    pub training: i64,
+    pub completed: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ModelStatusCounts {
+    pub total: i64,
+    pub undeployed: i64,
+    pub active: i64,
 }
