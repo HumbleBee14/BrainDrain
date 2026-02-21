@@ -2,12 +2,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::dto::pipeline::{
-    DatasetStatusCounts, DocumentStatusCounts, ModelStatusCounts, ProjectPipelineStatus,
-    TrainingJobStatusCounts, TriggerParseResponse, TriggerRefineResponse,
+    DatasetStatusCounts, DocumentStatusCounts, EvaluationStatusCounts, ModelStatusCounts,
+    ProjectPipelineStatus, TrainingJobStatusCounts, TriggerParseResponse, TriggerRefineResponse,
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::dataset_repo::DatasetRepo;
 use crate::repositories::document_repo::DocumentRepo;
+use crate::repositories::evaluation_repo::EvaluationRepo;
 use crate::repositories::model_repo::ModelRepo;
 use crate::repositories::training_job_repo::TrainingJobRepo;
 use crate::temporal::TemporalClient;
@@ -133,6 +134,10 @@ impl PipelineService {
             total_models,
             models_undeployed,
             models_active,
+            total_evals,
+            evals_running,
+            evals_completed,
+            evals_failed,
         ) = tokio::try_join!(
             DocumentRepo::count_by_project(db, tenant_id, project_id),
             DocumentRepo::count_by_status(db, tenant_id, project_id, "uploaded"),
@@ -151,6 +156,10 @@ impl PipelineService {
             ModelRepo::count_by_project(db, tenant_id, project_id),
             ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "undeployed"),
             ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "active"),
+            EvaluationRepo::count_by_project(db, tenant_id, project_id),
+            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "running"),
+            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "completed"),
+            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "failed"),
         )?;
 
         Ok(ProjectPipelineStatus {
@@ -179,6 +188,12 @@ impl PipelineService {
                 total: total_models,
                 undeployed: models_undeployed,
                 active: models_active,
+            },
+            evaluations: EvaluationStatusCounts {
+                total: total_evals,
+                running: evals_running,
+                completed: evals_completed,
+                failed: evals_failed,
             },
         })
     }

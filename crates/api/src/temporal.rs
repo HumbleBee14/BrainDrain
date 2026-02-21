@@ -143,6 +143,42 @@ impl TemporalClient {
         .await
     }
 
+    /// Start the EvaluateWorkflow to evaluate a fine-tuned model.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_evaluate(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        evaluation_id: Uuid,
+        adapter_path: &str,
+        base_model: &str,
+        dataset_path: &str,
+        judge_model: Option<&str>,
+        judge_api_base: Option<&str>,
+    ) -> Result<StartWorkflowResponse, TemporalError> {
+        let workflow_id = format!(
+            "evaluate-{evaluation_id}-{}",
+            chrono::Utc::now().timestamp()
+        );
+
+        self.start_workflow_on_queue(
+            "EvaluateWorkflow",
+            &workflow_id,
+            serde_json::json!([
+                tenant_id.to_string(),
+                model_id.to_string(),
+                evaluation_id.to_string(),
+                adapter_path,
+                base_model,
+                dataset_path,
+                judge_model.unwrap_or(""),
+                judge_api_base.unwrap_or(""),
+            ]),
+            Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+        )
+        .await
+    }
+
     /// Start a Temporal workflow via the HTTP API on the default task queue.
     async fn start_workflow(
         &self,

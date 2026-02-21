@@ -219,10 +219,104 @@ export interface ProjectPipelineStatus {
     undeployed: number;
     active: number;
   };
+  evaluations: {
+    total: number;
+    running: number;
+    completed: number;
+    failed: number;
+  };
 }
 
 export interface ParsedContentResponse {
   url: string;
+}
+
+// ── Evaluation types ──
+
+export interface Evaluation {
+  id: string;
+  model_id: string;
+  status: string;
+  scores: EvaluationScores | null;
+  report: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvaluationScores {
+  domain: {
+    accuracy: number;
+    completeness: number;
+    faithfulness: number;
+    mean: number;
+  };
+  general: {
+    base_score: number;
+    finetuned_score: number;
+    delta_pct: number;
+    forgetting_alert: boolean;
+    categories: Record<string, { base: number; finetuned: number }>;
+  };
+  ab_comparison: {
+    win_rate: number;
+    confidence_low: number;
+    confidence_high: number;
+    total_comparisons: number;
+  };
+  safety: {
+    refusal_rate: number;
+    base_refusal_rate: number;
+    degraded: boolean;
+    categories: Record<string, { refusal_rate: number }>;
+  };
+  overall: number;
+}
+
+export interface CreateEvaluationInput {
+  judge_model?: string;
+  judge_api_base?: string;
+}
+
+// ── API Key types ──
+
+export interface ApiKeyResponse {
+  id: string;
+  model_id: string;
+  name: string;
+  key_prefix: string;
+  rate_limit: number;
+  is_active: boolean;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface CreateApiKeyResponse {
+  id: string;
+  name: string;
+  key: string;
+  key_prefix: string;
+  rate_limit: number;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface CreateApiKeyInput {
+  name: string;
+  rate_limit?: number;
+  expires_in_days?: number;
+}
+
+// ── Deployment types ──
+
+export interface DeploymentStatus {
+  model_id: string;
+  deployment_status: string;
+  deployment_config: Record<string, unknown>;
+  base_model: string;
+  adapter_path: string | null;
 }
 
 // ── API methods ──
@@ -377,5 +471,67 @@ export const api = {
 
     get: (token: string, id: string) =>
       request<Model>(`/api/v1/models/${id}`, { token }),
+  },
+
+  evaluations: {
+    list: (token: string, modelId: string, offset = 0, limit = 20) =>
+      request<PaginatedResponse<Evaluation>>(
+        `/api/v1/models/${modelId}/evaluations?offset=${offset}&limit=${limit}`,
+        { token }
+      ),
+
+    get: (token: string, id: string) =>
+      request<Evaluation>(`/api/v1/evaluations/${id}`, { token }),
+
+    create: (token: string, modelId: string, data: CreateEvaluationInput) =>
+      request<Evaluation>(`/api/v1/models/${modelId}/evaluations`, {
+        token,
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+  },
+
+  apiKeys: {
+    list: (token: string, modelId: string) =>
+      request<ApiKeyResponse[]>(
+        `/api/v1/models/${modelId}/api-keys`,
+        { token }
+      ),
+
+    create: (token: string, modelId: string, data: CreateApiKeyInput) =>
+      request<CreateApiKeyResponse>(`/api/v1/models/${modelId}/api-keys`, {
+        token,
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    revoke: (token: string, id: string) =>
+      request<ApiKeyResponse>(`/api/v1/api-keys/${id}/revoke`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+  },
+
+  deployments: {
+    deploy: (token: string, modelId: string) =>
+      request<Model>(`/api/v1/models/${modelId}/deploy`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+
+    undeploy: (token: string, modelId: string) =>
+      request<Model>(`/api/v1/models/${modelId}/undeploy`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+
+    status: (token: string, modelId: string) =>
+      request<DeploymentStatus>(
+        `/api/v1/models/${modelId}/deployment`,
+        { token }
+      ),
   },
 };

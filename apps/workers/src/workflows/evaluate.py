@@ -32,6 +32,8 @@ class EvaluateWorkflow:
         adapter_path: str,
         base_model: str,
         dataset_path: str,
+        judge_model: str = "",
+        judge_api_base: str = "",
     ) -> RunEvaluationOutput:
         result = await workflow.execute_activity(
             run_evaluation,
@@ -42,8 +44,11 @@ class EvaluateWorkflow:
                 adapter_path=adapter_path,
                 base_model=base_model,
                 dataset_path=dataset_path,
+                judge_model=judge_model,
+                judge_api_base=judge_api_base,
             ),
             start_to_close_timeout=timedelta(hours=1),
+            heartbeat_timeout=timedelta(minutes=10),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
         )
 

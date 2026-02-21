@@ -58,6 +58,10 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 envy = "0.4"
 
+# Crypto
+sha2 = "0.10"
+rand = "0.8"
+
 # Utilities
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"

@@ -1,5 +1,6 @@
 mod app_state;
 mod auth;
+mod auth_api_key;
 mod config;
 mod dto;
 mod error;

@@ -16,12 +16,16 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from temporalio import activity
 
 from src import clients
 from src.activities.stubs import StartTrainingInput, StartTrainingOutput
 
 logger = logging.getLogger("platform.training")
+
+# LLM judge client — reused across DPO pair scoring and GRPO reward calls.
+_llm_client: httpx.Client | None = None
 
 
 @activity.defn
@@ -137,23 +141,50 @@ async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
             use_gradient_checkpointing="unsloth",
         )
 
+        tenant_id = input.tenant_id
+
         # Route to training mode
         if input.mode == "quick":
-            metrics = _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length)
+            metrics = _train_sft(
+                model, tokenizer, dataset, hp, job_id, max_seq_length, tenant_id=tenant_id
+            )
         elif input.mode == "aligned":
             metrics_sft = _train_sft(
-                model, tokenizer, dataset, hp, job_id, max_seq_length, phase="sft"
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                phase="sft",
+                tenant_id=tenant_id,
             )
             metrics_dpo = _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
             metrics = {**metrics_sft, "dpo": metrics_dpo}
         elif input.mode == "reasoning":
             metrics_sft = _train_sft(
-                model, tokenizer, dataset, hp, job_id, max_seq_length, phase="sft"
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                phase="sft",
+                tenant_id=tenant_id,
             )
             metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
             metrics = {**metrics_sft, "grpo": metrics_grpo}
         elif input.mode == "iterative":
-            metrics = _train_iterative(model, tokenizer, dataset, hp, job_id, max_seq_length)
+            metrics = _train_iterative(
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                tenant_id=tenant_id,
+                dataset_path=input.dataset_path,
+            )
         else:
             raise ValueError(f"Unknown training mode: {input.mode}")
 
@@ -173,13 +204,21 @@ async def _run_training(input: StartTrainingInput) -> StartTrainingOutput:
         )
 
 
-def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None):
+def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None, tenant_id=None):
     """Run SFT (Supervised Fine-Tuning) training."""
     from trl import SFTConfig, SFTTrainer
 
     phase_prefix = f"{phase}_" if phase else ""
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase=phase or "sft")
+
+    # Enable periodic checkpointing when tenant_id is available
+    save_steps = hp.get("save_steps", 100)
+    enable_checkpoints = tenant_id is not None
+    callbacks = [callback]
+    if enable_checkpoints:
+        CkptClass = _build_checkpoint_callback_class(tenant_id, job_id)
+        callbacks.append(CkptClass())
 
     training_args = SFTConfig(
         output_dir=f"/tmp/sft-{job_id[:8]}",
@@ -192,7 +231,9 @@ def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None
         lr_scheduler_type=hp.get("lr_scheduler_type", "cosine"),
         max_seq_length=max_seq_length,
         logging_steps=1,
-        save_strategy="no",
+        save_strategy="steps" if enable_checkpoints else "no",
+        save_steps=save_steps,
+        save_total_limit=3,
         fp16=not _is_bf16_supported(),
         bf16=_is_bf16_supported(),
         seed=42,
@@ -204,7 +245,7 @@ def _train_sft(model, tokenizer, dataset, hp, job_id, max_seq_length, phase=None
         processing_class=tokenizer,
         train_dataset=dataset,
         args=training_args,
-        callbacks=[callback],
+        callbacks=callbacks,
     )
 
     train_result = trainer.train()
@@ -314,22 +355,57 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
     }
 
 
-def _train_iterative(model, tokenizer, dataset, hp, job_id, max_seq_length):
-    """Run multiple SFT rounds with evaluation between each."""
+def _train_iterative(
+    model,
+    tokenizer,
+    dataset,
+    hp,
+    job_id,
+    max_seq_length,
+    tenant_id=None,
+    dataset_path=None,
+):
+    """Run multiple SFT rounds with hold-out validation between each.
+
+    Downloads the validation split (_val.jsonl) from S3 and runs
+    trainer.evaluate() between iterations for real eval_loss.
+    """
     num_iterations = hp.get("num_iterations", 3)
     all_metrics = {}
+
+    # Load validation split for real evaluation between iterations
+    val_dataset = None
+    if dataset_path:
+        try:
+            val_s3_path = dataset_path.replace(".jsonl", "_val.jsonl")
+            val_local = Path(tempfile.mktemp(suffix="_val.jsonl"))
+            _download_dataset(val_s3_path, val_local)
+            val_dataset = _load_chatml_dataset(val_local)
+            logger.info("Loaded validation set: %d examples", len(val_dataset))
+            val_local.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning("No validation split found (%s), using train loss as proxy", e)
 
     for iteration in range(num_iterations):
         phase = f"iter_{iteration}"
         logger.info("Starting iteration %d/%d for job %s", iteration + 1, num_iterations, job_id)
 
         iteration_metrics = _train_sft(
-            model, tokenizer, dataset, hp, job_id, max_seq_length, phase=phase
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            phase=phase,
+            tenant_id=tenant_id,
         )
         all_metrics[phase] = iteration_metrics
 
-        # Quick eval: compute average loss on a sample
+        # Run hold-out validation if available
         eval_loss = iteration_metrics.get(f"{phase}_train_loss", 0)
+        if val_dataset is not None:
+            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
         all_metrics[f"{phase}_eval_loss"] = eval_loss
 
         # Stream iteration completion
@@ -345,6 +421,30 @@ def _train_iterative(model, tokenizer, dataset, hp, job_id, max_seq_length):
 
     all_metrics["total_iterations"] = num_iterations
     return all_metrics
+
+
+def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> float:
+    """Run evaluation on a hold-out validation set and return eval_loss."""
+    from trl import SFTConfig, SFTTrainer
+
+    eval_args = SFTConfig(
+        output_dir="/tmp/eval-holdout",
+        per_device_eval_batch_size=hp.get("per_device_train_batch_size", 2),
+        max_seq_length=max_seq_length,
+        fp16=not _is_bf16_supported(),
+        bf16=_is_bf16_supported(),
+        report_to="none",
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=tokenizer,
+        eval_dataset=val_dataset,
+        args=eval_args,
+    )
+
+    eval_result = trainer.evaluate()
+    return eval_result.get("eval_loss", 0.0)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -364,6 +464,66 @@ def _get_sync_redis():
         settings = clients.get_settings()
         _sync_redis_client = sync_redis.from_url(settings.redis_url)
     return _sync_redis_client
+
+
+def _get_llm_client() -> httpx.Client:
+    """Get or create the module-level synchronous LLM API client."""
+    global _llm_client  # noqa: PLW0603
+    if _llm_client is None:
+        settings = clients.get_settings()
+        _llm_client = httpx.Client(
+            base_url=settings.llm_api_base_url,
+            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+            timeout=60.0,
+        )
+    return _llm_client
+
+
+def _call_llm_judge(prompt: str, max_tokens: int = 500) -> str:
+    """Call the configured LLM judge and return the response text.
+
+    Returns empty string on any failure (network, rate limit, etc.)
+    so callers can fall back to heuristic scoring.
+    """
+    settings = clients.get_settings()
+    try:
+        resp = _get_llm_client().post(
+            "/chat/completions",
+            json={
+                "model": settings.llm_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.0,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        logger.warning("LLM judge call failed: %s", e)
+        return ""
+
+
+def _get_gpu_metrics() -> dict:
+    """Collect current GPU metrics using pynvml. Returns empty dict on failure."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+
+        return {
+            "gpu_utilization": str(util.gpu),
+            "gpu_memory_used_mb": str(mem.used // (1024 * 1024)),
+            "gpu_memory_total_mb": str(mem.total // (1024 * 1024)),
+            "gpu_memory_pct": str(round(mem.used / mem.total * 100, 1)),
+            "gpu_temperature_c": str(temp),
+        }
+    except Exception:
+        return {}
 
 
 def _build_callback_class():
@@ -404,6 +564,11 @@ def _build_callback_class():
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 
+            # Merge GPU utilization metrics
+            gpu = _get_gpu_metrics()
+            if gpu:
+                metrics.update(gpu)
+
             try:
                 stream_key = f"training:metrics:{self.job_id}"
                 _get_sync_redis().xadd(stream_key, metrics, maxlen=10000)
@@ -438,6 +603,42 @@ def _build_callback_class():
             )
 
     return MetricsStreamingCallback
+
+
+def _build_checkpoint_callback_class(tenant_id: str, job_id: str):
+    """Build a TrainerCallback that uploads checkpoints to S3 on save.
+
+    Like MetricsStreamingCallback, this is a factory because transformers
+    may not be installed at module-import time.
+    """
+    try:
+        from transformers import TrainerCallback
+
+        _base = TrainerCallback
+    except ImportError:
+        _base = object
+
+    class CheckpointUploadCallback(_base):
+        def __init__(self):
+            if _base is not object:
+                super().__init__()
+            self.tenant_id = tenant_id
+            self.job_id = job_id
+
+        def on_save(self, args, state, control, **kwargs):
+            """Upload the latest checkpoint directory to S3."""
+            try:
+                ckpt_dir = Path(args.output_dir) / f"checkpoint-{state.global_step}"
+                if ckpt_dir.is_dir():
+                    s3_prefix = (
+                        f"checkpoints/{self.tenant_id}/{self.job_id}/step-{state.global_step}/"
+                    )
+                    _upload_adapter(ckpt_dir, s3_prefix)
+                    logger.info("Uploaded checkpoint step %d to %s", state.global_step, s3_prefix)
+            except Exception as e:
+                logger.warning("Failed to upload checkpoint: %s", e)
+
+    return CheckpointUploadCallback
 
 
 def _stream_metric(job_id: str, data: dict):
@@ -490,26 +691,51 @@ def _format_chatml(messages: list[dict]) -> str:
 
 
 def _create_dpo_pairs(dataset, tokenizer):
-    """Create DPO preference pairs from an SFT dataset.
+    """Create DPO preference pairs from an SFT dataset using LLM-as-Judge.
 
-    Uses the original as "chosen" and a degraded version as "rejected".
+    For each sample, the original response is scored by the LLM judge.
+    A degraded version is also generated and scored. The higher-scoring
+    response becomes "chosen" and the lower becomes "rejected".
+
+    Falls back to truncation heuristic if the LLM judge is unavailable.
     """
     from datasets import Dataset
 
-    chosen_texts = dataset["text"]
-    # Create rejected by truncating responses (simple heuristic)
+    chosen_texts = []
     rejected_texts = []
-    for text in chosen_texts:
-        # Find the last assistant response and truncate it
+
+    for text in dataset["text"]:
         parts = text.split("<|im_start|>assistant\n")
-        if len(parts) > 1:
-            # Take only first 30% of the response
-            response = parts[-1].split("<|im_end|>")[0]
-            truncated = response[: max(10, len(response) // 3)] + "<|im_end|>"
-            prefix = "<|im_start|>assistant\n".join(parts[:-1])
-            rejected = prefix + "<|im_start|>assistant\n" + truncated
-            rejected_texts.append(rejected)
+        if len(parts) <= 1:
+            # No assistant response found — skip
+            continue
+
+        # Extract the prompt and response
+        prompt_part = "<|im_start|>assistant\n".join(parts[:-1])
+        original_response = parts[-1].split("<|im_end|>")[0]
+
+        # Create a degraded version (truncated + simplified)
+        truncated = original_response[: max(10, len(original_response) // 3)]
+
+        # Ask LLM judge to score both responses
+        original_score = _score_response(prompt_part, original_response)
+        degraded_score = _score_response(prompt_part, truncated)
+
+        original_full = prompt_part + "<|im_start|>assistant\n" + original_response + "<|im_end|>"
+        degraded_full = prompt_part + "<|im_start|>assistant\n" + truncated + "<|im_end|>"
+
+        # Higher score = chosen, lower = rejected
+        if original_score >= degraded_score:
+            chosen_texts.append(original_full)
+            rejected_texts.append(degraded_full)
         else:
+            chosen_texts.append(degraded_full)
+            rejected_texts.append(original_full)
+
+    if not chosen_texts:
+        # Fallback: use full dataset text as chosen, first half as rejected
+        for text in dataset["text"]:
+            chosen_texts.append(text)
             rejected_texts.append(text[: len(text) // 2])
 
     return Dataset.from_dict(
@@ -518,6 +744,33 @@ def _create_dpo_pairs(dataset, tokenizer):
             "rejected": rejected_texts,
         }
     )
+
+
+def _score_response(prompt: str, response: str) -> float:
+    """Score a response using the LLM judge. Returns 0-10 score.
+
+    Falls back to a length-based heuristic on failure.
+    """
+    judge_prompt = (
+        "Rate the quality of the following AI assistant response on a scale of 1-10.\n"
+        "Consider: accuracy, completeness, helpfulness, and clarity.\n"
+        "Respond with ONLY a single number between 1 and 10.\n\n"
+        f"Context/Prompt:\n{prompt[:500]}\n\n"
+        f"Response:\n{response[:1000]}\n\n"
+        "Score (1-10):"
+    )
+
+    result = _call_llm_judge(judge_prompt, max_tokens=5)
+    if result:
+        try:
+            score = float(result.strip().split()[0])
+            return max(1.0, min(10.0, score))
+        except (ValueError, IndexError):
+            pass
+
+    # Heuristic fallback: longer, more structured responses score higher
+    score = min(10.0, len(response) / 100 + 3)
+    return score
 
 
 def _create_grpo_prompts(dataset, tokenizer):
@@ -537,25 +790,58 @@ def _create_grpo_prompts(dataset, tokenizer):
 
 
 def _reasoning_reward(completions: list[str], **kwargs) -> list[float]:
-    """Simple reward function for GRPO based on response quality heuristics."""
+    """Reward function for GRPO using LLM-as-Judge with heuristic fallback.
+
+    Calls the configured LLM to score reasoning quality of each completion.
+    Falls back to keyword-based heuristic if the LLM judge is unavailable.
+    """
     rewards = []
     for completion in completions:
-        score = 0.0
-        # Reward longer, more detailed responses
-        if len(completion) > 50:
-            score += 0.3
-        if len(completion) > 200:
-            score += 0.2
-        # Reward structured reasoning markers
-        reasoning_markers = ["because", "therefore", "however", "first", "then", "finally"]
-        for marker in reasoning_markers:
-            if marker.lower() in completion.lower():
-                score += 0.1
-        # Penalize very short or empty responses
-        if len(completion.strip()) < 10:
-            score -= 0.5
-        rewards.append(min(1.0, max(-1.0, score)))
+        score = _llm_reward_score(completion)
+        rewards.append(score)
     return rewards
+
+
+def _llm_reward_score(completion: str) -> float:
+    """Score a single completion using LLM judge, normalized to [-1, 1].
+
+    Falls back to heuristic on any failure.
+    """
+    judge_prompt = (
+        "Rate the reasoning quality of the following AI response on a scale of 1-10.\n"
+        "Consider: logical structure, step-by-step reasoning, correctness, and clarity.\n"
+        "Respond with ONLY a single number between 1 and 10.\n\n"
+        f"Response:\n{completion[:1500]}\n\n"
+        "Score (1-10):"
+    )
+
+    result = _call_llm_judge(judge_prompt, max_tokens=5)
+    if result:
+        try:
+            raw_score = float(result.strip().split()[0])
+            # Normalize from 1-10 to -1..1 range (5.5 is neutral)
+            return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
+        except (ValueError, IndexError):
+            pass
+
+    # Heuristic fallback
+    return _heuristic_reasoning_score(completion)
+
+
+def _heuristic_reasoning_score(completion: str) -> float:
+    """Keyword-based heuristic reward for reasoning quality."""
+    score = 0.0
+    if len(completion) > 50:
+        score += 0.3
+    if len(completion) > 200:
+        score += 0.2
+    reasoning_markers = ["because", "therefore", "however", "first", "then", "finally"]
+    for marker in reasoning_markers:
+        if marker.lower() in completion.lower():
+            score += 0.1
+    if len(completion.strip()) < 10:
+        score -= 0.5
+    return min(1.0, max(-1.0, score))
 
 
 def _upload_adapter(adapter_dir: Path, s3_prefix: str) -> int:

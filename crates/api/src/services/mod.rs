@@ -1,5 +1,8 @@
+pub mod api_key_service;
 pub mod dataset_service;
+pub mod deployment_service;
 pub mod document_service;
+pub mod evaluation_service;
 pub mod model_service;
 pub mod pipeline_service;
 pub mod project_service;

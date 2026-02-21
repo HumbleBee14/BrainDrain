@@ -560,9 +560,10 @@ export default function ProjectDetailPage() {
           </h2>
           <div className="rounded-lg border border-zinc-800">
             {models.map((model) => (
-              <div
+              <Link
                 key={model.id}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0"
+                href={`/projects/${params.id}/models/${model.id}`}
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 hover:bg-zinc-900/50 transition"
               >
                 <div>
                   <p className="text-sm text-white">{model.name}</p>
@@ -571,7 +572,7 @@ export default function ProjectDetailPage() {
                   </p>
                 </div>
                 <DocStatusBadge status={model.deployment_status} />
-              </div>
+              </Link>
             ))}
           </div>
         </div>
