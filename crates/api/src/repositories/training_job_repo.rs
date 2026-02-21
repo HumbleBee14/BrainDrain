@@ -1,4 +1,5 @@
 use platform_db::models::TrainingJob;
+use platform_shared::enums::TrainingJobStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -112,14 +113,14 @@ impl TrainingJobRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: TrainingJobStatus,
     ) -> Result<i64, AppError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_one(db)
         .await?;
 

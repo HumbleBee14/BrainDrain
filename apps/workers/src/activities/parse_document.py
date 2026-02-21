@@ -19,6 +19,7 @@ from markdown import markdown
 from temporalio import activity
 
 from src import clients, s3_paths
+from src.constants import DocumentStatus
 
 logger = logging.getLogger("platform.parse")
 
@@ -319,7 +320,7 @@ async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
 
     # Idempotency: skip if already parsed
     status = await db.fetchval("SELECT status FROM documents WHERE id = $1", input.document_id)
-    if status == "parsed":
+    if status == DocumentStatus.PARSED:
         parsed_key = s3_paths.parsed_path(input.tenant_id, input.project_id, input.document_id)
         activity.logger.info("Document %s already parsed, skipping", input.document_id)
         return ParseDocumentOutput(
@@ -328,7 +329,8 @@ async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
 
     # Update status to parsing
     await db.execute(
-        "UPDATE documents SET status = 'parsing', updated_at = now() WHERE id = $1",
+        f"UPDATE documents SET status = '{DocumentStatus.PARSING}',"
+        " updated_at = now() WHERE id = $1",
         input.document_id,
     )
 
@@ -373,7 +375,7 @@ async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
 
         # Update DB
         await db.execute(
-            "UPDATE documents SET status = 'parsed', parse_quality = $2, "
+            f"UPDATE documents SET status = '{DocumentStatus.PARSED}', parse_quality = $2, "
             "page_count = $3, language = $4, updated_at = now() WHERE id = $1",
             input.document_id,
             parse_quality,
@@ -399,7 +401,7 @@ async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
     except Exception as e:
         # Mark as failed in DB
         await db.execute(
-            "UPDATE documents SET status = 'failed', error_message = $2, "
+            f"UPDATE documents SET status = '{DocumentStatus.FAILED}', error_message = $2, "
             "updated_at = now() WHERE id = $1",
             input.document_id,
             str(e)[:500],

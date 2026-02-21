@@ -7,6 +7,7 @@ import { useDocuments, useUploadDocuments } from "@/hooks/use-documents";
 import { usePipelineStatus, useTriggerParse, useTriggerRefine } from "@/hooks/use-pipeline";
 import { useDatasets } from "@/hooks/use-datasets";
 import { useTrainingJobs, useCreateTrainingJob, useCancelTrainingJob } from "@/hooks/use-training";
+import type { CreateTrainingJobInput } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
 import { useCallback, useRef, useState } from "react";
 import {
@@ -40,7 +41,7 @@ export default function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showTrainForm, setShowTrainForm] = useState(false);
-  const [trainForm, setTrainForm] = useState({
+  const [trainForm, setTrainForm] = useState<CreateTrainingJobInput>({
     dataset_id: "",
     base_model: "unsloth/Llama-3.2-1B-Instruct",
     method: "qlora",
@@ -355,7 +356,7 @@ export default function ProjectDetailPage() {
                 <label className="block text-xs text-zinc-500 mb-1">Method</label>
                 <select
                   value={trainForm.method}
-                  onChange={(e) => setTrainForm({ ...trainForm, method: e.target.value })}
+                  onChange={(e) => setTrainForm({ ...trainForm, method: e.target.value as CreateTrainingJobInput["method"] })}
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="qlora">QLoRA (4-bit, fastest)</option>
@@ -367,7 +368,7 @@ export default function ProjectDetailPage() {
                 <label className="block text-xs text-zinc-500 mb-1">Mode</label>
                 <select
                   value={trainForm.mode}
-                  onChange={(e) => setTrainForm({ ...trainForm, mode: e.target.value })}
+                  onChange={(e) => setTrainForm({ ...trainForm, mode: e.target.value as CreateTrainingJobInput["mode"] })}
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="quick">Quick (SFT only)</option>

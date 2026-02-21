@@ -1,4 +1,5 @@
 use platform_db::models::Evaluation;
+use platform_shared::enums::EvaluationStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -117,7 +118,7 @@ impl EvaluationRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: EvaluationStatus,
     ) -> Result<i64, AppError> {
         let count = sqlx::query_scalar::<_, i64>(
             r#"
@@ -128,7 +129,7 @@ impl EvaluationRepo {
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_one(db)
         .await?;
 

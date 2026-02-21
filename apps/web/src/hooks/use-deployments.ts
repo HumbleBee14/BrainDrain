@@ -2,12 +2,12 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type Model, type DeploymentStatus } from "@/lib/api-client";
+import { api, type Model, type DeploymentStatusResponse } from "@/lib/api-client";
 
 export function useDeploymentStatus(modelId: string, enabled = true) {
   const { getToken } = useAuth();
 
-  return useQuery<DeploymentStatus>({
+  return useQuery<DeploymentStatusResponse>({
     queryKey: ["deployment-status", modelId],
     queryFn: async () => {
       const token = await getToken();

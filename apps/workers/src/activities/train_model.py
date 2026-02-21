@@ -26,6 +26,7 @@ from src.activities.training_engine import (
     get_strategy,
     register_strategy,
 )
+from src.constants import TrainingJobStatus
 
 logger = logging.getLogger("platform.training")
 
@@ -38,15 +39,16 @@ async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
 
     try:
         await db.execute(
-            "UPDATE training_jobs SET status = 'training', started_at = NOW() WHERE id = $1",
+            f"UPDATE training_jobs SET status = '{TrainingJobStatus.TRAINING}',"
+            " started_at = NOW() WHERE id = $1",
             job_id,
         )
 
         result = await _run_training(input)
 
         await db.execute(
-            """UPDATE training_jobs
-            SET status = 'completed',
+            f"""UPDATE training_jobs
+            SET status = '{TrainingJobStatus.COMPLETED}',
                 metrics = $2,
                 actual_cost = $3,
                 completed_at = NOW()
@@ -79,8 +81,8 @@ async def start_training(input: StartTrainingInput) -> StartTrainingOutput:
     except Exception as e:
         logger.exception("Training failed for job %s", job_id)
         await db.execute(
-            """UPDATE training_jobs
-            SET status = 'failed', error_message = $2, completed_at = NOW()
+            f"""UPDATE training_jobs
+            SET status = '{TrainingJobStatus.FAILED}', error_message = $2, completed_at = NOW()
             WHERE id = $1""",
             job_id,
             str(e)[:2000],

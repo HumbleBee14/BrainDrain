@@ -1,4 +1,5 @@
 use platform_db::models::Dataset;
+use platform_shared::enums::DatasetStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -74,14 +75,14 @@ impl DatasetRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: DatasetStatus,
     ) -> Result<i64, AppError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM datasets WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_one(db)
         .await?;
 

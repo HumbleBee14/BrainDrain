@@ -23,6 +23,7 @@ from temporalio import activity
 from src import clients
 from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
+from src.constants import EvaluationStatus
 
 logger = logging.getLogger("platform.evaluation")
 
@@ -87,15 +88,17 @@ async def run_evaluation(input: RunEvaluationInput) -> RunEvaluationOutput:
 
     try:
         await db.execute(
-            "UPDATE evaluations SET status = 'running', started_at = NOW() WHERE id = $1",
+            f"UPDATE evaluations SET status = '{EvaluationStatus.RUNNING}',"
+            " started_at = NOW() WHERE id = $1",
             eval_id,
         )
 
         scores, report = await _run_all_suites(input)
 
         await db.execute(
-            """UPDATE evaluations
-            SET status = 'completed', scores = $2, report = $3, completed_at = NOW()
+            f"""UPDATE evaluations
+            SET status = '{EvaluationStatus.COMPLETED}', scores = $2,
+                report = $3, completed_at = NOW()
             WHERE id = $1""",
             eval_id,
             json.dumps(scores),
@@ -115,8 +118,8 @@ async def run_evaluation(input: RunEvaluationInput) -> RunEvaluationOutput:
     except Exception as e:
         logger.exception("Evaluation failed for %s", eval_id)
         await db.execute(
-            """UPDATE evaluations
-            SET status = 'failed', report = $2, completed_at = NOW()
+            f"""UPDATE evaluations
+            SET status = '{EvaluationStatus.FAILED}', report = $2, completed_at = NOW()
             WHERE id = $1""",
             eval_id,
             json.dumps({"error": str(e)[:2000]}),

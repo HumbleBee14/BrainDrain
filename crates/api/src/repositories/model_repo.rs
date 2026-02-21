@@ -1,4 +1,5 @@
 use platform_db::models::Model;
+use platform_shared::enums::DeploymentStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -75,14 +76,14 @@ impl ModelRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: DeploymentStatus,
     ) -> Result<i64, AppError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM models WHERE project_id = $1 AND tenant_id = $2 AND deployment_status = $3",
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_one(db)
         .await?;
 
@@ -94,7 +95,7 @@ impl ModelRepo {
         db: &PgPool,
         tenant_id: Uuid,
         model_id: Uuid,
-        status: &str,
+        status: DeploymentStatus,
     ) -> Result<Option<Model>, AppError> {
         let model = sqlx::query_as::<_, Model>(
             r#"
@@ -106,7 +107,7 @@ impl ModelRepo {
         )
         .bind(model_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_optional(db)
         .await?;
 
@@ -118,7 +119,7 @@ impl ModelRepo {
         db: &PgPool,
         tenant_id: Uuid,
         model_id: Uuid,
-        status: &str,
+        status: DeploymentStatus,
         config: serde_json::Value,
     ) -> Result<Option<Model>, AppError> {
         let model = sqlx::query_as::<_, Model>(
@@ -131,7 +132,7 @@ impl ModelRepo {
         )
         .bind(model_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .bind(config)
         .fetch_optional(db)
         .await?;

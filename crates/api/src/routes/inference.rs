@@ -1,6 +1,7 @@
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
+use platform_shared::enums::DeploymentStatus;
 use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
@@ -63,7 +64,7 @@ async fn chat_completions(
             message: "Model not found".to_string(),
         })?;
 
-    if model.deployment_status != "active" {
+    if model.deployment_status != DeploymentStatus::Active.to_string() {
         return Err(AppError::BadRequest {
             message: format!(
                 "Model is not deployed (status: {}). Deploy the model first.",

@@ -1,3 +1,6 @@
+use platform_shared::enums::{
+    DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -33,7 +36,9 @@ impl PipelineService {
                 .to_string(),
         })?;
 
-        let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "uploaded").await?;
+        let docs =
+            DocumentRepo::list_by_status(db, tenant_id, project_id, DocumentStatus::Uploaded)
+                .await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -80,7 +85,8 @@ impl PipelineService {
                 .to_string(),
         })?;
 
-        let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "parsed").await?;
+        let docs =
+            DocumentRepo::list_by_status(db, tenant_id, project_id, DocumentStatus::Parsed).await?;
 
         if docs.is_empty() {
             return Err(AppError::BadRequest {
@@ -142,26 +148,61 @@ impl PipelineService {
             evals_failed,
         ) = tokio::try_join!(
             DocumentRepo::count_by_project(db, tenant_id, project_id),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "uploaded"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "parsing"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "parsed"),
-            DocumentRepo::count_by_status(db, tenant_id, project_id, "failed"),
+            DocumentRepo::count_by_status(db, tenant_id, project_id, DocumentStatus::Uploaded),
+            DocumentRepo::count_by_status(db, tenant_id, project_id, DocumentStatus::Parsing),
+            DocumentRepo::count_by_status(db, tenant_id, project_id, DocumentStatus::Parsed),
+            DocumentRepo::count_by_status(db, tenant_id, project_id, DocumentStatus::Failed),
             DatasetRepo::count_by_project(db, tenant_id, project_id),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "generating"),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "review_pending"),
-            DatasetRepo::count_by_status(db, tenant_id, project_id, "approved"),
+            DatasetRepo::count_by_status(db, tenant_id, project_id, DatasetStatus::Generating),
+            DatasetRepo::count_by_status(db, tenant_id, project_id, DatasetStatus::ReviewPending),
+            DatasetRepo::count_by_status(db, tenant_id, project_id, DatasetStatus::Approved),
             TrainingJobRepo::count_by_project(db, tenant_id, project_id),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "pending"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "training"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "completed"),
-            TrainingJobRepo::count_by_status(db, tenant_id, project_id, "failed"),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, TrainingJobStatus::Pending),
+            TrainingJobRepo::count_by_status(
+                db,
+                tenant_id,
+                project_id,
+                TrainingJobStatus::Training
+            ),
+            TrainingJobRepo::count_by_status(
+                db,
+                tenant_id,
+                project_id,
+                TrainingJobStatus::Completed
+            ),
+            TrainingJobRepo::count_by_status(db, tenant_id, project_id, TrainingJobStatus::Failed),
             ModelRepo::count_by_project(db, tenant_id, project_id),
-            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "undeployed"),
-            ModelRepo::count_by_deployment_status(db, tenant_id, project_id, "active"),
+            ModelRepo::count_by_deployment_status(
+                db,
+                tenant_id,
+                project_id,
+                DeploymentStatus::Undeployed
+            ),
+            ModelRepo::count_by_deployment_status(
+                db,
+                tenant_id,
+                project_id,
+                DeploymentStatus::Active
+            ),
             EvaluationRepo::count_by_project(db, tenant_id, project_id),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "running"),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "completed"),
-            EvaluationRepo::count_by_project_status(db, tenant_id, project_id, "failed"),
+            EvaluationRepo::count_by_project_status(
+                db,
+                tenant_id,
+                project_id,
+                EvaluationStatus::Running
+            ),
+            EvaluationRepo::count_by_project_status(
+                db,
+                tenant_id,
+                project_id,
+                EvaluationStatus::Completed
+            ),
+            EvaluationRepo::count_by_project_status(
+                db,
+                tenant_id,
+                project_id,
+                EvaluationStatus::Failed
+            ),
         )?;
 
         Ok(ProjectPipelineStatus {

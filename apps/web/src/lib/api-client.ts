@@ -140,7 +140,7 @@ export interface Project {
   name: string;
   description: string | null;
   task_type: string | null;
-  status: string;
+  status: ProjectStatus;
   created_at: string;
   updated_at: string;
 }
@@ -151,6 +151,17 @@ export interface PaginatedResponse<T> {
   offset: number;
   limit: number;
 }
+
+// ── Status union types (match Rust enums in crates/shared/src/enums.rs) ──
+
+export type ProjectStatus = "created" | "ingesting" | "refining" | "training" | "evaluating" | "deployed" | "archived";
+export type DocumentStatus = "uploaded" | "scanning" | "parsing" | "parsed" | "failed";
+export type DatasetStatus = "generating" | "review_pending" | "approved" | "archived";
+export type TrainingJobStatus = "pending" | "cost_approval" | "provisioning" | "training" | "completed" | "failed" | "cancelled";
+export type TrainingMethod = "qlora" | "lora" | "full";
+export type TrainingMode = "quick" | "aligned" | "reasoning" | "iterative";
+export type ModelDeploymentStatus = "undeployed" | "deploying" | "active" | "inactive";
+export type EvaluationStatus = "running" | "completed" | "failed";
 
 export interface CreateProjectInput {
   name: string;
@@ -166,7 +177,7 @@ export interface Document {
   filename: string;
   file_size: number;
   mime_type: string;
-  status: string;
+  status: DocumentStatus;
   parse_quality: number | null;
   page_count: number | null;
   language: string | null;
@@ -179,7 +190,7 @@ export interface UploadResponse {
   id: string;
   filename: string;
   file_size: number;
-  status: string;
+  status: DocumentStatus;
 }
 
 // ── Dataset types ──
@@ -189,7 +200,7 @@ export interface Dataset {
   project_id: string;
   name: string;
   format: string;
-  status: string;
+  status: DatasetStatus;
   pair_count: number | null;
   stats: Record<string, unknown>;
   created_at: string;
@@ -203,11 +214,11 @@ export interface TrainingJob {
   project_id: string;
   dataset_id: string;
   base_model: string;
-  method: string;
-  mode: string;
+  method: TrainingMethod;
+  mode: TrainingMode;
   hyperparams: Record<string, unknown>;
   gpu_class: string | null;
-  status: string;
+  status: TrainingJobStatus;
   cost_estimate: number | null;
   actual_cost: number | null;
   metrics: Record<string, unknown>;
@@ -221,8 +232,8 @@ export interface TrainingJob {
 export interface CreateTrainingJobInput {
   dataset_id: string;
   base_model: string;
-  method?: string;
-  mode?: string;
+  method?: TrainingMethod;
+  mode?: TrainingMode;
   hyperparams?: Record<string, unknown>;
   gpu_class?: string;
 }
@@ -235,7 +246,7 @@ export interface Model {
   training_job_id: string;
   name: string;
   base_model: string;
-  deployment_status: string;
+  deployment_status: ModelDeploymentStatus;
   eval_scores: Record<string, unknown>;
   version: number;
   created_at: string;
@@ -310,7 +321,7 @@ export interface ParsedContentResponse {
 export interface Evaluation {
   id: string;
   model_id: string;
-  status: string;
+  status: EvaluationStatus;
   scores: EvaluationScores | null;
   report: Record<string, unknown>;
   started_at: string | null;
@@ -385,9 +396,9 @@ export interface CreateApiKeyInput {
 
 // ── Deployment types ──
 
-export interface DeploymentStatus {
+export interface DeploymentStatusResponse {
   model_id: string;
-  deployment_status: string;
+  deployment_status: ModelDeploymentStatus;
   deployment_config: Record<string, unknown>;
   base_model: string;
   adapter_path: string | null;
@@ -603,7 +614,7 @@ export const api = {
       }),
 
     status: (token: string, modelId: string) =>
-      request<DeploymentStatus>(
+      request<DeploymentStatusResponse>(
         `/api/v1/models/${modelId}/deployment`,
         { token }
       ),

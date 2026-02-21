@@ -1,3 +1,4 @@
+use platform_shared::enums::DeploymentStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -32,14 +33,15 @@ impl DeploymentService {
             message: "Model has no adapter — training may not be complete".to_string(),
         })?;
 
-        if model.deployment_status == "active" {
+        if model.deployment_status == DeploymentStatus::Active.to_string() {
             return Err(AppError::Conflict {
                 message: "Model is already deployed".to_string(),
             });
         }
 
         // Update status to deploying
-        ModelRepo::update_deployment_status(db, tenant_id, model_id, "deploying").await?;
+        ModelRepo::update_deployment_status(db, tenant_id, model_id, DeploymentStatus::Deploying)
+            .await?;
 
         // Build a unique adapter name for vLLM
         let adapter_name = format!("adapter-{model_id}");
@@ -69,7 +71,7 @@ impl DeploymentService {
                     db,
                     tenant_id,
                     model_id,
-                    "active",
+                    DeploymentStatus::Active,
                     deployment_config,
                 )
                 .await?
@@ -97,14 +99,26 @@ impl DeploymentService {
             Ok(resp) => {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                ModelRepo::update_deployment_status(db, tenant_id, model_id, "undeployed").await?;
+                ModelRepo::update_deployment_status(
+                    db,
+                    tenant_id,
+                    model_id,
+                    DeploymentStatus::Undeployed,
+                )
+                .await?;
                 tracing::error!(model_id = %model_id, status = %status, body = %body, "vLLM deploy failed");
                 Err(AppError::Internal(anyhow::anyhow!(
                     "vLLM adapter load failed: {status}"
                 )))
             }
             Err(e) => {
-                ModelRepo::update_deployment_status(db, tenant_id, model_id, "undeployed").await?;
+                ModelRepo::update_deployment_status(
+                    db,
+                    tenant_id,
+                    model_id,
+                    DeploymentStatus::Undeployed,
+                )
+                .await?;
                 tracing::error!(model_id = %model_id, error = %e, "vLLM unreachable");
                 Err(AppError::Internal(anyhow::anyhow!(
                     "Cannot reach vLLM service: {e}"
@@ -127,7 +141,7 @@ impl DeploymentService {
                     message: "Model not found".to_string(),
                 })?;
 
-        if model.deployment_status != "active" {
+        if model.deployment_status != DeploymentStatus::Active.to_string() {
             return Err(AppError::BadRequest {
                 message: "Model is not currently deployed".to_string(),
             });
@@ -154,11 +168,16 @@ impl DeploymentService {
             tracing::warn!(model_id = %model_id, error = %e, "vLLM unload request failed — marking as undeployed anyway");
         }
 
-        let updated = ModelRepo::update_deployment_status(db, tenant_id, model_id, "undeployed")
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Model not found after undeploy".to_string(),
-            })?;
+        let updated = ModelRepo::update_deployment_status(
+            db,
+            tenant_id,
+            model_id,
+            DeploymentStatus::Undeployed,
+        )
+        .await?
+        .ok_or(AppError::NotFound {
+            message: "Model not found after undeploy".to_string(),
+        })?;
 
         tracing::info!(model_id = %model_id, "Model undeployed");
         Ok(updated.into())
@@ -200,7 +219,6 @@ pub struct DeploymentStatusResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use platform_shared::enums::DeploymentStatus;
     use std::str::FromStr;
 
     // ── Deployment status validation ──
@@ -226,9 +244,9 @@ mod tests {
 
     #[test]
     fn already_active_model_is_conflict() {
-        let current_status = "active";
-        assert_eq!(current_status, "active");
-        // The service returns AppError::Conflict when status is "active"
+        let current_status = DeploymentStatus::Active.to_string();
+        assert_eq!(current_status, DeploymentStatus::Active.to_string());
+        // The service returns AppError::Conflict when status is active
         let err = AppError::Conflict {
             message: "Model is already deployed".to_string(),
         };
@@ -237,31 +255,41 @@ mod tests {
 
     #[test]
     fn undeployed_model_is_not_conflict() {
-        let current_status = "undeployed";
-        assert_ne!(current_status, "active");
+        let current_status = DeploymentStatus::Undeployed.to_string();
+        assert_ne!(current_status, DeploymentStatus::Active.to_string());
     }
 
     #[test]
     fn deploying_model_is_not_conflict() {
-        let current_status = "deploying";
-        assert_ne!(current_status, "active");
+        let current_status = DeploymentStatus::Deploying.to_string();
+        assert_ne!(current_status, DeploymentStatus::Active.to_string());
     }
 
     // ── Undeploy precondition (mirrors check in DeploymentService::undeploy) ──
 
     #[test]
     fn non_active_model_cannot_be_undeployed() {
-        for status in ["undeployed", "deploying", "inactive"] {
+        let active = DeploymentStatus::Active.to_string();
+        for status in [
+            DeploymentStatus::Undeployed,
+            DeploymentStatus::Deploying,
+            DeploymentStatus::Inactive,
+        ] {
             assert_ne!(
-                status, "active",
-                "Status '{status}' should fail the undeploy precondition",
+                status.to_string(),
+                active,
+                "Status '{}' should fail the undeploy precondition",
+                status,
             );
         }
     }
 
     #[test]
     fn active_model_can_be_undeployed() {
-        assert_eq!("active", "active");
+        assert_eq!(
+            DeploymentStatus::Active.to_string(),
+            DeploymentStatus::Active.to_string()
+        );
     }
 
     // ── Adapter name generation ──
@@ -310,13 +338,16 @@ mod tests {
     fn status_response_serializes_to_json() {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
-            deployment_status: "active".to_string(),
+            deployment_status: DeploymentStatus::Active.to_string(),
             deployment_config: serde_json::json!({"vllm_adapter_name": "adapter-123"}),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             adapter_path: Some("/path/to/adapter".to_string()),
         };
         let json = serde_json::to_value(&resp).unwrap();
-        assert_eq!(json["deployment_status"], "active");
+        assert_eq!(
+            json["deployment_status"],
+            DeploymentStatus::Active.to_string()
+        );
         assert_eq!(json["base_model"], "meta-llama/Llama-3.1-8B");
         assert!(json["adapter_path"].is_string());
     }
@@ -325,7 +356,7 @@ mod tests {
     fn status_response_with_null_adapter() {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
-            deployment_status: "undeployed".to_string(),
+            deployment_status: DeploymentStatus::Undeployed.to_string(),
             deployment_config: serde_json::json!({}),
             base_model: "model".to_string(),
             adapter_path: None,

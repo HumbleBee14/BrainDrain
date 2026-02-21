@@ -1,4 +1,5 @@
 use platform_db::models::Document;
+use platform_shared::enums::DocumentStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -87,7 +88,7 @@ impl DocumentRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: DocumentStatus,
     ) -> Result<Vec<Document>, AppError> {
         let docs = sqlx::query_as::<_, Document>(
             r#"
@@ -98,7 +99,7 @@ impl DocumentRepo {
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_all(db)
         .await?;
 
@@ -110,14 +111,14 @@ impl DocumentRepo {
         db: &PgPool,
         tenant_id: Uuid,
         project_id: Uuid,
-        status: &str,
+        status: DocumentStatus,
     ) -> Result<i64, AppError> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM documents WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
         )
         .bind(project_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .fetch_one(db)
         .await?;
 
@@ -130,7 +131,7 @@ impl DocumentRepo {
         db: &PgPool,
         tenant_id: Uuid,
         document_id: Uuid,
-        status: &str,
+        status: DocumentStatus,
         error_message: Option<&str>,
     ) -> Result<bool, AppError> {
         let result = sqlx::query(
@@ -142,7 +143,7 @@ impl DocumentRepo {
         )
         .bind(document_id)
         .bind(tenant_id)
-        .bind(status)
+        .bind(status.to_string())
         .bind(error_message)
         .execute(db)
         .await?;
