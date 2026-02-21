@@ -81,15 +81,13 @@ fn verify_stripe_signature(payload: &[u8], signature_header: &str, secret: &str)
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|_| ())?;
     mac.update(&signed_payload);
-    let result = mac.finalize().into_bytes();
-    let computed = hex::encode(result);
 
-    if computed != expected_sig {
+    // Decode the expected hex signature and use constant-time comparison
+    // to prevent timing side-channel attacks.
+    let expected_bytes = hex::decode(expected_sig).map_err(|_| ())?;
+    mac.verify_slice(&expected_bytes).map_err(|_| {
         tracing::warn!("Stripe webhook signature verification failed");
-        return Err(());
-    }
-
-    Ok(())
+    })
 }
 
 /// Handle `checkout.session.completed` — link Stripe customer + subscription to tenant.

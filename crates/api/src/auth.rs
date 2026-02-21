@@ -161,17 +161,43 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 
         let mut user = state.auth_chain().authenticate(token, state.db()).await?;
 
-        // Look up actual role from team_members table (separate from auth).
-        // Dev tokens keep their assigned role (Owner).
-        // If no team_member row exists, keep default Member role.
-        // The auto-create-owner logic runs in team_service::ensure_member.
-        if user.role == TeamRole::Member
-            && let Some(role_str) = state
+        // Dev tokens keep their assigned role (Owner) — skip role lookup.
+        if user.role != TeamRole::Owner || user.org_id.is_some() {
+            // Look up actual role from team_members table.
+            match state
                 .team_member_repo()
                 .get_role(user.tenant_id, &user.user_id)
                 .await?
-        {
-            user.role = role_str.parse().unwrap_or(TeamRole::Member);
+            {
+                Some(role_str) => {
+                    user.role = role_str.parse().unwrap_or(TeamRole::Member);
+                }
+                None => {
+                    // No team_member row — auto-bootstrap if tenant has zero members.
+                    let count = state
+                        .team_member_repo()
+                        .count_by_tenant(user.tenant_id)
+                        .await?;
+                    if count == 0 {
+                        // First user for this tenant becomes Owner.
+                        let _ = state
+                            .team_member_repo()
+                            .create(
+                                user.tenant_id,
+                                &user.user_id,
+                                "", // email not available from JWT — updated on next profile sync
+                                "owner",
+                                None,
+                            )
+                            .await;
+                        user.role = TeamRole::Owner;
+                    } else {
+                        return Err(AppError::Forbidden {
+                            message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                        });
+                    }
+                }
+            }
         }
 
         Ok(user)

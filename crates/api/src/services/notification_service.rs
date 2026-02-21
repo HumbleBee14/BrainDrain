@@ -78,10 +78,14 @@ impl NotificationService {
                     }
                 }
                 "email" => {
+                    // Intentional stub: email delivery requires an external provider
+                    // (Resend, SendGrid, SES) behind an EmailSender trait. Preferences
+                    // can be saved now; delivery will activate when a provider is wired in.
+                    // See: services/billing_provider.rs for the trait pattern to follow.
                     tracing::info!(
                         tenant_id = %tenant_id,
                         event_type,
-                        "Email notification skipped (not configured)"
+                        "Email notification skipped — no email provider configured"
                     );
                 }
                 _ => {}

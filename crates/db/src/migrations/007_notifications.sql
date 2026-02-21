@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     sent_at         TIMESTAMPTZ
 );
 
+ALTER TABLE notification_deliveries ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_notification_deliveries ON notification_deliveries
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
 CREATE INDEX idx_notification_deliveries_status ON notification_deliveries (status, created_at)
     WHERE status = 'pending';
 

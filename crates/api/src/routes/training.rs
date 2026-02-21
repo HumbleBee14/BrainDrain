@@ -19,6 +19,7 @@ use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
+use crate::services::plan_service::PlanService;
 use crate::services::training_job_service::TrainingJobService;
 
 /// Training and model routes.
@@ -52,6 +53,8 @@ async fn create_training_job(
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let current_models = state.model_repo().count_by_tenant(user.tenant_id).await?;
+    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "models", current_models).await?;
     let base_model = body.base_model.clone();
     let result = TrainingJobService::create(
         state.training_job_repo(),

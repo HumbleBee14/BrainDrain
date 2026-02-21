@@ -11,6 +11,7 @@ use crate::dto::team::{InvitationResponse, InviteRequest, TeamMemberResponse, Up
 use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
+use crate::services::plan_service::PlanService;
 use crate::services::team_service::TeamService;
 
 /// Team management routes.
@@ -44,6 +45,8 @@ async fn create_invitation(
     Json(body): Json<InviteRequest>,
 ) -> AppResult<(StatusCode, Json<InvitationResponse>)> {
     require_role(&user, TeamRole::Admin)?;
+    let current_members = state.team_member_repo().count_by_tenant(user.tenant_id).await?;
+    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "team_members", current_members).await?;
     let invitation = TeamService::invite(
         state.team_member_repo(),
         state.invitation_repo(),

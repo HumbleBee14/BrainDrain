@@ -50,7 +50,6 @@ impl PlanLimits {
 
 pub struct PlanService;
 
-#[allow(dead_code)]
 impl PlanService {
     /// Check whether the tenant has reached the limit for a given resource.
     ///

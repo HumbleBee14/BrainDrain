@@ -13,6 +13,7 @@ use crate::dto::project::{CreateProjectRequest, ProjectResponse, UpdateProjectRe
 use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
+use crate::services::plan_service::PlanService;
 use crate::services::project_service::ProjectService;
 
 /// Project CRUD routes.
@@ -31,6 +32,8 @@ async fn create_project(
     Json(body): Json<CreateProjectRequest>,
 ) -> AppResult<(StatusCode, Json<ProjectResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let current_count = state.project_repo().count(user.tenant_id).await?;
+    PlanService::check_limit(state.tenant_repo(), user.tenant_id, "projects", current_count).await?;
     let project = ProjectService::create(state.project_repo(), user.tenant_id, body).await?;
     AuditLogger::log(
         state.audit_log_repo(),

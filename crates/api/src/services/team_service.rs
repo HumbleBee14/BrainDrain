@@ -207,40 +207,10 @@ impl TeamService {
         Ok(())
     }
 
-    /// Ensure the requesting user exists as a team member.
-    /// If the tenant has no members, auto-create this user as owner (bootstrap).
-    /// Uses count-then-insert with ON CONFLICT DO NOTHING to handle race conditions.
-    #[allow(dead_code)]
-    pub async fn ensure_member(
-        repo: &dyn TeamMemberRepository,
-        tenant_id: Uuid,
-        user_id: &str,
-        email: &str,
-    ) -> AppResult<()> {
-        let existing = repo.get_by_user(tenant_id, user_id).await?;
-        if existing.is_some() {
-            return Ok(());
-        }
-
-        // Check if this is the first member (bootstrap as owner).
-        // Race condition handled: team_members has UNIQUE(tenant_id, user_id),
-        // and the repo's create uses INSERT ... ON CONFLICT DO NOTHING.
-        let count = repo.count_by_tenant(tenant_id).await?;
-        let role = if count == 0 { "owner" } else { "member" };
-
-        // If a concurrent request already inserted this user, the ON CONFLICT
-        // will silently succeed — no error, no duplicate.
-        let _ = repo.create(tenant_id, user_id, email, role, None).await;
-
-        tracing::info!(
-            tenant_id = %tenant_id,
-            user_id = user_id,
-            role = role,
-            "Auto-created team member"
-        );
-
-        Ok(())
-    }
+    // Owner auto-bootstrap is handled inline in auth.rs FromRequestParts.
+    // When a user authenticates and has no team_member row, auth.rs checks
+    // count_by_tenant() == 0 and auto-creates them as Owner with ON CONFLICT
+    // DO NOTHING to handle race conditions.
 }
 
 fn generate_invite_token() -> String {
