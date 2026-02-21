@@ -1,5 +1,9 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 500;
+
 interface ApiError {
   error: {
     code: string;
@@ -16,6 +20,76 @@ class ApiClientError extends Error {
     this.code = body.error.code;
     this.status = status;
   }
+}
+
+function isRetryable(error: unknown): boolean {
+  if (error instanceof ApiClientError) {
+    return error.status >= 500;
+  }
+  // Network errors, timeouts (AbortError), and TypeError (fetch failures)
+  return (
+    error instanceof TypeError ||
+    (error instanceof DOMException && error.name === "AbortError")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wraps fetch with a timeout (via AbortController) and retry logic
+ * for transient failures (network errors, 5xx responses).
+ *
+ * Retries up to MAX_RETRIES times with exponential backoff.
+ * Non-retryable errors (4xx, known client errors) are thrown immediately.
+ */
+async function fetchWithRetry(
+  url: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    // If caller already provided a signal, abort ours if theirs fires
+    if (init?.signal) {
+      init.signal.addEventListener("abort", () => controller.abort(), {
+        once: true,
+      });
+    }
+
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+
+      // 5xx responses are retryable
+      if (res.status >= 500 && attempt < MAX_RETRIES) {
+        lastError = new ApiClientError(res.status, {
+          error: { code: "server_error", message: `Server returned ${res.status}` },
+        });
+        await sleep(BASE_BACKOFF_MS * 2 ** attempt);
+        continue;
+      }
+
+      return res;
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || attempt >= MAX_RETRIES) {
+        throw error;
+      }
+
+      await sleep(BASE_BACKOFF_MS * 2 ** attempt);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  // Should not reach here, but just in case
+  throw lastError;
 }
 
 /**
@@ -42,7 +116,7 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchWithRetry(`${API_URL}${path}`, {
     ...fetchOptions,
     headers,
   });
@@ -326,7 +400,7 @@ async function uploadRequest(
   token: string,
   formData: FormData,
 ): Promise<UploadResponse[]> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetchWithRetry(`${API_URL}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: formData,

@@ -13,10 +13,10 @@
 - [Phase Status](#phase-status)
 - [Phase 0: Foundation (COMPLETE)](#phase-0-foundation--complete)
 - [Phase 1: Data Pipeline (COMPLETE)](#phase-1-data-pipeline--complete)
-- [Phase 2: Training Engine (NEXT)](#phase-2-training-engine--next)
-- [Phase 3: Evaluation System](#phase-3-evaluation-system)
-- [Phase 4: Model Deployment](#phase-4-model-deployment)
-- [Phase 5: Product Polish](#phase-5-product-polish)
+- [Phase 2: Training Engine (COMPLETE)](#phase-2-training-engine--complete)
+- [Phase 3: Evaluation & Deployment (COMPLETE)](#phase-3-evaluation--deployment--complete)
+- [Architecture Hardening (COMPLETE)](#architecture-hardening--complete)
+- [Phase 4: Product Polish](#phase-4-product-polish)
 - [Local Development](#local-development)
 
 ---
@@ -32,8 +32,10 @@ Platform/
 │   ├── DEVELOPMENT.md                   #   This file — development tracker
 │   ├── phase0/
 │   │   └── PHASE0_COMPLETE.md           #   Phase 0 completion report
-│   └── phase1/
-│       └── PHASE1_COMPLETE.md           #   Phase 1 completion report
+│   ├── phase1/
+│   │   └── PHASE1_COMPLETE.md           #   Phase 1 completion report
+│   └── phase3/
+│       └── ARCHITECTURE_REVIEW.md       #   Architecture review + 19 fixes applied
 │
 ├── Cargo.toml                           # Rust workspace root (all dep versions centralized)
 ├── package.json                         # JS workspace root (pnpm)
@@ -48,15 +50,17 @@ Platform/
 │   ├── shared/                          # Shared types across all Rust crates
 │   │   └── src/
 │   │       ├── enums.rs                 #   DocumentStatus, TrainingJobStatus, PipelineStage, etc.
-│   │       ├── constants.rs             #   Temporal queues, Redis keys, upload limits
+│   │       ├── constants.rs             #   Temporal queues, Redis keys, GPU rates, upload limits
 │   │       ├── s3_paths.rs              #   Tenant-scoped S3 path builders (with tests)
+│   │       ├── types.rs                 #   Typed JSON structs (Hyperparams, EvaluationScores, etc.)
 │   │       └── events.rs               #   Pipeline event structs for message bus
 │   │
 │   ├── db/                              # Database layer (SQLx + PostgreSQL)
 │   │   └── src/
 │   │       ├── models.rs                #   9 SQLx FromRow structs (Tenant → BillingEvent)
 │   │       ├── migrations/
-│   │       │   └── 001_initial_schema.sql  # Full schema: 9 tables, indexes, RLS, triggers
+│   │       │   ├── 001_initial_schema.sql  # Full schema: 9 tables, indexes, RLS, triggers
+│   │       │   └── 002_rls_policies_and_indexes.sql  # RLS policies + composite indexes
 │   │       ├── lib.rs                   #   create_pool(), run_migrations()
 │   │       └── migrate.rs              #   Standalone migration binary
 │   │
@@ -74,28 +78,48 @@ Platform/
 │           ├── error.rs                 #   AppError → JSON error envelope {"error":{...}}
 │           ├── auth.rs                  #   Clerk JWT verification + dev token support
 │           ├── middleware.rs            #   CORS, request ID (X-Request-Id), tracing
-│           ├── temporal.rs              #   HTTP-based Temporal client (start workflows, get status)
+│           ├── temporal.rs              #   WorkflowOrchestrator trait + TemporalClient impl
+│           ├── auth_api_key.rs          #   API key auth extractor (Bearer pl_sk_...)
 │           ├── routes/
 │           │   ├── health.rs            #     GET /health (liveness), GET /ready (readiness)
 │           │   ├── projects.rs          #     CRUD: POST/GET/PUT/DELETE /api/v1/projects
 │           │   ├── documents.rs         #     Multipart upload: POST /api/v1/projects/:id/documents
 │           │   ├── pipeline.rs          #     POST parse, POST refine, GET status
-│           │   └── datasets.rs          #     GET datasets (list, get, preview, parsed content)
+│           │   ├── datasets.rs          #     GET datasets (list, get, preview, parsed content)
+│           │   ├── training.rs          #     Training job CRUD + cancel
+│           │   ├── evaluations.rs       #     Create/list/get evaluations
+│           │   ├── api_keys.rs          #     Create/list/revoke API keys
+│           │   ├── deployments.rs       #     Deploy/undeploy models, status
+│           │   ├── inference.rs         #     POST /v1/chat/completions (OpenAI-compatible)
+│           │   └── billing.rs           #     Usage summary + billing events
 │           ├── services/
 │           │   ├── project_service.rs   #     Business logic (validation, orchestration)
 │           │   ├── document_service.rs  #     Upload → S3 → DB, uses ObjectStorage trait
 │           │   ├── pipeline_service.rs  #     Parse/refine triggers, pipeline status aggregation
-│           │   └── dataset_service.rs   #     Dataset CRUD, S3 preview, presigned URLs
+│           │   ├── dataset_service.rs   #     Dataset CRUD, S3 preview, presigned URLs
+│           │   ├── training_job_service.rs #   Training job creation, Temporal dispatch
+│           │   ├── evaluation_service.rs #    Evaluation creation, Temporal dispatch
+│           │   ├── api_key_service.rs   #     Key generation, SHA-256 hashing, rate limiting
+│           │   └── deployment_service.rs #    vLLM adapter management
 │           ├── repositories/
 │           │   ├── project_repo.rs      #     SQL queries (ALL require tenant_id — enforced)
 │           │   ├── document_repo.rs     #     SQL queries (ALL require tenant_id — enforced)
-│           │   └── dataset_repo.rs      #     Dataset SQL queries (tenant-scoped)
+│           │   ├── dataset_repo.rs      #     Dataset SQL queries (tenant-scoped)
+│           │   ├── training_job_repo.rs #     Training job CRUD + workflow tracking
+│           │   ├── model_repo.rs        #     Model CRUD + deployment status
+│           │   ├── evaluation_repo.rs   #     Evaluation CRUD + score storage
+│           │   ├── api_key_repo.rs      #     Key hash lookup, revocation
+│           │   └── billing_event_repo.rs #    Append-only billing events
 │           └── dto/
 │               ├── common.rs            #     PaginationParams, PaginatedResponse<T>
 │               ├── project.rs           #     CreateProject, UpdateProject, ProjectResponse
 │               ├── document.rs          #     UploadResponse, DocumentResponse
 │               ├── dataset.rs           #     DatasetResponse
-│               └── pipeline.rs          #     TriggerParse/RefineResponse, PipelineStatus
+│               ├── pipeline.rs          #     TriggerParse/RefineResponse, PipelineStatus
+│               ├── training_job.rs      #     CreateTrainingJob, TrainingJobResponse
+│               ├── evaluation.rs        #     CreateEvaluation, EvaluationResponse
+│               ├── api_key.rs           #     CreateApiKey, ApiKeyResponse
+│               └── billing.rs           #     BillingEventResponse, UsageSummary
 │
 ├── apps/                                # ═══ APPLICATIONS ═══
 │   │
@@ -118,36 +142,58 @@ Platform/
 │   │       │           ├── new/         #       Create project form (name, description, task type)
 │   │       │           └── [id]/
 │   │       │               ├── page.tsx #       Project detail (upload, pipeline, status, actions)
-│   │       │               └── dataset/ #       Dataset review (ChatML pair preview, stats)
+│   │       │               ├── components/ #    Extracted: StatusBadge, DocStatusBadge, etc.
+│   │       │               ├── dataset/ #       Dataset review (ChatML pair preview, stats)
+│   │       │               ├── training/ #      Training dashboard (create, metrics, progress)
+│   │       │               └── models/
+│   │       │                   └── [modelId]/
+│   │       │                       ├── page.tsx       # Model detail + deploy/API keys
+│   │       │                       ├── evaluation/    # Evaluation scores + charts
+│   │       │                       └── playground/    # Chat playground
 │   │       ├── hooks/
+│   │       │   ├── use-authed-query.ts  #   Hook factory: useAuthedQuery/useAuthedMutation
 │   │       │   ├── use-projects.ts      #   React Query hooks (list, get, create, delete)
 │   │       │   ├── use-documents.ts     #   Document list + upload hooks with polling
 │   │       │   ├── use-pipeline.ts      #   Pipeline status + triggers with smart polling
-│   │       │   └── use-datasets.ts      #   Dataset list, detail, preview hooks
+│   │       │   ├── use-datasets.ts      #   Dataset list, detail, preview hooks
+│   │       │   ├── use-training.ts      #   Training job hooks (list, create, cancel)
+│   │       │   ├── use-evaluations.ts   #   Evaluation hooks (list, get, create, polling)
+│   │       │   ├── use-deployments.ts   #   Deploy/undeploy hooks
+│   │       │   └── use-api-keys.ts      #   API key hooks (list, create, revoke)
 │   │       └── lib/
-│   │           ├── api-client.ts        #   Typed fetch wrapper with auth (projects, docs, pipeline, datasets)
+│   │           ├── api-client.ts        #   Typed fetch with auth, timeout, retry
+│   │           ├── query-keys.ts        #   Centralized query key factories
 │   │           └── utils.ts             #   cn() helper (clsx + tailwind-merge)
 │   │
 │   └── workers/                         # Python Temporal ML workers
 │       ├── Dockerfile                   #   2-stage (uv build → python:3.11-slim runtime)
-│       ├── pyproject.toml               #   temporalio, pydantic-settings, parsing + LLM deps
+│       ├── pyproject.toml               #   temporalio, pydantic-settings, parsing + ML deps
 │       └── src/
 │           ├── config.py                #   Worker settings (Temporal, DB, S3, Redis, LLM API)
-│           ├── worker.py                #   Temporal worker entrypoint (init clients, register all)
-│           ├── clients.py               #   Shared S3/DB/Redis clients (module-level singletons)
+│           ├── worker.py                #   Temporal worker entrypoint (GPU + default queues)
+│           ├── clients.py               #   Compatibility layer → delegates to InfraContainer
+│           ├── infra.py                 #   Protocol-based DI (ObjectStore, Database, InfraContainer)
 │           ├── s3_paths.py              #   Tenant-scoped S3 path builders (mirrors Rust)
 │           ├── activities/
-│           │   ├── stubs.py             #   Stub activities (train, evaluate, deploy — Phase 2+)
+│           │   ├── stubs.py             #   Dataclass I/O + re-exports for Temporal registration
 │           │   ├── parse_document.py    #   Document parsing (PDF, DOCX, HTML, MD, TXT, CSV)
 │           │   ├── chunk_text.py        #   Recursive text chunking with overlap
 │           │   ├── generate_pairs.py    #   LLM-powered synthetic pair generation
-│           │   └── build_dataset.py     #   Quality filter, ChatML format, train/val split
+│           │   ├── build_dataset.py     #   Quality filter, ChatML format, train/val split
+│           │   ├── train_model.py       #   4-mode training (quick/aligned/reasoning/iterative)
+│           │   ├── run_evaluation.py    #   4-suite eval (domain/general/A-B/safety)
+│           │   ├── training_engine.py   #   TrainingEngine Protocol + UnslothEngine impl
+│           │   ├── llm_judge.py         #   LLMJudge Protocol + OpenAICompatibleJudge impl
+│           │   ├── benchmark_source.py  #   BenchmarkSource Protocol + local file impl
+│           │   └── benchmarks/
+│           │       ├── general_benchmark.json   # 200 general capability questions
+│           │       └── safety_prompts.json      # 30 safety evaluation prompts
 │           └── workflows/
 │               ├── ingest.py            #   Upload → Parse documents (implemented)
 │               ├── refine.py            #   Chunk → Generate → Build dataset (implemented)
-│               ├── train.py             #   Dataset → Fine-tuned LoRA adapter (stub)
-│               ├── evaluate.py          #   Model → Scores + evaluation report (stub)
-│               └── full_pipeline.py     #   Chains all stages end-to-end (fixed)
+│               ├── train.py             #   Dataset → Fine-tuned LoRA adapter (implemented)
+│               ├── evaluate.py          #   Model → 4-suite evaluation report (implemented)
+│               └── full_pipeline.py     #   Chains all stages end-to-end
 │
 ├── packages/                            # ═══ SHARED PACKAGES ═══
 │   └── shared-types/                    # TypeScript API types (mirrors Rust DTOs)
@@ -229,11 +275,15 @@ Platform/
 
 ### Key Design Decisions
 
-- **ObjectStorage trait** — S3 backend is swappable (AWS S3, Cloudflare R2, MinIO, or any future provider)
-- **Multi-tenancy at repo layer** — impossible to accidentally query another tenant's data
+- **ObjectStorage trait** — S3 backend is swappable (AWS S3, Cloudflare R2, MinIO)
+- **WorkflowOrchestrator trait** — Temporal is swappable for any orchestrator (object-safe via BoxFuture)
+- **TrainingEngine Protocol** — Unsloth is swappable for any ML backend (PEFT, axolotl, etc.)
+- **Multi-tenancy: repo + RLS** — every query requires tenant_id, PostgreSQL RLS as defense-in-depth
+- **Dual auth** — Clerk JWT for platform users, API keys for model consumers (separate extractors)
 - **Dev token auth** — `dev_{tenant_uuid}_{user_id}` format for local development without Clerk
-- **Temporal activity stubs** — typed input/output dataclasses ready for ML code to fill in
 - **Soft deletes** — projects use `deleted_at` instead of hard delete
+- **Strategy pattern** — training modes and evaluation suites are registered classes, not if-elif chains
+- **Protocol-based DI** — Python workers use `InfraContainer` with typed protocols, not globals
 
 ---
 
@@ -255,12 +305,12 @@ Each has its own `Dockerfile`. They share **zero runtime dependencies** — comm
 
 | Phase | Status | Focus |
 |---|---|---|
-| **Phase 0: Foundation** | **COMPLETE** | Infrastructure skeleton — everything below |
+| **Phase 0: Foundation** | **COMPLETE** | Infrastructure skeleton |
 | **Phase 1: Data Pipeline** | **COMPLETE** | Document parsing, synthetic data generation, dataset building |
-| **Phase 2: Training Engine** | **NEXT** | Unsloth/TRL fine-tuning, GPU orchestration |
-| **Phase 3: Evaluation** | PENDING | LLM-as-judge, task-specific metrics, reporting |
-| **Phase 4: Deployment** | PENDING | vLLM inference, LoRA adapter serving, API keys |
-| **Phase 5: Product Polish** | PENDING | Billing, team management, onboarding, dashboards |
+| **Phase 2: Training Engine** | **COMPLETE** | Unsloth/TRL fine-tuning, 4 training modes, GPU orchestration |
+| **Phase 3: Eval & Deploy** | **COMPLETE** | 4-suite evaluation, vLLM deployment, API keys, inference proxy |
+| **Architecture Hardening** | **COMPLETE** | 19 fixes: trait abstractions, RLS, indexes, DI, typed JSON |
+| **Phase 4: Product Polish** | **NEXT** | Billing, team management, onboarding, dashboards |
 
 ---
 
@@ -399,74 +449,148 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 
 ---
 
-## Phase 2: Training Engine — NEXT
+## Phase 2: Training Engine — COMPLETE
 
-### Goals
+> Fine-tune LLMs with 4 training modes — no ML expertise required.
 
-- Fine-tune models using Unsloth (4x faster LoRA/QLoRA)
-- Support multiple training methods (SFT, DPO, ORPO)
-- Track metrics, costs, and GPU usage
+### What Was Built
 
-### Work Items
-
-| Task | Description | Status |
+| Step | Component | What It Does |
 |---|---|---|
-| Unsloth integration | `start_training` activity with FastModel | PENDING |
-| TRL SFTTrainer setup | Standard HuggingFace training loop | PENDING |
-| Hyperparameter management | Map user config → trainer args | PENDING |
-| Checkpoint management | Save/resume from S3 | PENDING |
-| Metrics streaming | Real-time loss/accuracy to frontend via Redis | PENDING |
-| GPU class selection | Match job requirements to GPU tier | PENDING |
-| Cost estimation | Predict cost before training starts | PENDING |
-| Frontend: training dashboard | Live metrics, progress, cost tracking | PENDING |
+| Training activity | `activities/train_model.py` | Full Unsloth/TRL training with Strategy pattern dispatch |
+| Training engine | `activities/training_engine.py` | `TrainingEngine` Protocol + `UnslothEngine` impl (swappable ML backend) |
+| 4 training modes | Quick (SFT), Aligned (DPO), Reasoning (GRPO), Iterative (multi-round SFT) | Each mode is a registered `TrainingStrategy` class |
+| LLM-as-judge DPO | `_create_dpo_pairs_with_judge()` | LLM scores responses for chosen/rejected pair creation |
+| LLM reward (GRPO) | `_llm_reward()` | LLM-based reward function for reinforcement learning |
+| Checkpoint upload | `CheckpointUploadCallback` | Saves checkpoints to S3 every N steps for resume |
+| GPU monitoring | `_get_gpu_metrics()` via pynvml | Streams GPU utilization, VRAM, temperature to Redis |
+| Metrics streaming | Redis SSE | Real-time loss, learning rate, GPU metrics to frontend |
+| Hyperparameter mgmt | `merge_hyperparams()` | Smart defaults + user overrides |
+| Cost estimation | `estimate_cost()` | Heuristic based on model size, dataset, GPU class |
+| TrainWorkflow | `workflows/train.py` | GPU queue, 6hr timeout, heartbeat monitoring |
+| Rust API layer | Routes + service + repo + DTO | Training job CRUD, cancel, Temporal dispatch |
+| Frontend | Training dashboard page | Create job, live metrics via SSE, progress tracking |
+
+### Training Modes
+
+| Mode | Method | Use Case |
+|---|---|---|
+| **Quick** | SFT (Supervised Fine-Tuning) | Fast domain adaptation, instruction following |
+| **Aligned** | DPO (Direct Preference Optimization) | Preference alignment, safety tuning |
+| **Reasoning** | GRPO (Group Relative Policy Optimization) | Chain-of-thought, math reasoning |
+| **Iterative** | Multi-round SFT with validation | Highest quality, uses hold-out eval between iterations |
+
+### API Endpoints (Phase 2)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/projects/:id/training-jobs` | Create training job (auto-triggers workflow) |
+| `GET` | `/api/v1/projects/:id/training-jobs` | List training jobs (paginated) |
+| `GET` | `/api/v1/training-jobs/:id` | Get training job |
+| `POST` | `/api/v1/training-jobs/:id/cancel` | Cancel training job |
+| `GET` | `/api/v1/training-jobs/:id/metrics/stream` | SSE metrics stream |
 
 ---
 
-## Phase 3: Evaluation System
+## Phase 3: Evaluation & Deployment — COMPLETE
 
-### Goals
+> Evaluate model quality with 4 suites, deploy for inference, serve via API keys.
 
-- Automatically evaluate fine-tuned models
-- LLM-as-judge for quality assessment
-- Task-specific metrics (BLEU, ROUGE, accuracy, etc.)
+### What Was Built — Evaluation
 
-### Work Items
-
-| Task | Description | Status |
+| Step | Component | What It Does |
 |---|---|---|
-| Evaluation harness | `run_evaluation` activity with eval suite | PENDING |
-| LLM-as-judge prompts | Quality scoring via frontier model | PENDING |
-| Task-specific metrics | BLEU/ROUGE for summarization, accuracy for classification | PENDING |
-| Report generation | Human-readable eval report (strengths, weaknesses) | PENDING |
-| A/B comparison | Compare base model vs fine-tuned | PENDING |
-| Frontend: eval results UI | Scores, charts, comparison view | PENDING |
+| Evaluation activity | `activities/run_evaluation.py` | 4-suite evaluation engine with suite registry |
+| LLM Judge | `activities/llm_judge.py` | `LLMJudge` Protocol + `OpenAICompatibleJudge` (unified) |
+| Benchmark source | `activities/benchmark_source.py` | `BenchmarkSource` Protocol for loading test datasets |
+| Domain suite | Validates on held-out data | LLM judge scores accuracy, completeness, faithfulness |
+| General suite | Tests broad capabilities | 200 questions across reasoning, math, coding, knowledge |
+| A/B comparison | Base vs fine-tuned blind test | Win rate + 95% Wilson confidence interval |
+| Safety suite | Checks for regression | 30 prompts: harmful requests, jailbreaks, bias |
+| EvaluateWorkflow | `workflows/evaluate.py` | GPU queue, 1hr timeout, judge config passthrough |
+| Rust API layer | Routes + service + repo + DTO | Evaluation CRUD, Temporal dispatch |
+| Frontend | Evaluation page | Score cards, charts, recommendations, run button |
+
+### What Was Built — Deployment & Inference
+
+| Step | Component | What It Does |
+|---|---|---|
+| Deployment service | `services/deployment_service.rs` | vLLM adapter lifecycle (load/unload via REST API) |
+| Inference proxy | `routes/inference.rs` | OpenAI-compatible `/v1/chat/completions` |
+| API key system | `services/api_key_service.rs` | `pl_sk_` prefix, SHA-256 hash, shown once |
+| API key auth | `auth_api_key.rs` | Axum extractor for `Bearer pl_sk_...` |
+| Rate limiting | Redis sliding window | Per-minute limits via `rl:{key_id}:{minute}` |
+| Billing metering | `repositories/billing_event_repo.rs` | Append-only token + cost tracking |
+| Frontend | Model page, playground | Deploy toggle, API key management, chat playground |
+
+### API Endpoints (Phase 3)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/models/:id/evaluations` | Clerk JWT | Create evaluation |
+| `GET` | `/api/v1/models/:id/evaluations` | Clerk JWT | List evaluations |
+| `GET` | `/api/v1/evaluations/:id` | Clerk JWT | Get evaluation |
+| `POST` | `/api/v1/models/:id/deploy` | Clerk JWT | Deploy model to vLLM |
+| `POST` | `/api/v1/models/:id/undeploy` | Clerk JWT | Undeploy model |
+| `GET` | `/api/v1/models/:id/deployment` | Clerk JWT | Get deployment status |
+| `POST` | `/api/v1/models/:id/api-keys` | Clerk JWT | Create API key |
+| `GET` | `/api/v1/models/:id/api-keys` | Clerk JWT | List API keys |
+| `POST` | `/api/v1/api-keys/:id/revoke` | Clerk JWT | Revoke API key |
+| `POST` | `/v1/chat/completions` | API Key | Inference (OpenAI-compatible) |
+| `GET` | `/api/v1/billing/usage` | Clerk JWT | Usage summary |
+| `GET` | `/api/v1/billing/events` | Clerk JWT | List billing events |
+
+### Temporal Workflows (All Implemented)
+
+| Workflow | Stages | Queue |
+|---|---|---|
+| `IngestWorkflow` | get_document_info → parse_document | default |
+| `RefineWorkflow` | chunk_text → generate_pairs → build_dataset | default |
+| `TrainWorkflow` | start_training (6hr timeout) | gpu |
+| `EvaluateWorkflow` | run_evaluation (1hr timeout) | gpu |
+| `FullPipelineWorkflow` | Ingest → Refine → Train → Evaluate → Deploy | default → gpu |
 
 ---
 
-## Phase 4: Model Deployment
+## Architecture Hardening — COMPLETE
 
-### Goals
+> 19 fixes across all layers — trait abstractions, security, performance, DX.
 
-- Serve fine-tuned models via vLLM
-- LoRA adapter hot-loading (no full model copies)
-- API key management with rate limiting
+### Fixes Applied
 
-### Work Items
+| ID | Priority | Fix | Layer |
+|---|---|---|---|
+| P0-1 | Critical | `WorkflowOrchestrator` trait — swap Temporal for any orchestrator | Rust API |
+| P0-2 | Critical | `TrainingEngine` Protocol — swap Unsloth for any ML backend | Python |
+| P0-3 | Critical | Training Strategy pattern — registered strategies vs if-elif | Python |
+| P0-4 | Critical | Evaluation Suite registry — plugin architecture for eval suites | Python |
+| P1-1 | High | Typed JSON structs (`Hyperparams`, `EvaluationScores`, etc.) | Rust shared |
+| P1-2 | High | RLS policies on all 8 tenant-scoped tables | PostgreSQL |
+| P1-3 | High | 11 composite indexes for common query patterns | PostgreSQL |
+| P1-4 | High | Protocol-based DI (`InfraContainer`) for Python workers | Python |
+| P1-5 | High | AppState uses trait objects (`dyn WorkflowOrchestrator`) | Rust API |
+| P2-2 | Medium | Extracted 5 inline components from monolithic page.tsx | Frontend |
+| P2-3 | Medium | `useAuthedQuery`/`useAuthedMutation` hook factories | Frontend |
+| P2-5 | Medium | `BenchmarkSource` Protocol for evaluation data loading | Python |
+| P2-7 | Medium | Unified `LLMJudge` Protocol consolidating 3 scattered impls | Python |
+| P2-8 | Medium | `fetchWithRetry` with AbortController timeout + exponential backoff | Frontend |
+| P2-9 | Medium | Error logging on all fire-and-forget `tokio::spawn` blocks | Rust API |
+| P2-10 | Medium | Typed structs for all JSON blob fields with serde support | Rust shared |
+| P3-1 | Low | Centralized query key factories | Frontend |
+| P3-2 | Low | Config validation for environment variables | Python |
+| P3-3 | Low | Adapter naming conventions standardized | Python |
 
-| Task | Description | Status |
-|---|---|---|
-| vLLM integration | `deploy_model` activity with vLLM server | PENDING |
-| LoRA adapter loading | Hot-swap adapters on base model | PENDING |
-| Inference endpoint | REST API for model queries | PENDING |
-| API key management | Generate, rotate, revoke keys | PENDING |
-| Rate limiting | Per-key RPM limits via Redis | PENDING |
-| Usage metering | Token counting, billing events | PENDING |
-| Frontend: playground | Test your model in-browser | PENDING |
-| Frontend: API docs | Auto-generated endpoint docs | PENDING |
+### Key Design Decisions
+
+- **WorkflowOrchestrator trait** uses `BoxFuture` pattern for object safety (not RPITIT)
+- **Strategy/Suite registries** use decorator-based registration (`@register_strategy`)
+- **InfraContainer** replaces module-level global singletons with typed Protocol-based DI
+- **RLS policies** use `current_setting('app.tenant_id', true)::uuid` — defense-in-depth with repo-layer enforcement
+- **Typed JSON structs** use `#[serde(flatten)] extra: HashMap<String, Value>` for forward compatibility
 
 ---
 
-## Phase 5: Product Polish
+## Phase 4: Product Polish
 
 ### Goals
 
@@ -476,7 +600,7 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 
 | Task | Description | Status |
 |---|---|---|
-| Stripe billing integration | Usage-based pricing | PENDING |
+| Stripe billing integration | Usage-based pricing tied to billing_events | PENDING |
 | Team management | Invite members, roles (admin/member/viewer) | PENDING |
 | Onboarding flow | Guided first-project experience | PENDING |
 | Usage dashboard | Costs, API calls, storage breakdown | PENDING |

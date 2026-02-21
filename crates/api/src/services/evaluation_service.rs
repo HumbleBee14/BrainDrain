@@ -7,7 +7,7 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::evaluation_repo::EvaluationRepo;
 use crate::repositories::model_repo::ModelRepo;
 use crate::repositories::training_job_repo::TrainingJobRepo;
-use crate::temporal::TemporalClient;
+use crate::temporal::WorkflowOrchestrator;
 
 /// Business logic for evaluation operations.
 pub struct EvaluationService;
@@ -16,13 +16,14 @@ impl EvaluationService {
     /// Create a new evaluation and start the EvaluateWorkflow.
     pub async fn create(
         db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         model_id: Uuid,
         req: CreateEvaluationRequest,
     ) -> AppResult<EvaluationResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Evaluation workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Evaluation workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
         // Verify model exists and belongs to tenant
@@ -68,8 +69,8 @@ impl EvaluationService {
         // Create evaluation record
         let eval = EvaluationRepo::create(db, tenant_id, model_id).await?;
 
-        // Start EvaluateWorkflow via Temporal
-        let result = temporal
+        // Start EvaluateWorkflow via orchestrator
+        let result = orchestrator
             .start_evaluate(
                 tenant_id,
                 model_id,

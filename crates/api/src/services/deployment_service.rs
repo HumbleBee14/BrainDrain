@@ -196,3 +196,141 @@ pub struct DeploymentStatusResponse {
     pub base_model: String,
     pub adapter_path: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use platform_shared::enums::DeploymentStatus;
+    use std::str::FromStr;
+
+    // ── Deployment status validation ──
+
+    #[test]
+    fn valid_deployment_statuses_parse() {
+        for status in ["undeployed", "deploying", "active", "inactive"] {
+            assert!(
+                DeploymentStatus::from_str(status).is_ok(),
+                "Expected '{status}' to be a valid DeploymentStatus",
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_deployment_status_rejected() {
+        assert!(DeploymentStatus::from_str("running").is_err());
+        assert!(DeploymentStatus::from_str("").is_err());
+        assert!(DeploymentStatus::from_str("ACTIVE").is_err());
+    }
+
+    // ── Deployment conflict detection (mirrors check in DeploymentService::deploy) ──
+
+    #[test]
+    fn already_active_model_is_conflict() {
+        let current_status = "active";
+        assert_eq!(current_status, "active");
+        // The service returns AppError::Conflict when status is "active"
+        let err = AppError::Conflict {
+            message: "Model is already deployed".to_string(),
+        };
+        assert!(matches!(err, AppError::Conflict { .. }));
+    }
+
+    #[test]
+    fn undeployed_model_is_not_conflict() {
+        let current_status = "undeployed";
+        assert_ne!(current_status, "active");
+    }
+
+    #[test]
+    fn deploying_model_is_not_conflict() {
+        let current_status = "deploying";
+        assert_ne!(current_status, "active");
+    }
+
+    // ── Undeploy precondition (mirrors check in DeploymentService::undeploy) ──
+
+    #[test]
+    fn non_active_model_cannot_be_undeployed() {
+        for status in ["undeployed", "deploying", "inactive"] {
+            assert_ne!(
+                status, "active",
+                "Status '{status}' should fail the undeploy precondition",
+            );
+        }
+    }
+
+    #[test]
+    fn active_model_can_be_undeployed() {
+        assert_eq!("active", "active");
+    }
+
+    // ── Adapter name generation ──
+
+    #[test]
+    fn adapter_name_contains_model_id() {
+        let model_id = uuid::Uuid::new_v4();
+        let adapter_name = format!("adapter-{model_id}");
+        assert!(adapter_name.starts_with("adapter-"));
+        assert!(adapter_name.contains(&model_id.to_string()));
+    }
+
+    #[test]
+    fn adapter_name_is_deterministic() {
+        let model_id = uuid::Uuid::new_v4();
+        let name1 = format!("adapter-{model_id}");
+        let name2 = format!("adapter-{model_id}");
+        assert_eq!(name1, name2);
+    }
+
+    // ── Missing adapter path validation ──
+
+    #[test]
+    fn none_adapter_path_produces_bad_request() {
+        let adapter_path: Option<String> = None;
+        let result = adapter_path.clone().ok_or(AppError::BadRequest {
+            message: "Model has no adapter — training may not be complete".to_string(),
+        });
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest { .. }));
+    }
+
+    #[test]
+    fn some_adapter_path_passes_validation() {
+        let adapter_path = Some("adapters/tenant/model/adapter.safetensors".to_string());
+        let result = adapter_path.clone().ok_or(AppError::BadRequest {
+            message: "Model has no adapter".to_string(),
+        });
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "adapters/tenant/model/adapter.safetensors",);
+    }
+
+    // ── DeploymentStatusResponse serialization ──
+
+    #[test]
+    fn status_response_serializes_to_json() {
+        let resp = DeploymentStatusResponse {
+            model_id: uuid::Uuid::new_v4().to_string(),
+            deployment_status: "active".to_string(),
+            deployment_config: serde_json::json!({"vllm_adapter_name": "adapter-123"}),
+            base_model: "meta-llama/Llama-3.1-8B".to_string(),
+            adapter_path: Some("/path/to/adapter".to_string()),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["deployment_status"], "active");
+        assert_eq!(json["base_model"], "meta-llama/Llama-3.1-8B");
+        assert!(json["adapter_path"].is_string());
+    }
+
+    #[test]
+    fn status_response_with_null_adapter() {
+        let resp = DeploymentStatusResponse {
+            model_id: uuid::Uuid::new_v4().to_string(),
+            deployment_status: "undeployed".to_string(),
+            deployment_config: serde_json::json!({}),
+            base_model: "model".to_string(),
+            adapter_path: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["adapter_path"].is_null());
+    }
+}

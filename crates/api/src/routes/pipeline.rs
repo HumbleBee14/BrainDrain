@@ -28,9 +28,13 @@ async fn trigger_parse(
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
 ) -> AppResult<(StatusCode, Json<TriggerParseResponse>)> {
-    let result =
-        PipelineService::trigger_parse(state.db(), state.temporal(), user.tenant_id, project_id)
-            .await?;
+    let result = PipelineService::trigger_parse(
+        state.db(),
+        state.orchestrator(),
+        user.tenant_id,
+        project_id,
+    )
+    .await?;
 
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
@@ -48,7 +52,7 @@ async fn trigger_refine(
 
     let result = PipelineService::trigger_refine(
         state.db(),
-        state.temporal(),
+        state.orchestrator(),
         user.tenant_id,
         project_id,
         task_type,

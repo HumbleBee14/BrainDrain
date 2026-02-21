@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateProject } from "@/hooks/use-projects";
+import { useFormValidation } from "@/hooks/use-form-validation";
+import { createProjectSchema, type CreateProjectInput } from "@/lib/validations";
 
 const TASK_TYPES = [
   { value: "chat", label: "Chat / Conversational" },
@@ -18,6 +20,7 @@ const TASK_TYPES = [
 export default function NewProjectPage() {
   const router = useRouter();
   const createProject = useCreateProject();
+  const { errors, validate, clearFieldError } = useFormValidation<CreateProjectInput>(createProjectSchema);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -25,14 +28,10 @@ export default function NewProjectPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    const data = validate({ name, description, task_type: taskType || undefined });
+    if (!data) return;
 
-    await createProject.mutateAsync({
-      name: name.trim(),
-      description: description.trim() || undefined,
-      task_type: taskType || undefined,
-    });
-
+    await createProject.mutateAsync(data);
     router.push("/projects");
   };
 
@@ -62,9 +61,11 @@ export default function NewProjectPage() {
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => clearFieldError("name")}
             placeholder="e.g. Customer Support Bot"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
           />
+          {errors.name && <p className="text-sm text-red-400 mt-1">{errors.name}</p>}
         </div>
 
         <div>
@@ -77,9 +78,11 @@ export default function NewProjectPage() {
             rows={3}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
+            onBlur={() => clearFieldError("description")}
             placeholder="What is this model for?"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 resize-none"
           />
+          {errors.description && <p className="text-sm text-red-400 mt-1">{errors.description}</p>}
         </div>
 
         <div>
@@ -105,7 +108,7 @@ export default function NewProjectPage() {
         <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
-            disabled={!name.trim() || createProject.isPending}
+            disabled={createProject.isPending}
             className="rounded-lg bg-white px-6 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {createProject.isPending ? "Creating..." : "Create Project"}

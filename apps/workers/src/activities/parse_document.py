@@ -9,6 +9,7 @@ import io
 import json
 import logging
 from dataclasses import dataclass
+from typing import Protocol
 
 import fitz  # PyMuPDF
 from bs4 import BeautifulSoup
@@ -37,6 +38,273 @@ class ParseDocumentOutput:
     language: str | None
     parse_quality: float
     parsed_storage_path: str
+
+
+# ── Parser Protocol & Registry ──
+
+
+class DocumentParser(Protocol):
+    """Protocol for document parsers. Implement this to add new format support."""
+
+    @property
+    def name(self) -> str:
+        """Parser name for metadata."""
+        ...
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        """Check if this parser handles the given mime type / file extension."""
+        ...
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        """Parse raw bytes into structured pages."""
+        ...
+
+
+_PARSER_REGISTRY: list[DocumentParser] = []
+
+
+def register_parser(parser: DocumentParser) -> DocumentParser:
+    """Register a parser in the global registry."""
+    _PARSER_REGISTRY.append(parser)
+    return parser
+
+
+def get_parser(mime_type: str, storage_path: str) -> DocumentParser:
+    """Find the first parser that can handle this file type."""
+    mime = mime_type.lower()
+    for parser in _PARSER_REGISTRY:
+        if parser.can_parse(mime, storage_path):
+            return parser
+    # Fallback to plain text
+    return _PLAIN_TEXT_PARSER
+
+
+# ── Concrete Parsers ──
+
+
+class PdfParser:
+    """Extract text and structure from PDF using PyMuPDF."""
+
+    @property
+    def name(self) -> str:
+        return "pymupdf"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type == "application/pdf" or storage_path.endswith(".pdf")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        pages = []
+        doc = fitz.open(stream=raw_bytes, filetype="pdf")
+
+        for page_num, page in enumerate(doc, start=1):
+            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+            sections = []
+            page_text_parts = []
+
+            for block in blocks:
+                if block["type"] == 0:  # text block
+                    for line in block.get("lines", []):
+                        text = "".join(span["text"] for span in line.get("spans", []))
+                        if not text.strip():
+                            continue
+
+                        # Detect headings by font size
+                        max_size = max(
+                            (span.get("size", 12) for span in line.get("spans", [])),
+                            default=12,
+                        )
+                        section_type = "heading" if max_size > 14 else "paragraph"
+
+                        sections.append({"type": section_type, "content": text.strip()})
+                        page_text_parts.append(text.strip())
+
+            pages.append(
+                {
+                    "page_num": page_num,
+                    "text": "\n".join(page_text_parts),
+                    "sections": sections,
+                }
+            )
+
+        doc.close()
+        return pages
+
+
+class DocxParser:
+    """Extract text and structure from DOCX using python-docx."""
+
+    @property
+    def name(self) -> str:
+        return "python-docx"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type in (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ) or storage_path.endswith(".docx")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        doc = DocxDocument(io.BytesIO(raw_bytes))
+        sections = []
+        text_parts = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+
+            style_name = para.style.name if para.style else ""
+            if style_name.startswith("Heading"):
+                level = 1
+                try:
+                    level = int(style_name.replace("Heading ", "").replace("Heading", "1"))
+                except ValueError:
+                    pass
+                sections.append({"type": "heading", "level": level, "content": text})
+            else:
+                sections.append({"type": "paragraph", "content": text})
+            text_parts.append(text)
+
+        # Extract tables
+        for table in doc.tables:
+            rows = []
+            for row in table.rows:
+                rows.append([cell.text.strip() for cell in row.cells])
+            if rows:
+                sections.append({"type": "table", "rows": rows})
+                text_parts.append(" | ".join(rows[0]) if rows else "")
+
+        # DOCX doesn't have page numbers, treat as single page
+        return [{"page_num": 1, "text": "\n".join(text_parts), "sections": sections}]
+
+
+class HtmlParser:
+    """Extract text and structure from HTML using BeautifulSoup."""
+
+    @property
+    def name(self) -> str:
+        return "beautifulsoup"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type == "text/html" or storage_path.endswith(".html")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        text = raw_bytes.decode("utf-8", errors="replace")
+        soup = BeautifulSoup(text, "html.parser")
+
+        # Remove script and style elements
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+
+        sections = []
+        text_parts = []
+
+        for element in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td"]):
+            content = element.get_text(strip=True)
+            if not content:
+                continue
+
+            tag_name = element.name
+            if tag_name.startswith("h"):
+                level = int(tag_name[1])
+                sections.append({"type": "heading", "level": level, "content": content})
+            else:
+                sections.append({"type": "paragraph", "content": content})
+            text_parts.append(content)
+
+        return [{"page_num": 1, "text": "\n".join(text_parts), "sections": sections}]
+
+
+class MarkdownParser:
+    """Parse Markdown by converting to HTML then extracting structure."""
+
+    _html_parser: HtmlParser
+
+    def __init__(self, html_parser: HtmlParser) -> None:
+        self._html_parser = html_parser
+
+    @property
+    def name(self) -> str:
+        return "markdown"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type == "text/markdown" or storage_path.endswith(".md")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        md_text = raw_bytes.decode("utf-8", errors="replace")
+        html = markdown(md_text)
+        return self._html_parser.parse(html.encode("utf-8"))
+
+
+class CsvParser:
+    """Parse CSV into structured tabular format."""
+
+    @property
+    def name(self) -> str:
+        return "csv"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type == "text/csv" or storage_path.endswith(".csv")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        text = raw_bytes.decode("utf-8", errors="replace")
+        reader = csv.reader(io.StringIO(text))
+        rows = list(reader)
+
+        if not rows:
+            return [{"page_num": 1, "text": "", "sections": []}]
+
+        headers = rows[0]
+        data_rows = rows[1:]
+
+        sections = [{"type": "table", "headers": headers, "rows": data_rows}]
+        text_repr = "\n".join(" | ".join(row) for row in rows)
+        return [{"page_num": 1, "text": text_repr, "sections": sections}]
+
+
+class PlainTextParser:
+    """Parse plain text — split by paragraphs. Also serves as the fallback parser."""
+
+    @property
+    def name(self) -> str:
+        return "plaintext"
+
+    def can_parse(self, mime_type: str, storage_path: str) -> bool:
+        return mime_type.startswith("text/") or storage_path.endswith(".txt")
+
+    def parse(self, raw_bytes: bytes) -> list[dict]:
+        text = raw_bytes.decode("utf-8", errors="replace")
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+
+        sections = [{"type": "paragraph", "content": p} for p in paragraphs]
+        return [{"page_num": 1, "text": text, "sections": sections}]
+
+
+# ── Register parsers (order matters — PlainTextParser must be last) ──
+
+_html_parser_instance = HtmlParser()
+
+_PDF_PARSER = register_parser(PdfParser())
+_DOCX_PARSER = register_parser(DocxParser())
+_HTML_PARSER = register_parser(_html_parser_instance)
+_MARKDOWN_PARSER = register_parser(MarkdownParser(_html_parser_instance))
+_CSV_PARSER = register_parser(CsvParser())
+_PLAIN_TEXT_PARSER = register_parser(PlainTextParser())
+
+
+# ── Dispatch functions ──
+
+
+def _parse_by_type(raw_bytes: bytes, mime_type: str, storage_path: str) -> list[dict]:
+    """Route to the appropriate parser based on mime type."""
+    parser = get_parser(mime_type, storage_path)
+    return parser.parse(raw_bytes)
+
+
+def _parser_name(mime_type: str) -> str:
+    """Return parser name for metadata."""
+    parser = get_parser(mime_type, "")
+    return parser.name
 
 
 # ── Main activity ──
@@ -139,169 +407,6 @@ async def parse_document(input: ParseDocumentInput) -> ParseDocumentOutput:
         raise
 
 
-# ── Parsers ──
-
-
-def _parse_by_type(raw_bytes: bytes, mime_type: str, storage_path: str) -> list[dict]:
-    """Route to the appropriate parser based on mime type."""
-    mime = mime_type.lower()
-
-    if mime == "application/pdf" or storage_path.endswith(".pdf"):
-        return _parse_pdf(raw_bytes)
-    elif mime in (
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/msword",
-    ) or storage_path.endswith(".docx"):
-        return _parse_docx(raw_bytes)
-    elif mime == "text/html" or storage_path.endswith(".html"):
-        return _parse_html(raw_bytes)
-    elif mime == "text/markdown" or storage_path.endswith(".md"):
-        return _parse_markdown(raw_bytes)
-    elif mime == "text/csv" or storage_path.endswith(".csv"):
-        return _parse_csv(raw_bytes)
-    elif mime.startswith("text/") or storage_path.endswith(".txt"):
-        return _parse_text(raw_bytes)
-    else:
-        # Fallback: treat as plain text
-        logger.warning("Unknown mime type %s, treating as plain text", mime_type)
-        return _parse_text(raw_bytes)
-
-
-def _parse_pdf(raw_bytes: bytes) -> list[dict]:
-    """Extract text and structure from PDF using PyMuPDF."""
-    pages = []
-    doc = fitz.open(stream=raw_bytes, filetype="pdf")
-
-    for page_num, page in enumerate(doc, start=1):
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-        sections = []
-        page_text_parts = []
-
-        for block in blocks:
-            if block["type"] == 0:  # text block
-                for line in block.get("lines", []):
-                    text = "".join(span["text"] for span in line.get("spans", []))
-                    if not text.strip():
-                        continue
-
-                    # Detect headings by font size
-                    max_size = max(
-                        (span.get("size", 12) for span in line.get("spans", [])), default=12
-                    )
-                    section_type = "heading" if max_size > 14 else "paragraph"
-
-                    sections.append({"type": section_type, "content": text.strip()})
-                    page_text_parts.append(text.strip())
-
-        pages.append(
-            {
-                "page_num": page_num,
-                "text": "\n".join(page_text_parts),
-                "sections": sections,
-            }
-        )
-
-    doc.close()
-    return pages
-
-
-def _parse_docx(raw_bytes: bytes) -> list[dict]:
-    """Extract text and structure from DOCX using python-docx."""
-    doc = DocxDocument(io.BytesIO(raw_bytes))
-    sections = []
-    text_parts = []
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-
-        style_name = para.style.name if para.style else ""
-        if style_name.startswith("Heading"):
-            level = 1
-            try:
-                level = int(style_name.replace("Heading ", "").replace("Heading", "1"))
-            except ValueError:
-                pass
-            sections.append({"type": "heading", "level": level, "content": text})
-        else:
-            sections.append({"type": "paragraph", "content": text})
-        text_parts.append(text)
-
-    # Extract tables
-    for table in doc.tables:
-        rows = []
-        for row in table.rows:
-            rows.append([cell.text.strip() for cell in row.cells])
-        if rows:
-            sections.append({"type": "table", "rows": rows})
-            text_parts.append(" | ".join(rows[0]) if rows else "")
-
-    # DOCX doesn't have page numbers, treat as single page
-    return [{"page_num": 1, "text": "\n".join(text_parts), "sections": sections}]
-
-
-def _parse_html(raw_bytes: bytes) -> list[dict]:
-    """Extract text and structure from HTML using BeautifulSoup."""
-    text = raw_bytes.decode("utf-8", errors="replace")
-    soup = BeautifulSoup(text, "html.parser")
-
-    # Remove script and style elements
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-
-    sections = []
-    text_parts = []
-
-    for element in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "td"]):
-        content = element.get_text(strip=True)
-        if not content:
-            continue
-
-        tag_name = element.name
-        if tag_name.startswith("h"):
-            level = int(tag_name[1])
-            sections.append({"type": "heading", "level": level, "content": content})
-        else:
-            sections.append({"type": "paragraph", "content": content})
-        text_parts.append(content)
-
-    return [{"page_num": 1, "text": "\n".join(text_parts), "sections": sections}]
-
-
-def _parse_markdown(raw_bytes: bytes) -> list[dict]:
-    """Parse Markdown by converting to HTML then extracting structure."""
-    md_text = raw_bytes.decode("utf-8", errors="replace")
-    html = markdown(md_text)
-    return _parse_html(html.encode("utf-8"))
-
-
-def _parse_text(raw_bytes: bytes) -> list[dict]:
-    """Parse plain text — split by paragraphs."""
-    text = raw_bytes.decode("utf-8", errors="replace")
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
-    sections = [{"type": "paragraph", "content": p} for p in paragraphs]
-    return [{"page_num": 1, "text": text, "sections": sections}]
-
-
-def _parse_csv(raw_bytes: bytes) -> list[dict]:
-    """Parse CSV into structured tabular format."""
-    text = raw_bytes.decode("utf-8", errors="replace")
-    reader = csv.reader(io.StringIO(text))
-    rows = list(reader)
-
-    if not rows:
-        return [{"page_num": 1, "text": "", "sections": []}]
-
-    headers = rows[0]
-    data_rows = rows[1:]
-
-    sections = [{"type": "table", "headers": headers, "rows": data_rows}]
-    text_repr = "\n".join(" | ".join(row) for row in rows)
-    return [{"page_num": 1, "text": text_repr, "sections": sections}]
-
-
 # ── Helpers ──
 
 
@@ -339,19 +444,3 @@ def _compute_quality(pages: list[dict], original_size: int) -> float:
     encoding_score = max(0.0, 1.0 - replacement_ratio * 10)
 
     return round((density_score + structure_score + encoding_score) / 3.0, 2)
-
-
-def _parser_name(mime_type: str) -> str:
-    """Return parser name for metadata."""
-    mime = mime_type.lower()
-    if "pdf" in mime:
-        return "pymupdf"
-    elif "word" in mime or "docx" in mime:
-        return "python-docx"
-    elif "html" in mime:
-        return "beautifulsoup"
-    elif "markdown" in mime or "md" in mime:
-        return "markdown"
-    elif "csv" in mime:
-        return "csv"
-    return "plaintext"

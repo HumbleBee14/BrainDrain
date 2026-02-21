@@ -2,8 +2,9 @@ use platform_storage::s3::{S3Config, S3Storage};
 use sqlx::PgPool;
 use std::sync::Arc;
 
+use crate::auth::{AuthProviderChain, ClerkAuthProvider};
 use crate::config::Config;
-use crate::temporal::TemporalClient;
+use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
 /// Shared application state available to all route handlers.
 ///
@@ -19,7 +20,8 @@ struct AppStateInner {
     pub db: PgPool,
     pub redis: redis::aio::ConnectionManager,
     pub storage: S3Storage,
-    pub temporal: Option<TemporalClient>,
+    pub orchestrator: Option<Arc<dyn WorkflowOrchestrator>>,
+    pub auth_chain: AuthProviderChain,
 }
 
 impl AppState {
@@ -57,22 +59,31 @@ impl AppState {
 
         tracing::info!("S3 client initialized (bucket: {})", &config.s3_bucket);
 
-        // Temporal (optional — API works without it, just can't trigger workflows)
-        let temporal = if !config.temporal_host.is_empty() {
-            let client = TemporalClient::new(
-                &config.temporal_host,
-                &config.temporal_namespace,
-                "ml-pipeline",
-            );
-            tracing::info!(
-                "Temporal client configured (host: {})",
-                &config.temporal_host
-            );
-            Some(client)
-        } else {
-            tracing::warn!("Temporal not configured — workflow triggers disabled");
-            None
-        };
+        // Workflow orchestrator (optional — API works without it, just can't trigger workflows)
+        let orchestrator: Option<Arc<dyn WorkflowOrchestrator>> =
+            if !config.temporal_host.is_empty() {
+                let client = TemporalClient::new(
+                    &config.temporal_host,
+                    &config.temporal_namespace,
+                    "ml-pipeline",
+                );
+                tracing::info!(
+                    "Workflow orchestrator configured (host: {})",
+                    &config.temporal_host
+                );
+                Some(Arc::new(client))
+            } else {
+                tracing::warn!("Workflow orchestrator not configured — workflow triggers disabled");
+                None
+            };
+
+        // Auth provider chain
+        let auth_chain = AuthProviderChain::new().add(ClerkAuthProvider::new(
+            config.clerk_jwks_url.clone(),
+            config.is_dev(),
+        ));
+
+        tracing::info!("Auth provider chain initialized");
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -80,7 +91,8 @@ impl AppState {
                 db,
                 redis,
                 storage,
-                temporal,
+                orchestrator,
+                auth_chain,
             }),
         })
     }
@@ -101,7 +113,11 @@ impl AppState {
         &self.inner.storage
     }
 
-    pub fn temporal(&self) -> Option<&TemporalClient> {
-        self.inner.temporal.as_ref()
+    pub fn orchestrator(&self) -> Option<&dyn WorkflowOrchestrator> {
+        self.inner.orchestrator.as_deref()
+    }
+
+    pub fn auth_chain(&self) -> &AuthProviderChain {
+        &self.inner.auth_chain
     }
 }

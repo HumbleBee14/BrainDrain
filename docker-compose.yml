@@ -9,17 +9,26 @@ services:
       POSTGRES_PASSWORD: platform_dev
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    shm_size: 256mb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U platform"]
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -27,6 +36,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   minio:
     image: minio/minio:latest
@@ -44,6 +61,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
   # vLLM inference server with LoRA adapter support
   # Requires NVIDIA GPU. Uncomment to enable model deployment.

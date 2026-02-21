@@ -123,7 +123,7 @@ async fn chat_completions(
         let model_id = api_key.model_id;
         let key_id = api_key.key_id;
         tokio::spawn(async move {
-            let _ = BillingEventRepo::create(
+            if let Err(e) = BillingEventRepo::create(
                 &db,
                 tenant_id,
                 "inference",
@@ -134,7 +134,15 @@ async fn chat_completions(
                 estimate_cost(tokens_in, tokens_out),
                 serde_json::json!({"api_key_id": key_id.to_string()}),
             )
-            .await;
+            .await
+            {
+                tracing::error!(
+                    tenant_id = %tenant_id,
+                    model_id = %model_id,
+                    error = %e,
+                    "Failed to create billing event"
+                );
+            }
         });
     }
 

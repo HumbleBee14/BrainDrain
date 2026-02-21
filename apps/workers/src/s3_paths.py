@@ -32,6 +32,13 @@ def adapter_file(tenant_id: str, model_id: str, filename: str) -> str:
     return f"adapters/{tenant_id}/{model_id}/{filename}"
 
 
+def adapter_training_prefix(tenant_id: str, job_id: str) -> str:
+    """Adapter path keyed by training job ID (used at training time before
+    the model record exists). See also ``adapter_prefix`` which is keyed
+    by model ID for post-training lookups."""
+    return f"adapters/{tenant_id}/{job_id}/"
+
+
 def checkpoint_prefix(tenant_id: str, training_id: str) -> str:
     return f"checkpoints/{tenant_id}/{training_id}/"
 

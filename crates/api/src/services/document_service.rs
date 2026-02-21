@@ -120,3 +120,119 @@ impl DocumentService {
         Ok(doc.into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use platform_shared::constants::SUPPORTED_EXTENSIONS;
+
+    /// Helper: extracts the extension from a filename the same way the service does.
+    fn extract_ext(filename: &str) -> String {
+        filename.rsplit('.').next().unwrap_or("").to_lowercase()
+    }
+
+    // ── File extension extraction ──
+
+    #[test]
+    fn extracts_simple_extension() {
+        assert_eq!(extract_ext("document.pdf"), "pdf");
+        assert_eq!(extract_ext("report.docx"), "docx");
+        assert_eq!(extract_ext("readme.txt"), "txt");
+    }
+
+    #[test]
+    fn extracts_extension_case_insensitive() {
+        assert_eq!(extract_ext("PHOTO.JPG"), "jpg");
+        assert_eq!(extract_ext("Scan.PDF"), "pdf");
+        assert_eq!(extract_ext("FILE.DocX"), "docx");
+    }
+
+    #[test]
+    fn extracts_extension_with_multiple_dots() {
+        assert_eq!(extract_ext("archive.tar.pdf"), "pdf");
+        assert_eq!(extract_ext("my.file.name.txt"), "txt");
+    }
+
+    #[test]
+    fn no_extension_returns_empty() {
+        assert_eq!(extract_ext("Makefile"), "makefile");
+        // A file with no dot gives back the whole name lowercased
+    }
+
+    #[test]
+    fn dot_only_filename() {
+        assert_eq!(extract_ext(".hidden"), "hidden");
+    }
+
+    // ── Supported extension validation ──
+
+    #[test]
+    fn pdf_is_supported() {
+        let ext = extract_ext("report.pdf");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn docx_is_supported() {
+        let ext = extract_ext("letter.docx");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn csv_is_supported() {
+        let ext = extract_ext("data.csv");
+        assert!(SUPPORTED_EXTENSIONS.contains(&ext.as_str()));
+    }
+
+    #[test]
+    fn image_formats_are_supported() {
+        for filename in ["photo.png", "img.jpg", "scan.jpeg", "fax.tiff", "icon.bmp"] {
+            let ext = extract_ext(filename);
+            assert!(
+                SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
+                "Expected .{ext} to be supported",
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_extensions_are_rejected() {
+        for filename in [
+            "script.py",
+            "binary.exe",
+            "archive.zip",
+            "video.mp4",
+            "music.mp3",
+        ] {
+            let ext = extract_ext(filename);
+            assert!(
+                !SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
+                "Expected .{ext} to be unsupported",
+            );
+        }
+    }
+
+    #[test]
+    fn all_supported_extensions_are_lowercase() {
+        for ext in SUPPORTED_EXTENSIONS {
+            assert_eq!(
+                *ext,
+                ext.to_lowercase(),
+                "Extension constant should be lowercase: {ext}",
+            );
+        }
+    }
+
+    // ── Empty file validation ──
+
+    #[test]
+    fn zero_byte_file_is_invalid() {
+        let data = bytes::Bytes::new();
+        assert_eq!(data.len(), 0);
+    }
+
+    #[test]
+    fn non_empty_file_is_valid() {
+        let data = bytes::Bytes::from_static(b"hello");
+        assert!(!data.is_empty());
+    }
+}

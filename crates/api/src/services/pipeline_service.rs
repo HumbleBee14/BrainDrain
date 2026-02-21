@@ -11,7 +11,7 @@ use crate::repositories::document_repo::DocumentRepo;
 use crate::repositories::evaluation_repo::EvaluationRepo;
 use crate::repositories::model_repo::ModelRepo;
 use crate::repositories::training_job_repo::TrainingJobRepo;
-use crate::temporal::TemporalClient;
+use crate::temporal::WorkflowOrchestrator;
 
 /// Business logic for pipeline orchestration.
 ///
@@ -24,12 +24,13 @@ impl PipelineService {
     /// Finds documents with status "uploaded" and starts an IngestWorkflow.
     pub async fn trigger_parse(
         db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
     ) -> AppResult<TriggerParseResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Pipeline workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Pipeline workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
         let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "uploaded").await?;
@@ -43,7 +44,7 @@ impl PipelineService {
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
 
-        let result = temporal
+        let result = orchestrator
             .start_ingest(tenant_id, project_id, doc_ids)
             .await
             .map_err(|e| {
@@ -68,14 +69,15 @@ impl PipelineService {
     /// Finds documents with status "parsed" and starts a RefineWorkflow.
     pub async fn trigger_refine(
         db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
         task_type: &str,
         config: serde_json::Value,
     ) -> AppResult<TriggerRefineResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Pipeline workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Pipeline workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
         let docs = DocumentRepo::list_by_status(db, tenant_id, project_id, "parsed").await?;
@@ -89,7 +91,7 @@ impl PipelineService {
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
 
-        let result = temporal
+        let result = orchestrator
             .start_refine(tenant_id, project_id, doc_ids, task_type, config)
             .await
             .map_err(|e| {

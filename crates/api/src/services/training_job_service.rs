@@ -6,7 +6,7 @@ use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
 use crate::error::{AppError, AppResult};
 use crate::repositories::dataset_repo::DatasetRepo;
 use crate::repositories::training_job_repo::TrainingJobRepo;
-use crate::temporal::TemporalClient;
+use crate::temporal::WorkflowOrchestrator;
 use platform_shared::enums::{TrainingMethod, TrainingMode};
 
 /// Business logic for training job operations.
@@ -16,13 +16,14 @@ impl TrainingJobService {
     /// Create a new training job and auto-trigger the TrainWorkflow.
     pub async fn create(
         db: &PgPool,
-        temporal: Option<&TemporalClient>,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
         req: CreateTrainingJobRequest,
     ) -> AppResult<TrainingJobResponse> {
-        let temporal = temporal.ok_or(AppError::BadRequest {
-            message: "Training workflows are not available (Temporal not configured)".to_string(),
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Training workflows are not available (orchestrator not configured)"
+                .to_string(),
         })?;
 
         // Parse and validate dataset_id
@@ -97,8 +98,8 @@ impl TrainingJobService {
             platform_shared::s3_paths::dataset_path(tenant_id, project_id, dataset_id)
         });
 
-        // Start TrainWorkflow via Temporal
-        let result = temporal
+        // Start TrainWorkflow via orchestrator
+        let result = orchestrator
             .start_train(
                 tenant_id,
                 job.id,
@@ -214,6 +215,7 @@ fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Valu
 }
 
 /// Estimate training cost based on model size, dataset size, and GPU class.
+/// Visible to tests in this module.
 fn estimate_cost(base_model: &str, pair_count: Option<i32>, gpu_class: Option<&str>) -> f64 {
     // Parse approximate parameter count from model name
     let model_lower = base_model.to_lowercase();
@@ -246,4 +248,246 @@ fn estimate_cost(base_model: &str, pair_count: Option<i32>, gpu_class: Option<&s
     // Rough estimate: larger models and more data take longer
     let estimated_hours = (params_b / 7.0) * (pairs / 5000.0).max(0.5) * 0.5;
     (estimated_hours * gpu_rate * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::training_job::CreateTrainingJobRequest;
+    use platform_shared::enums::{TrainingMethod, TrainingMode};
+    use std::str::FromStr;
+
+    // ── merge_hyperparams ──
+
+    #[test]
+    fn default_hyperparams_when_none_provided() {
+        let merged = merge_hyperparams(None);
+        let obj = merged.as_object().expect("should be a JSON object");
+
+        assert_eq!(obj["r"], 16);
+        assert_eq!(obj["lora_alpha"], 16);
+        assert_eq!(obj["num_train_epochs"], 3);
+        assert_eq!(obj["max_seq_length"], 2048);
+        assert_eq!(obj["optim"], "adamw_8bit");
+        assert_eq!(obj["lr_scheduler_type"], "cosine");
+    }
+
+    #[test]
+    fn user_overrides_merge_with_defaults() {
+        let user = serde_json::json!({
+            "r": 32,
+            "num_train_epochs": 5,
+            "custom_field": "custom_value",
+        });
+        let merged = merge_hyperparams(Some(user));
+        let obj = merged.as_object().unwrap();
+
+        // Overridden values
+        assert_eq!(obj["r"], 32);
+        assert_eq!(obj["num_train_epochs"], 5);
+        // Custom field added
+        assert_eq!(obj["custom_field"], "custom_value");
+        // Default values preserved
+        assert_eq!(obj["lora_alpha"], 16);
+        assert_eq!(obj["max_seq_length"], 2048);
+    }
+
+    #[test]
+    fn empty_object_overrides_change_nothing() {
+        let user = serde_json::json!({});
+        let merged = merge_hyperparams(Some(user));
+        let defaults = merge_hyperparams(None);
+        assert_eq!(merged, defaults);
+    }
+
+    #[test]
+    fn non_object_override_is_ignored() {
+        // If the user provides a non-object (e.g. string), defaults are used
+        let user = serde_json::json!("not an object");
+        let merged = merge_hyperparams(Some(user));
+        let defaults = merge_hyperparams(None);
+        assert_eq!(merged, defaults);
+    }
+
+    // ── estimate_cost ──
+
+    #[test]
+    fn cost_is_positive() {
+        let cost = estimate_cost("meta-llama/Llama-3.1-8B", Some(1000), None);
+        assert!(cost > 0.0, "Cost should be positive, got: {cost}");
+    }
+
+    #[test]
+    fn larger_model_costs_more() {
+        let cost_8b = estimate_cost("model-8b", Some(5000), None);
+        let cost_70b = estimate_cost("model-70b", Some(5000), None);
+        assert!(
+            cost_70b > cost_8b,
+            "70B model ({cost_70b}) should cost more than 8B ({cost_8b})",
+        );
+    }
+
+    #[test]
+    fn more_data_costs_more() {
+        let cost_1k = estimate_cost("model-8b", Some(1000), None);
+        let cost_50k = estimate_cost("model-8b", Some(50000), None);
+        assert!(
+            cost_50k > cost_1k,
+            "50K pairs ({cost_50k}) should cost more than 1K ({cost_1k})",
+        );
+    }
+
+    #[test]
+    fn premium_gpu_costs_more() {
+        let cost_t4 = estimate_cost("model-8b", Some(5000), Some("t4"));
+        let cost_h100 = estimate_cost("model-8b", Some(5000), Some("h100"));
+        assert!(
+            cost_h100 > cost_t4,
+            "H100 ({cost_h100}) should cost more than T4 ({cost_t4})",
+        );
+    }
+
+    #[test]
+    fn unknown_gpu_uses_default_rate() {
+        let cost_unknown = estimate_cost("model-8b", Some(5000), Some("unknown_gpu"));
+        let cost_none = estimate_cost("model-8b", Some(5000), None);
+        assert_eq!(
+            cost_unknown, cost_none,
+            "Unknown GPU class should use the same default rate as None",
+        );
+    }
+
+    #[test]
+    fn none_pair_count_uses_default() {
+        let cost = estimate_cost("model-8b", None, None);
+        let cost_1000 = estimate_cost("model-8b", Some(1000), None);
+        assert_eq!(cost, cost_1000, "None pair_count should default to 1000");
+    }
+
+    #[test]
+    fn cost_is_rounded_to_two_decimals() {
+        let cost = estimate_cost("model-8b", Some(5000), None);
+        let rounded = (cost * 100.0).round() / 100.0;
+        assert_eq!(cost, rounded, "Cost should be rounded to 2 decimal places");
+    }
+
+    // ── Model size detection from name ──
+
+    #[test]
+    fn model_size_detected_from_name() {
+        // Verify the cost scaling picks up different model sizes
+        let cost_3b = estimate_cost("some-model-3b", Some(5000), Some("t4"));
+        let cost_7b = estimate_cost("some-model-7b", Some(5000), Some("t4"));
+        let cost_13b = estimate_cost("some-model-13b", Some(5000), Some("t4"));
+        let cost_70b = estimate_cost("some-model-70b", Some(5000), Some("t4"));
+
+        assert!(cost_3b < cost_7b, "3B should cost less than 7B");
+        assert!(cost_7b < cost_13b, "7B should cost less than 13B");
+        assert!(cost_13b < cost_70b, "13B should cost less than 70B");
+    }
+
+    // ── Training method/mode validation ──
+
+    #[test]
+    fn valid_training_methods_parse() {
+        for method in ["qlora", "lora", "full"] {
+            assert!(
+                TrainingMethod::from_str(method).is_ok(),
+                "Expected '{method}' to be a valid TrainingMethod",
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_training_method_rejected() {
+        assert!(TrainingMethod::from_str("invalid").is_err());
+        assert!(TrainingMethod::from_str("").is_err());
+        assert!(TrainingMethod::from_str("QLORA").is_err()); // case sensitive
+    }
+
+    #[test]
+    fn valid_training_modes_parse() {
+        for mode in ["quick", "aligned", "reasoning", "iterative"] {
+            assert!(
+                TrainingMode::from_str(mode).is_ok(),
+                "Expected '{mode}' to be a valid TrainingMode",
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_training_mode_rejected() {
+        assert!(TrainingMode::from_str("fast").is_err());
+        assert!(TrainingMode::from_str("").is_err());
+    }
+
+    // ── Input validation ──
+
+    #[test]
+    fn empty_base_model_fails_validation() {
+        let req = CreateTrainingJobRequest {
+            dataset_id: uuid::Uuid::new_v4().to_string(),
+            base_model: "   ".to_string(),
+            method: None,
+            mode: None,
+            hyperparams: None,
+            gpu_class: None,
+        };
+        assert!(req.base_model.trim().is_empty());
+    }
+
+    #[test]
+    fn invalid_dataset_id_format_fails_parse() {
+        let req = CreateTrainingJobRequest {
+            dataset_id: "not-a-uuid".to_string(),
+            base_model: "meta-llama/Llama-3.1-8B".to_string(),
+            method: None,
+            mode: None,
+            hyperparams: None,
+            gpu_class: None,
+        };
+        assert!(req.dataset_id.parse::<uuid::Uuid>().is_err());
+    }
+
+    #[test]
+    fn valid_dataset_id_parses() {
+        let id = uuid::Uuid::new_v4();
+        let req = CreateTrainingJobRequest {
+            dataset_id: id.to_string(),
+            base_model: "meta-llama/Llama-3.1-8B".to_string(),
+            method: None,
+            mode: None,
+            hyperparams: None,
+            gpu_class: None,
+        };
+        assert_eq!(req.dataset_id.parse::<uuid::Uuid>().unwrap(), id);
+    }
+
+    #[test]
+    fn default_method_is_qlora() {
+        let req = CreateTrainingJobRequest {
+            dataset_id: uuid::Uuid::new_v4().to_string(),
+            base_model: "model".to_string(),
+            method: None,
+            mode: None,
+            hyperparams: None,
+            gpu_class: None,
+        };
+        let method_str = req.method.as_deref().unwrap_or("qlora");
+        assert_eq!(method_str, "qlora");
+    }
+
+    #[test]
+    fn default_mode_is_quick() {
+        let req = CreateTrainingJobRequest {
+            dataset_id: uuid::Uuid::new_v4().to_string(),
+            base_model: "model".to_string(),
+            method: None,
+            mode: None,
+            hyperparams: None,
+            gpu_class: None,
+        };
+        let mode_str = req.mode.as_deref().unwrap_or("quick");
+        assert_eq!(mode_str, "quick");
+    }
 }

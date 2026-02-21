@@ -28,9 +28,14 @@ async fn create_evaluation(
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateEvaluationRequest>,
 ) -> AppResult<(StatusCode, Json<EvaluationResponse>)> {
-    let result =
-        EvaluationService::create(state.db(), state.temporal(), user.tenant_id, model_id, body)
-            .await?;
+    let result = EvaluationService::create(
+        state.db(),
+        state.orchestrator(),
+        user.tenant_id,
+        model_id,
+        body,
+    )
+    .await?;
 
     Ok((StatusCode::CREATED, Json(result)))
 }

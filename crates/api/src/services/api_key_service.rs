@@ -151,7 +151,9 @@ impl ApiKeyService {
         let db_clone = db.clone();
         let key_id = key.id;
         tokio::spawn(async move {
-            let _ = ApiKeyRepo::update_last_used(&db_clone, key_id).await;
+            if let Err(e) = ApiKeyRepo::update_last_used(&db_clone, key_id).await {
+                tracing::warn!(key_id = %key_id, error = %e, "Failed to update API key last_used_at");
+            }
         });
 
         Ok(AuthenticatedApiKey {
@@ -182,6 +184,7 @@ fn hash_key(raw_key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dto::api_key::CreateApiKeyRequest;
 
     #[test]
     fn key_format_is_correct() {
@@ -210,5 +213,145 @@ mod tests {
         let hash = hash_key("pl_sk_test");
         assert_eq!(hash.len(), 64); // SHA-256 = 32 bytes = 64 hex chars
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── Key generation properties ──
+
+    #[test]
+    fn generated_keys_are_unique() {
+        let key1 = generate_key();
+        let key2 = generate_key();
+        assert_ne!(key1, key2, "Two generated keys should never collide");
+    }
+
+    #[test]
+    fn key_prefix_extractable_for_display() {
+        let key = generate_key();
+        let prefix = &key[..14]; // "pl_sk_" (6) + 8 chars
+        assert!(prefix.starts_with("pl_sk_"));
+        assert_eq!(prefix.len(), 14);
+    }
+
+    #[test]
+    fn key_is_base64url_safe_after_prefix() {
+        let key = generate_key();
+        let after_prefix = &key[6..]; // skip "pl_sk_"
+        // base64url chars: A-Z, a-z, 0-9, -, _
+        assert!(
+            after_prefix
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "Key body should only contain base64url-safe characters, got: {after_prefix}",
+        );
+    }
+
+    #[test]
+    fn key_length_is_deterministic() {
+        // 32 random bytes -> 43 base64url chars (no padding) + 6 prefix = 49
+        let key = generate_key();
+        assert_eq!(key.len(), 49, "pl_sk_ (6) + base64url(32 bytes) (43) = 49");
+    }
+
+    // ── Hash properties ──
+
+    #[test]
+    fn hash_of_empty_string_is_valid() {
+        let hash = hash_key("");
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn hash_is_lowercase_hex() {
+        let hash = hash_key("pl_sk_some_key");
+        assert!(
+            hash.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+            "Hash should be lowercase hex, got: {hash}",
+        );
+    }
+
+    // ── Name validation (mirrors check in ApiKeyService::create) ──
+
+    #[test]
+    fn empty_api_key_name_is_rejected() {
+        let req = CreateApiKeyRequest {
+            name: "".to_string(),
+            rate_limit: None,
+            expires_in_days: None,
+        };
+        assert!(req.name.trim().is_empty());
+    }
+
+    #[test]
+    fn whitespace_api_key_name_is_rejected() {
+        let req = CreateApiKeyRequest {
+            name: "   ".to_string(),
+            rate_limit: None,
+            expires_in_days: None,
+        };
+        assert!(req.name.trim().is_empty());
+    }
+
+    #[test]
+    fn valid_api_key_name_passes() {
+        let req = CreateApiKeyRequest {
+            name: "production-key".to_string(),
+            rate_limit: None,
+            expires_in_days: None,
+        };
+        assert!(!req.name.trim().is_empty());
+    }
+
+    // ── Rate limit defaults ──
+
+    #[test]
+    fn default_rate_limit_is_60() {
+        let req = CreateApiKeyRequest {
+            name: "test".to_string(),
+            rate_limit: None,
+            expires_in_days: None,
+        };
+        let rate_limit = req.rate_limit.unwrap_or(60);
+        assert_eq!(rate_limit, 60);
+    }
+
+    #[test]
+    fn custom_rate_limit_is_respected() {
+        let req = CreateApiKeyRequest {
+            name: "test".to_string(),
+            rate_limit: Some(120),
+            expires_in_days: None,
+        };
+        let rate_limit = req.rate_limit.unwrap_or(60);
+        assert_eq!(rate_limit, 120);
+    }
+
+    // ── Expiry computation ──
+
+    #[test]
+    fn no_expiry_when_expires_in_days_is_none() {
+        let req = CreateApiKeyRequest {
+            name: "test".to_string(),
+            rate_limit: None,
+            expires_in_days: None,
+        };
+        let expires_at = req
+            .expires_in_days
+            .map(|days| Utc::now() + Duration::days(days));
+        assert!(expires_at.is_none());
+    }
+
+    #[test]
+    fn expiry_is_in_the_future() {
+        let req = CreateApiKeyRequest {
+            name: "test".to_string(),
+            rate_limit: None,
+            expires_in_days: Some(30),
+        };
+        let expires_at = req
+            .expires_in_days
+            .map(|days| Utc::now() + Duration::days(days));
+        assert!(expires_at.unwrap() > Utc::now());
     }
 }

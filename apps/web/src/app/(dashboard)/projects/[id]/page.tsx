@@ -9,115 +9,13 @@ import { useDatasets } from "@/hooks/use-datasets";
 import { useTrainingJobs, useCreateTrainingJob, useCancelTrainingJob } from "@/hooks/use-training";
 import { useModels } from "@/hooks/use-models";
 import { useCallback, useRef, useState } from "react";
-import type { Document } from "@/lib/api-client";
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    active: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    created: "bg-blue-900/50 text-blue-400 border-blue-800",
-    archived: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    draft: "bg-amber-900/50 text-amber-400 border-amber-800",
-  };
-
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
-
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
-      {status}
-    </span>
-  );
-}
-
-function DocStatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    uploaded: "bg-blue-900/50 text-blue-400 border-blue-800",
-    parsing: "bg-amber-900/50 text-amber-400 border-amber-800",
-    parsed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
-  };
-
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
-
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
-      {status}
-    </span>
-  );
-}
-
-function TrainingStatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    cost_approval: "bg-amber-900/50 text-amber-400 border-amber-800",
-    provisioning: "bg-blue-900/50 text-blue-400 border-blue-800",
-    training: "bg-violet-900/50 text-violet-400 border-violet-800 animate-pulse",
-    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
-    cancelled: "bg-zinc-800 text-zinc-500 border-zinc-700",
-  };
-
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
-
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
-      {status.replace("_", " ")}
-    </span>
-  );
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function DocumentRow({ doc }: { doc: Document }) {
-  return (
-    <div className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="min-w-0">
-          <p className="text-sm text-white truncate">{doc.filename}</p>
-          <p className="text-xs text-zinc-600">
-            {formatFileSize(doc.file_size)}
-            {doc.language && ` \u00b7 ${doc.language}`}
-            {doc.page_count && ` \u00b7 ${doc.page_count} pages`}
-          </p>
-        </div>
-      </div>
-      <div className="flex items-center gap-3 shrink-0">
-        {doc.parse_quality != null && (
-          <span className="text-xs text-zinc-500">
-            {(doc.parse_quality * 100).toFixed(0)}% quality
-          </span>
-        )}
-        <DocStatusBadge status={doc.status} />
-      </div>
-    </div>
-  );
-}
-
-function PipelineStageCard({
-  label,
-  count,
-  active,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-lg border p-4 text-center ${
-        active
-          ? "border-emerald-800 bg-emerald-900/20"
-          : "border-zinc-800"
-      }`}
-    >
-      <p className="text-2xl font-bold text-white">{count}</p>
-      <p className="text-xs text-zinc-500 mt-1">{label}</p>
-    </div>
-  );
-}
+import {
+  StatusBadge,
+  DocStatusBadge,
+  TrainingStatusBadge,
+  DocumentRow,
+  PipelineStageCard,
+} from "./components";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();

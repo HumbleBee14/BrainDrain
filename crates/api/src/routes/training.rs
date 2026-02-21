@@ -49,7 +49,7 @@ async fn create_training_job(
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
     let result = TrainingJobService::create(
         state.db(),
-        state.temporal(),
+        state.orchestrator(),
         user.tenant_id,
         project_id,
         body,

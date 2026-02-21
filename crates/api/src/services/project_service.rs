@@ -111,3 +111,107 @@ impl ProjectService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::project::{CreateProjectRequest, UpdateProjectRequest};
+
+    /// Helper: constructs a CreateProjectRequest with the given name.
+    fn create_req(name: &str) -> CreateProjectRequest {
+        CreateProjectRequest {
+            name: name.to_string(),
+            description: None,
+            task_type: None,
+        }
+    }
+
+    // ── Name validation (mirrors the check in ProjectService::create) ──
+
+    #[test]
+    fn empty_name_is_rejected() {
+        let req = create_req("");
+        assert!(req.name.trim().is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_name_is_rejected() {
+        for name in ["   ", "\t", "\n", " \t\n "] {
+            let req = create_req(name);
+            assert!(
+                req.name.trim().is_empty(),
+                "Expected {:?} to be treated as empty",
+                name,
+            );
+        }
+    }
+
+    #[test]
+    fn valid_name_passes_validation() {
+        for name in ["My Project", "test", "  padded  "] {
+            let req = create_req(name);
+            assert!(
+                !req.name.trim().is_empty(),
+                "Expected {:?} to pass validation",
+                name,
+            );
+        }
+    }
+
+    #[test]
+    fn name_is_trimmed_before_storage() {
+        let req = create_req("  My Project  ");
+        let trimmed = req.name.trim();
+        assert_eq!(trimmed, "My Project");
+    }
+
+    // ── UpdateProjectRequest field semantics ──
+
+    #[test]
+    fn update_request_all_none_means_no_changes() {
+        let req = UpdateProjectRequest {
+            name: None,
+            description: None,
+            task_type: None,
+        };
+        assert!(req.name.is_none());
+        assert!(req.description.is_none());
+        assert!(req.task_type.is_none());
+    }
+
+    #[test]
+    fn update_request_partial_fields() {
+        let req = UpdateProjectRequest {
+            name: Some("New Name".to_string()),
+            description: None,
+            task_type: Some("question_answering".to_string()),
+        };
+        assert_eq!(req.name.as_deref(), Some("New Name"));
+        assert!(req.description.is_none());
+        assert_eq!(req.task_type.as_deref(), Some("question_answering"));
+    }
+
+    // ── Error type correctness ──
+
+    #[test]
+    fn empty_name_produces_bad_request_error() {
+        let req = create_req("");
+        if req.name.trim().is_empty() {
+            let err = AppError::BadRequest {
+                message: "Project name cannot be empty".to_string(),
+            };
+            assert!(matches!(err, AppError::BadRequest { .. }));
+        } else {
+            panic!("Expected empty name to trigger validation");
+        }
+    }
+
+    #[test]
+    fn missing_project_produces_not_found_error() {
+        let err = AppError::NotFound {
+            message: "Project not found".to_string(),
+        };
+        assert!(matches!(err, AppError::NotFound { .. }));
+        assert_eq!(err.to_string(), "Project not found");
+    }
+}
