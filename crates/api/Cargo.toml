@@ -40,6 +40,10 @@ chrono = { workspace = true }
 dotenvy = { workspace = true }
 envy = { workspace = true }
 
+# Crypto
+sha2 = { workspace = true }
+rand = { workspace = true }
+
 # Utilities
 bytes = { workspace = true }
 futures = { workspace = true }

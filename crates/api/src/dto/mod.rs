@@ -1,6 +1,9 @@
+pub mod api_key;
+pub mod billing;
 pub mod common;
 pub mod dataset;
 pub mod document;
+pub mod evaluation;
 pub mod model;
 pub mod pipeline;
 pub mod project;

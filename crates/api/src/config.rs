@@ -78,6 +78,11 @@ pub struct Config {
     #[serde(default = "default_temporal_namespace")]
     pub temporal_namespace: String,
 
+    // ── vLLM ──
+    /// vLLM server URL for model inference.
+    #[serde(default = "default_vllm_api_url")]
+    pub vllm_api_url: String,
+
     // ── CORS ──
     /// Comma-separated list of allowed CORS origins.
     #[serde(default = "default_cors_origins")]
@@ -139,6 +144,9 @@ fn default_temporal_host() -> String {
 }
 fn default_temporal_namespace() -> String {
     "default".to_string()
+}
+fn default_vllm_api_url() -> String {
+    "http://localhost:8080".to_string()
 }
 fn default_cors_origins() -> String {
     "http://localhost:3000".to_string()

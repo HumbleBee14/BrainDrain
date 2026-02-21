@@ -72,7 +72,7 @@ class StartTrainingOutput:
 from src.activities.train_model import start_training  # noqa: E402, F401, I001
 
 
-# ── Evaluation (Phase 3) ──
+# ── Evaluation (Phase 3 — real implementation in run_evaluation.py) ──
 
 
 @dataclass
@@ -83,6 +83,8 @@ class RunEvaluationInput:
     adapter_path: str
     base_model: str
     dataset_path: str
+    judge_model: str = ""
+    judge_api_base: str = ""
 
 
 @dataclass
@@ -91,11 +93,8 @@ class RunEvaluationOutput:
     report: dict
 
 
-@activity.defn
-async def run_evaluation(input: RunEvaluationInput) -> RunEvaluationOutput:
-    """Evaluate a fine-tuned model. Phase 3 implementation."""
-    activity.logger.info("Stub: run_evaluation for %s", input.evaluation_id)
-    return RunEvaluationOutput(scores={}, report={})
+# Re-export from real implementation
+from src.activities.run_evaluation import run_evaluation  # noqa: E402, F401, I001
 
 
 # ── Deployment (Phase 4) ──

@@ -38,6 +38,7 @@ pub struct ProjectPipelineStatus {
     pub datasets: DatasetStatusCounts,
     pub training_jobs: TrainingJobStatusCounts,
     pub models: ModelStatusCounts,
+    pub evaluations: EvaluationStatusCounts,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,4 +72,12 @@ pub struct ModelStatusCounts {
     pub total: i64,
     pub undeployed: i64,
     pub active: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EvaluationStatusCounts {
+    pub total: i64,
+    pub running: i64,
+    pub completed: i64,
+    pub failed: i64,
 }

@@ -45,6 +45,38 @@ services:
       timeout: 5s
       retries: 5
 
+  # vLLM inference server with LoRA adapter support
+  # Requires NVIDIA GPU. Uncomment to enable model deployment.
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   ports:
+  #     - "8080:8000"
+  #   environment:
+  #     VLLM_API_KEY: ""
+  #   command: >
+  #     --model meta-llama/Llama-3.1-8B
+  #     --enable-lora
+  #     --max-lora-rank 64
+  #     --max-loras 4
+  #     --gpu-memory-utilization 0.85
+  #     --max-model-len 4096
+  #   volumes:
+  #     - vllm_cache:/root/.cache/huggingface
+  #     - minio_data:/data
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 120s
+
   # Create default bucket on startup
   minio-init:
     image: minio/mc:latest
@@ -62,3 +94,4 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  # vllm_cache:

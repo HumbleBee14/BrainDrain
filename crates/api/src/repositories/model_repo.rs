@@ -88,4 +88,78 @@ impl ModelRepo {
 
         Ok(count)
     }
+
+    /// Update a model's deployment status.
+    pub async fn update_deployment_status(
+        db: &PgPool,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        status: &str,
+    ) -> Result<Option<Model>, AppError> {
+        let model = sqlx::query_as::<_, Model>(
+            r#"
+            UPDATE models
+            SET deployment_status = $3, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING *
+            "#,
+        )
+        .bind(model_id)
+        .bind(tenant_id)
+        .bind(status)
+        .fetch_optional(db)
+        .await?;
+
+        Ok(model)
+    }
+
+    /// Update deployment status and config together.
+    pub async fn update_deployment(
+        db: &PgPool,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        status: &str,
+        config: serde_json::Value,
+    ) -> Result<Option<Model>, AppError> {
+        let model = sqlx::query_as::<_, Model>(
+            r#"
+            UPDATE models
+            SET deployment_status = $3, deployment_config = $4, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            RETURNING *
+            "#,
+        )
+        .bind(model_id)
+        .bind(tenant_id)
+        .bind(status)
+        .bind(config)
+        .fetch_optional(db)
+        .await?;
+
+        Ok(model)
+    }
+
+    /// Update a model's eval_scores.
+    #[allow(dead_code)]
+    pub async fn update_eval_scores(
+        db: &PgPool,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        scores: serde_json::Value,
+    ) -> Result<bool, AppError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE models
+            SET eval_scores = $3, updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+        )
+        .bind(model_id)
+        .bind(tenant_id)
+        .bind(scores)
+        .execute(db)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }
