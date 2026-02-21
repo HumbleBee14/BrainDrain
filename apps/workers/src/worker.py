@@ -23,6 +23,9 @@ from src.workflows.full_pipeline import FullPipelineWorkflow
 from src.workflows.ingest import IngestWorkflow
 from src.workflows.refine import RefineWorkflow
 from src.workflows.train import TrainWorkflow
+from src.workflows.train_aligned import TrainAlignedWorkflow
+from src.workflows.train_iterative import TrainIterativeWorkflow
+from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 
 async def main() -> None:
@@ -53,7 +56,11 @@ async def main() -> None:
     from src.activities.parse_document import ParseDocumentActivity
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
-    from src.activities.train_model import StartTrainingActivity
+    from src.activities.train_model import (
+        EvaluateHoldoutActivity,
+        StartTrainingActivity,
+        TrainSftRoundActivity,
+    )
 
     # CPU-bound activities (parsing, data generation, dataset building)
     cpu_activities = [
@@ -67,6 +74,8 @@ async def main() -> None:
     # GPU-bound activities (training, evaluation)
     gpu_activities = [
         StartTrainingActivity(infra),
+        TrainSftRoundActivity(infra),
+        EvaluateHoldoutActivity(infra),
         RunEvaluationActivity(infra),
         DeployModelActivity(infra),
     ]
@@ -76,6 +85,9 @@ async def main() -> None:
         IngestWorkflow,
         RefineWorkflow,
         TrainWorkflow,
+        TrainIterativeWorkflow,
+        TrainAlignedWorkflow,
+        TrainReasoningWorkflow,
         EvaluateWorkflow,
         FullPipelineWorkflow,
     ]

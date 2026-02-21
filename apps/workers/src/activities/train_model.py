@@ -1,10 +1,13 @@
-"""Training activity — runs fine-tuning jobs via pluggable strategies.
+"""Training activities — runs fine-tuning jobs via pluggable strategies.
 
-Supports 4 training modes via the strategy registry:
+Strategy-based modes (dispatched by start_training activity):
   - quick:     SFT only (fastest iteration)
   - aligned:   SFT → DPO (production quality alignment)
   - reasoning: SFT → GRPO (reward-guided reasoning optimization)
-  - iterative: Multiple SFT rounds with evaluation between each
+
+Workflow-based activities (called by TrainIterativeWorkflow):
+  - train_sft_round:    Single SFT iteration with checkpoint save
+  - evaluate_holdout:   Validation eval for early stopping decisions
 
 Uses TrainingEngine protocol (default: Unsloth) for model loading,
 LLMJudge protocol for scoring, and Redis streams for real-time metrics.
@@ -20,7 +23,14 @@ from temporalio import activity
 
 from src import s3_paths
 from src.activities.llm_judge import create_judge_from_settings
-from src.activities.stubs import StartTrainingInput, StartTrainingOutput
+from src.activities.stubs import (
+    EvaluateHoldoutInput,
+    EvaluateHoldoutOutput,
+    StartTrainingInput,
+    StartTrainingOutput,
+    TrainSftRoundInput,
+    TrainSftRoundOutput,
+)
 from src.activities.training_engine import (
     get_engine,
     get_strategy,
@@ -96,6 +106,173 @@ class StartTrainingActivity:
                 str(e)[:2000],
             )
             raise
+
+
+class TrainSftRoundActivity:
+    """Single SFT iteration for the iterative workflow.
+
+    Each round: load model (+adapter if continuing), train one SFT pass,
+    save adapter checkpoint to S3. The loop lives in TrainIterativeWorkflow.
+    """
+
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="train_sft_round")
+    async def run(self, input: TrainSftRoundInput) -> TrainSftRoundOutput:
+        engine = get_engine()
+        hp = input.hyperparams
+        job_id = input.training_job_id
+        iteration = input.iteration
+
+        _get_sync_redis(self.infra.settings)
+
+        with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Download dataset
+            dataset_local = tmpdir_path / "dataset.jsonl"
+            _download_dataset(input.dataset_path, dataset_local, self.infra.s3, self.infra.s3_bucket)
+            dataset = _load_chatml_dataset(dataset_local)
+
+            # Load model
+            load_in_4bit = input.method == "qlora"
+            max_seq_length = hp.get("max_seq_length", 2048)
+            model, tokenizer = engine.load_model(
+                model_name=input.base_model,
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+            )
+
+            # Attach adapter
+            target_modules = hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            )
+            model = engine.attach_adapter(
+                model,
+                r=hp.get("r", 16),
+                lora_alpha=hp.get("lora_alpha", 16),
+                lora_dropout=hp.get("lora_dropout", 0),
+                target_modules=target_modules,
+            )
+
+            # If resuming from previous iteration, load adapter weights
+            if input.adapter_path:
+                prev_adapter_dir = tmpdir_path / "prev_adapter"
+                prev_adapter_dir.mkdir(parents=True)
+                _download_adapter(input.adapter_path, prev_adapter_dir, self.infra.s3, self.infra.s3_bucket)
+                model.load_adapter(str(prev_adapter_dir), adapter_name="default")
+                logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
+
+            # Train one SFT round
+            phase = f"iter_{iteration}"
+            metrics = _train_sft(
+                model, tokenizer, dataset, hp, job_id, max_seq_length,
+                phase=phase, tenant_id=input.tenant_id,
+                s3=self.infra.s3, bucket=self.infra.s3_bucket,
+            )
+
+            # Save adapter checkpoint
+            adapter_dir = tmpdir_path / "adapter"
+            engine.save_adapter(model, tokenizer, adapter_dir)
+
+            ckpt_s3_path = s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
+            adapter_size = _upload_adapter(adapter_dir, ckpt_s3_path, self.infra.s3, self.infra.s3_bucket)
+
+            logger.info(
+                "Iteration %d complete for job %s, checkpoint: %s",
+                iteration, job_id, ckpt_s3_path,
+            )
+
+            return TrainSftRoundOutput(
+                adapter_path=ckpt_s3_path,
+                adapter_size_bytes=adapter_size,
+                metrics=metrics,
+            )
+
+
+class EvaluateHoldoutActivity:
+    """Run holdout validation after an SFT round.
+
+    Loads the adapter from the iteration checkpoint and evaluates
+    on the validation split. Returns eval_loss for early stopping decisions.
+    """
+
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="evaluate_holdout")
+    async def run(self, input: EvaluateHoldoutInput) -> EvaluateHoldoutOutput:
+        engine = get_engine()
+        hp = input.hyperparams
+
+        with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{input.training_job_id[:8]}-") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Download validation dataset
+            val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
+            val_local = tmpdir_path / "val.jsonl"
+            _download_dataset(val_s3_path, val_local, self.infra.s3, self.infra.s3_bucket)
+            val_dataset = _load_chatml_dataset(val_local)
+            logger.info("Loaded validation set: %d examples", len(val_dataset))
+
+            # Load model + adapter from this iteration's checkpoint
+            max_seq_length = hp.get("max_seq_length", 2048)
+            load_in_4bit = input.method == "qlora"
+            model, tokenizer = engine.load_model(
+                model_name=input.base_model,
+                max_seq_length=max_seq_length,
+                load_in_4bit=load_in_4bit,
+            )
+
+            target_modules = hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            )
+            model = engine.attach_adapter(
+                model,
+                r=hp.get("r", 16),
+                lora_alpha=hp.get("lora_alpha", 16),
+                lora_dropout=hp.get("lora_dropout", 0),
+                target_modules=target_modules,
+            )
+
+            # Load the adapter weights from this iteration
+            adapter_dir = tmpdir_path / "adapter"
+            adapter_dir.mkdir(parents=True)
+            _download_adapter(input.adapter_path, adapter_dir, self.infra.s3, self.infra.s3_bucket)
+            model.load_adapter(str(adapter_dir), adapter_name="default")
+
+            # Evaluate
+            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
+
+            logger.info(
+                "Holdout eval iteration %d for job %s: eval_loss=%.4f",
+                input.iteration, input.training_job_id, eval_loss,
+            )
+
+            return EvaluateHoldoutOutput(
+                eval_loss=eval_loss,
+                metrics={
+                    "iteration": input.iteration,
+                    "eval_loss": eval_loss,
+                },
+            )
+
+
+def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
+    """Download all files under an S3 prefix to a local directory."""
+    response = s3.list_objects_v2(Bucket=bucket, Prefix=s3_prefix)
+    for obj in response.get("Contents", []):
+        key = obj["Key"]
+        relative = key[len(s3_prefix):]
+        if not relative:
+            continue
+        local_file = local_dir / relative
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(bucket, key, str(local_file))
+    logger.info("Downloaded adapter from %s to %s", s3_prefix, local_dir)
 
 
 async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
@@ -239,31 +416,6 @@ class ReasoningStrategy:
         )
         metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
         return {**metrics_sft, "grpo": metrics_grpo}
-
-
-@register_strategy("iterative")
-class IterativeStrategy:
-    """Multiple SFT rounds with hold-out validation between each."""
-
-    name = "iterative"
-
-    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
-        tenant_id = kwargs.get("tenant_id")
-        dataset_path = kwargs.get("dataset_path")
-        s3 = kwargs.get("s3")
-        bucket = kwargs.get("bucket")
-        return _train_iterative(
-            model,
-            tokenizer,
-            dataset,
-            hp,
-            job_id,
-            max_seq_length,
-            tenant_id=tenant_id,
-            dataset_path=dataset_path,
-            s3=s3,
-            bucket=bucket,
-        )
 
 
 # ── SFT Training ────────────────────────────────────────────────────
@@ -424,74 +576,6 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
         "grpo_steps": train_result.global_step,
         "grpo_runtime": train_result.metrics.get("train_runtime", 0),
     }
-
-
-# ── Iterative Training ──────────────────────────────────────────────
-
-
-def _train_iterative(
-    model,
-    tokenizer,
-    dataset,
-    hp,
-    job_id,
-    max_seq_length,
-    tenant_id=None,
-    dataset_path=None,
-    s3=None,
-    bucket=None,
-):
-    """Run multiple SFT rounds with hold-out validation between each."""
-    num_iterations = hp.get("num_iterations", 3)
-    all_metrics = {}
-
-    val_dataset = None
-    if dataset_path:
-        try:
-            val_s3_path = dataset_path.replace(".jsonl", "_val.jsonl")
-            val_local = Path(tempfile.mktemp(suffix="_val.jsonl"))
-            _download_dataset(val_s3_path, val_local, s3, bucket)
-            val_dataset = _load_chatml_dataset(val_local)
-            logger.info("Loaded validation set: %d examples", len(val_dataset))
-            val_local.unlink(missing_ok=True)
-        except Exception as e:
-            logger.warning("No validation split found (%s), using train loss as proxy", e)
-
-    for iteration in range(num_iterations):
-        phase = f"iter_{iteration}"
-        logger.info("Starting iteration %d/%d for job %s", iteration + 1, num_iterations, job_id)
-
-        iteration_metrics = _train_sft(
-            model,
-            tokenizer,
-            dataset,
-            hp,
-            job_id,
-            max_seq_length,
-            phase=phase,
-            tenant_id=tenant_id,
-            s3=s3,
-            bucket=bucket,
-        )
-        all_metrics[phase] = iteration_metrics
-
-        eval_loss = iteration_metrics.get(f"{phase}_train_loss", 0)
-        if val_dataset is not None:
-            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
-        all_metrics[f"{phase}_eval_loss"] = eval_loss
-
-        _stream_metric(
-            job_id,
-            {
-                "event": "iteration_complete",
-                "iteration": iteration + 1,
-                "total_iterations": num_iterations,
-                "eval_loss": eval_loss,
-            },
-        )
-
-    all_metrics["total_iterations"] = num_iterations
-    return all_metrics
 
 
 def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> float:

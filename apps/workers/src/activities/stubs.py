@@ -71,6 +71,47 @@ class StartTrainingOutput:
     metrics: dict
 
 
+# ── Iterative Training (individual round + holdout eval) ──
+
+
+@dataclass
+class TrainSftRoundInput:
+    tenant_id: str
+    training_job_id: str
+    dataset_path: str
+    base_model: str
+    method: str
+    hyperparams: dict
+    iteration: int
+    adapter_path: str | None  # S3 path to resume from (None for first iteration)
+    gpu_class: str | None
+
+
+@dataclass
+class TrainSftRoundOutput:
+    adapter_path: str  # S3 path where this iteration's adapter was saved
+    adapter_size_bytes: int
+    metrics: dict
+
+
+@dataclass
+class EvaluateHoldoutInput:
+    tenant_id: str
+    training_job_id: str
+    adapter_path: str  # S3 path to the adapter to evaluate
+    base_model: str
+    method: str  # "lora" or "qlora" — determines quantization for model loading
+    dataset_path: str  # S3 path to training data (we derive _val.jsonl)
+    hyperparams: dict
+    iteration: int
+
+
+@dataclass
+class EvaluateHoldoutOutput:
+    eval_loss: float
+    metrics: dict
+
+
 # ── Evaluation (Phase 3 — real implementation in run_evaluation.py) ──
 
 
