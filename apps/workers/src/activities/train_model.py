@@ -44,20 +44,22 @@ class StartTrainingActivity:
 
         try:
             await db.execute(
-                f"UPDATE training_jobs SET status = '{TrainingJobStatus.TRAINING}',"
-                " started_at = NOW() WHERE id = $1",
+                "UPDATE training_jobs SET status = $1,"
+                " started_at = NOW() WHERE id = $2",
+                TrainingJobStatus.TRAINING,
                 job_id,
             )
 
             result = await _run_training(input, self.infra)
 
             await db.execute(
-                f"""UPDATE training_jobs
-                SET status = '{TrainingJobStatus.COMPLETED}',
-                    metrics = $2,
-                    actual_cost = $3,
+                """UPDATE training_jobs
+                SET status = $1,
+                    metrics = $3,
+                    actual_cost = $4,
                     completed_at = NOW()
-                WHERE id = $1""",
+                WHERE id = $2""",
+                TrainingJobStatus.COMPLETED,
                 job_id,
                 json.dumps(result.metrics),
                 result.metrics.get("estimated_cost"),
@@ -86,9 +88,10 @@ class StartTrainingActivity:
         except Exception as e:
             logger.exception("Training failed for job %s", job_id)
             await db.execute(
-                f"""UPDATE training_jobs
-                SET status = '{TrainingJobStatus.FAILED}', error_message = $2, completed_at = NOW()
-                WHERE id = $1""",
+                """UPDATE training_jobs
+                SET status = $1, error_message = $3, completed_at = NOW()
+                WHERE id = $2""",
+                TrainingJobStatus.FAILED,
                 job_id,
                 str(e)[:2000],
             )

@@ -91,9 +91,8 @@ async fn chat_completions(
     });
 
     let vllm_url = &state.config().vllm_api_url;
-    let http = reqwest::Client::new();
 
-    let vllm_resp = http
+    let vllm_resp = state.http_client()
         .post(format!("{vllm_url}/v1/chat/completions"))
         .json(&vllm_request)
         .send()

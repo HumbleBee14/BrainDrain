@@ -92,18 +92,20 @@ class RunEvaluationActivity:
 
         try:
             await db.execute(
-                f"UPDATE evaluations SET status = '{EvaluationStatus.RUNNING}',"
-                " started_at = NOW() WHERE id = $1",
+                "UPDATE evaluations SET status = $1,"
+                " started_at = NOW() WHERE id = $2",
+                EvaluationStatus.RUNNING,
                 eval_id,
             )
 
             scores, report = await _run_all_suites(input, self.infra)
 
             await db.execute(
-                f"""UPDATE evaluations
-                SET status = '{EvaluationStatus.COMPLETED}', scores = $2,
-                    report = $3, completed_at = NOW()
-                WHERE id = $1""",
+                """UPDATE evaluations
+                SET status = $1, scores = $3,
+                    report = $4, completed_at = NOW()
+                WHERE id = $2""",
+                EvaluationStatus.COMPLETED,
                 eval_id,
                 json.dumps(scores),
                 json.dumps(report),
@@ -122,9 +124,10 @@ class RunEvaluationActivity:
         except Exception as e:
             logger.exception("Evaluation failed for %s", eval_id)
             await db.execute(
-                f"""UPDATE evaluations
-                SET status = '{EvaluationStatus.FAILED}', report = $2, completed_at = NOW()
-                WHERE id = $1""",
+                """UPDATE evaluations
+                SET status = $1, report = $3, completed_at = NOW()
+                WHERE id = $2""",
+                EvaluationStatus.FAILED,
                 eval_id,
                 json.dumps({"error": str(e)[:2000]}),
             )

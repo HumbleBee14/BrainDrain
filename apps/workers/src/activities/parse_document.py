@@ -334,8 +334,9 @@ class ParseDocumentActivity:
 
         # Update status to parsing
         await db.execute(
-            f"UPDATE documents SET status = '{DocumentStatus.PARSING}',"
-            " updated_at = now() WHERE id = $1",
+            "UPDATE documents SET status = $1,"
+            " updated_at = now() WHERE id = $2",
+            DocumentStatus.PARSING,
             input.document_id,
         )
 
@@ -380,8 +381,9 @@ class ParseDocumentActivity:
 
             # Update DB
             await db.execute(
-                f"UPDATE documents SET status = '{DocumentStatus.PARSED}', parse_quality = $2, "
-                "page_count = $3, language = $4, updated_at = now() WHERE id = $1",
+                "UPDATE documents SET status = $1, parse_quality = $3, "
+                "page_count = $4, language = $5, updated_at = now() WHERE id = $2",
+                DocumentStatus.PARSED,
                 input.document_id,
                 parse_quality,
                 len(pages),
@@ -406,8 +408,9 @@ class ParseDocumentActivity:
         except Exception as e:
             # Mark as failed in DB
             await db.execute(
-                f"UPDATE documents SET status = '{DocumentStatus.FAILED}', error_message = $2, "
-                "updated_at = now() WHERE id = $1",
+                "UPDATE documents SET status = $1, error_message = $3, "
+                "updated_at = now() WHERE id = $2",
+                DocumentStatus.FAILED,
                 input.document_id,
                 str(e)[:500],
             )

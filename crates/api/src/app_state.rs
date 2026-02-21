@@ -34,6 +34,7 @@ struct AppStateInner {
     pub storage: S3Storage,
     pub orchestrator: Option<Arc<dyn WorkflowOrchestrator>>,
     pub auth_chain: AuthProviderChain,
+    pub http_client: reqwest::Client,
     // Repository trait objects
     pub project_repo: Arc<dyn ProjectRepository>,
     pub document_repo: Arc<dyn DocumentRepository>,
@@ -106,6 +107,9 @@ impl AppState {
 
         tracing::info!("Auth provider chain initialized");
 
+        // Shared HTTP client for outbound requests (connection pooling)
+        let http_client = reqwest::Client::new();
+
         // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone)
         let project_repo: Arc<dyn ProjectRepository> =
             Arc::new(PgProjectRepo::new(db.clone()));
@@ -132,6 +136,7 @@ impl AppState {
                 storage,
                 orchestrator,
                 auth_chain,
+                http_client,
                 project_repo,
                 document_repo,
                 dataset_repo,
@@ -166,6 +171,10 @@ impl AppState {
 
     pub fn auth_chain(&self) -> &AuthProviderChain {
         &self.inner.auth_chain
+    }
+
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.inner.http_client
     }
 
     pub fn project_repo(&self) -> &dyn ProjectRepository {

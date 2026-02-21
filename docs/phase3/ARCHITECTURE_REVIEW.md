@@ -966,3 +966,28 @@ These should be addressed when:
 - The team grows beyond 2-3 engineers (repo traits, CI/CD)
 - A customer needs iterative training at scale (workflow extraction)
 - You're preparing for a security audit or SOC 2 (E2E tests, full RLS verification)
+
+---
+
+## Post-Refactor Audit (2026-02-21)
+
+> After completing the trait-based repos (Rust) and class-based DI (Python) refactors, a final audit was performed. Below are the findings and their resolutions.
+
+### Fixed Immediately
+
+| # | Issue | Severity | Fix |
+|---|-------|----------|-----|
+| 1 | **`reqwest::Client::new()` created per-request in inference route** — No connection pooling for outbound vLLM calls. At scale, this wastes TCP connections and adds latency. | MEDIUM (Perf) | Moved `reqwest::Client` into `AppStateInner` as a shared field. `state.http_client()` accessor added. Inference route now reuses the pooled client. |
+| 2 | **SQL f-string enum interpolation in Python activities** (9 instances across 3 files) — Status enum constants like `TrainingJobStatus.TRAINING` were interpolated via f-strings instead of parameterized `$N` placeholders. Not a real injection risk (values are code-defined constants), but violates defense-in-depth. | LOW (Hygiene) | All 9 instances converted to parameterized queries. `train_model.py` (3), `parse_document.py` (3), `run_evaluation.py` (3). Enum values now passed as `$1` params with all subsequent `$N` shifted. |
+
+### Documented for Future (Not Blocking)
+
+| # | Issue | Severity | Reason to Defer |
+|---|-------|----------|-----------------|
+| 3 | **`#[allow(dead_code)]` on error variants** (`Conflict`, `RateLimited`, `NotImplemented`) and `ErrorContext` struct in `crates/api/src/error.rs` | INFO | These are scaffolding for future API features (rate limiting, conflict detection). Removing them means re-adding later. Keep as-is until the features are built. |
+| 4 | **`#[allow(dead_code)]` on config fields** (`api_host`, `clerk_secret_key`) in `crates/api/src/config.rs` | INFO | `api_host` is loaded from env for future use (bind address config). `clerk_secret_key` will be needed for server-side Clerk API calls (user management). Both are config fields that should exist in the struct even if not yet consumed in code. |
+| 5 | **`#[allow(dead_code)]` on `model` field** in `ChatCompletionRequest` in `crates/api/src/routes/inference.rs` | INFO | OpenAI API compatibility — clients send `model` in the request body. We accept but ignore it (routing is by API key). The field must exist for deserialization. Already documented with comment. |
+| 6 | **Broad `except Exception:` in training callbacks** (`train_model.py` lines ~554, ~602) | LOW | HuggingFace `TrainerCallback` hooks run in a context where any exception type is possible. Catching broadly and returning empty/noop is the correct pattern for non-critical callbacks (heartbeat reporting, checkpoint metrics). Narrowing the catch would risk crashing the trainer on unexpected errors. |
+| 7 | **`AppState` still holds concrete `redis::aio::ConnectionManager`** — Not behind a `CacheBackend` trait. | LOW | Redis is the only cache backend for the foreseeable future. Abstracting it adds complexity with no current benefit. Revisit if we need to support DragonflyDB, Memcached, or in-memory cache for testing. |
+| 8 | **No CI/CD pipeline** — Pre-commit hooks exist but can be bypassed with `--no-verify`. No GitHub Actions enforce quality on PRs. | MEDIUM | Infrastructure work, not a code architecture issue. Should be set up when the team grows or before first production deployment. |
+| 9 | **Existing hooks still use old `getToken()` pattern** — `useAuthedQuery` factory exists but 20+ existing hooks weren't migrated. | LOW | Incremental migration. New hooks should use the factory. Old hooks work correctly, just have boilerplate. Migrate opportunistically during feature work. |
