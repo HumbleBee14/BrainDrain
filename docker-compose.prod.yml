@@ -1,0 +1,283 @@
+# ===========================================
+# Production Docker Compose
+# ===========================================
+#
+# Runs the full platform stack from built Docker images.
+#
+# Usage:
+#   # Build all images first
+#   docker compose -f docker-compose.prod.yml build
+#
+#   # Start everything
+#   docker compose -f docker-compose.prod.yml up -d
+#
+#   # View logs
+#   docker compose -f docker-compose.prod.yml logs -f api
+#
+# For cloud deployment, push images to a registry and
+# use this as a reference for service configuration.
+
+services:
+  # ── Infrastructure ──
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    shm_size: 256mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?Set S3_SECRET_KEY in .env}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${S3_ACCESS_KEY} $${S3_SECRET_KEY};
+      mc mb local/$${S3_BUCKET} --ignore-existing;
+      exit 0;
+      "
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-platform}
+
+  # ── Temporal ──
+
+  temporal-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal_prod}
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    restart: unless-stopped
+    ports:
+      - "7233:7233"
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:-temporal_prod}
+      POSTGRES_SEEDS: temporal-postgres
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--namespace", "default"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Application Services ──
+
+  api:
+    build:
+      context: .
+      dockerfile: crates/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      ENVIRONMENT: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_NAME: ${APP_NAME:-Platform}
+      DATABASE_URL: postgres://platform:${DB_PASSWORD}@postgres:5432/platform
+      DATABASE_MAX_CONNECTIONS: ${DATABASE_MAX_CONNECTIONS:-20}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-platform}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL}
+      TEMPORAL_HOST: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      VLLM_API_URL: ${VLLM_API_URL:-http://vllm:8000}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-200}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_STARTER: ${STRIPE_PRICE_STARTER:-}
+      STRIPE_PRICE_GROWTH: ${STRIPE_PRICE_GROWTH:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://localhost:4317}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:8000}
+      NEXT_PUBLIC_APP_NAME: ${APP_NAME:-Platform}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  workers:
+    build:
+      context: ./apps/workers
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_TEMPORAL_ADDRESS: temporal:7233
+      APP_TEMPORAL_NAMESPACE: default
+      APP_TEMPORAL_TASK_QUEUE: ml-pipeline
+      APP_DATABASE_URL: postgresql://platform:${DB_PASSWORD}@postgres:5432/platform
+      APP_REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+      APP_S3_ENDPOINT: http://minio:9000
+      APP_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      APP_S3_SECRET_KEY: ${S3_SECRET_KEY}
+      APP_S3_BUCKET: ${S3_BUCKET:-platform}
+      APP_S3_REGION: ${S3_REGION:-us-east-1}
+      APP_LLM_API_BASE_URL: ${APP_LLM_API_BASE_URL:-https://api.openai.com/v1}
+      APP_LLM_API_KEY: ${APP_LLM_API_KEY:-}
+      APP_LLM_MODEL: ${APP_LLM_MODEL:-gpt-4o-mini}
+      APP_LLM_MAX_TOKENS: ${APP_LLM_MAX_TOKENS:-2000}
+      APP_PLATFORM_API_URL: http://api:8000
+      APP_PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
+      APP_VLLM_API_URL: ${VLLM_API_URL:-http://vllm:8000}
+      APP_HF_TOKEN: ${HF_TOKEN:-}
+      APP_MODEL_CACHE_DIR: /app/model_cache
+      APP_WORKER_MODE: ${WORKER_MODE:-all}
+      APP_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      APP_LOG_FORMAT: json
+    volumes:
+      - model_cache:/app/model_cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+
+  # ── Optional: vLLM inference server (requires NVIDIA GPU) ──
+  # Uncomment to enable model deployment/inference.
+  #
+  # vllm:
+  #   image: vllm/vllm-openai:latest
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8080:8000"
+  #   command: >
+  #     --model meta-llama/Llama-3.1-8B
+  #     --enable-lora
+  #     --max-lora-rank 64
+  #     --max-loras 4
+  #     --gpu-memory-utilization 0.85
+  #     --max-model-len 4096
+  #   volumes:
+  #     - vllm_cache:/root/.cache/huggingface
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 120s
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  temporal_postgres_data:
+  model_cache:
+  # vllm_cache:

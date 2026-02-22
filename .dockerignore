@@ -1,0 +1,41 @@
+# Build artifacts
+target/
+*.pdb
+
+# Dependencies (installed inside container)
+node_modules/
+apps/web/node_modules/
+apps/web/.next/
+apps/workers/.venv/
+packages/*/node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (not needed in images)
+docs/
+*.md
+!README.md
+LICENSE
+
+# Environment files (injected at runtime, never baked in)
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+infra/
+.github/
+.claude/
+*.log
