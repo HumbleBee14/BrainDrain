@@ -16,5 +16,6 @@ pub mod plan_service;
 pub mod project_service;
 pub mod stripe_billing;
 pub mod team_service;
+pub mod tenant_settings_service;
 pub mod token_estimator;
 pub mod training_job_service;

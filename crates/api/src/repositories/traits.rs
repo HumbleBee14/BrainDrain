@@ -538,6 +538,16 @@ pub trait TenantRepository: Send + Sync {
     -> BoxFuture<'_, AppResult<Option<Tenant>>>;
 
     fn get_plan_limits(&self, id: Uuid) -> BoxFuture<'_, AppResult<serde_json::Value>>;
+
+    /// Get the settings JSONB for a tenant.
+    fn get_settings(&self, id: Uuid) -> BoxFuture<'_, AppResult<serde_json::Value>>;
+
+    /// Update the settings JSONB for a tenant (shallow merge at top level).
+    fn update_settings(
+        &self,
+        id: Uuid,
+        settings: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>>;
 }
 
 /// Contract for notification database operations.

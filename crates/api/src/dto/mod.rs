@@ -13,4 +13,5 @@ pub mod pipeline;
 pub mod project;
 pub mod stripe;
 pub mod team;
+pub mod tenant_settings;
 pub mod training_job;

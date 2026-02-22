@@ -105,4 +105,42 @@ impl TenantRepository for PgTenantRepo {
             Ok(limits)
         })
     }
+
+    fn get_settings(&self, id: Uuid) -> BoxFuture<'_, AppResult<serde_json::Value>> {
+        Box::pin(async move {
+            let settings = sqlx::query_scalar::<_, serde_json::Value>(
+                "SELECT settings FROM tenants WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(settings)
+        })
+    }
+
+    fn update_settings(
+        &self,
+        id: Uuid,
+        settings: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>> {
+        Box::pin(async move {
+            // JSONB || operator: shallow merge at top level.
+            // Replaces the "llm" key (or any other top-level key) while
+            // preserving other top-level keys in the settings object.
+            sqlx::query(
+                r#"
+                UPDATE tenants
+                SET settings = settings || $2, updated_at = NOW()
+                WHERE id = $1
+                "#,
+            )
+            .bind(id)
+            .bind(&settings)
+            .execute(&self.db)
+            .await?;
+
+            Ok(())
+        })
+    }
 }

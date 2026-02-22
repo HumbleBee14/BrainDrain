@@ -14,6 +14,7 @@ pub mod pipeline;
 pub mod projects;
 pub mod stripe_webhooks;
 pub mod team;
+pub mod tenant_settings;
 pub mod training;
 pub mod ws;
 
@@ -50,6 +51,7 @@ fn v1_router() -> Router<AppState> {
         .merge(audit_logs::router())
         .merge(dashboard::router())
         .merge(notifications::router())
+        .merge(tenant_settings::router())
         .merge(ws::router())
         .merge(team::router())
         .merge(team::public_router())
@@ -132,6 +134,10 @@ fn v1_router() -> Router<AppState> {
         notifications::list_deliveries,
         // Audit Logs
         audit_logs::list_audit_logs,
+        // Settings
+        tenant_settings::get_llm_settings,
+        tenant_settings::update_llm_settings,
+        tenant_settings::delete_llm_settings,
         // Inference
         inference::chat_completions,
         // Webhooks
@@ -231,6 +237,9 @@ fn v1_router() -> Router<AppState> {
         platform_shared::enums::ProjectStatus,
         platform_shared::enums::TeamRole,
         platform_shared::enums::InvitationStatus,
+        // Tenant Settings
+        crate::dto::tenant_settings::UpdateLlmSettingsRequest,
+        crate::dto::tenant_settings::LlmSettingsResponse,
         // Shared types
         platform_shared::types::Hyperparams,
         platform_shared::types::TrainingMetrics,
@@ -257,6 +266,7 @@ fn v1_router() -> Router<AppState> {
         (name = "Team", description = "Team member and invitation management"),
         (name = "Notifications", description = "Notification preferences and deliveries"),
         (name = "Audit Logs", description = "Audit log entries"),
+        (name = "Settings", description = "Per-tenant configuration (LLM providers, etc.)"),
         (name = "Inference", description = "OpenAI-compatible chat completions API"),
         (name = "Webhooks", description = "Stripe webhook handler"),
     ),

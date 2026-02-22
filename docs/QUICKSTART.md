@@ -101,7 +101,7 @@ APP_S3_BUCKET=platform-dev
 # Platform API (workers call back to the API)
 APP_PLATFORM_API_URL=http://localhost:8000
 
-# LLM API (needed for synthetic data generation — Section 8)
+# LLM API — platform-wide defaults (per-tenant settings via API take priority — see Section 8)
 APP_LLM_API_BASE_URL=https://api.openai.com/v1
 APP_LLM_API_KEY=
 APP_LLM_MODEL=gpt-4o-mini
@@ -230,7 +230,48 @@ curl -s "$API/projects/$PROJECT_ID/documents" \
 
 ## 8. Test Data Pipeline (Requires LLM API Key)
 
-Synthetic data generation needs an LLM API key. Set in `apps/workers/.env`:
+Synthetic data generation, DPO/GRPO training judges, and evaluation all need an LLM API key (any OpenAI-compatible provider works). There are two ways to configure it:
+
+### Option A: Per-Tenant Settings (via API — recommended)
+
+Configure LLM provider through the settings API. This is stored in the database per-tenant and takes priority over env vars.
+
+```bash
+# Set your LLM provider (admin role required)
+curl -s -X PUT "$API/settings/llm" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openai",
+    "api_base_url": "https://api.openai.com/v1",
+    "api_key": "sk-proj-your-key-here",
+    "model": "gpt-4o-mini",
+    "max_tokens": 2000
+  }' | jq .
+# → Returns settings with api_key masked: "sk-p...here"
+
+# Verify your config:
+curl -s "$API/settings/llm" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# To reset back to platform defaults:
+curl -s -X DELETE "$API/settings/llm" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Works with any OpenAI-compatible provider:
+
+| Provider | api_base_url | Example model |
+|----------|-------------|---------------|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| Groq | `https://api.groq.com/openai/v1` | `llama-3.1-70b-versatile` |
+| Together AI | `https://api.together.xyz/v1` | `meta-llama/Llama-3.1-8B-Instruct-Turbo` |
+| Ollama (local) | `http://localhost:11434/v1` | `llama3.1` |
+| Any OpenAI-compatible | Your URL | Your model |
+
+### Option B: Worker Environment Variables (platform-wide default)
+
+Set in `apps/workers/.env` — applies to all tenants that haven't configured their own provider:
 
 ```bash
 APP_LLM_API_BASE_URL=https://api.openai.com/v1
@@ -238,7 +279,10 @@ APP_LLM_API_KEY=sk-your-openai-key
 APP_LLM_MODEL=gpt-4o-mini
 ```
 
-Restart the worker, then trigger refinement:
+> **How it works:** Workers always check the tenant's DB settings first. If the tenant has no custom config, they fall back to these env vars. If neither is set, the pipeline fails with a clear error message.
+
+### Trigger the pipeline
+
 ```bash
 # Trigger refine (chunks docs → generates Q&A pairs → builds dataset)
 curl -s -X POST "$API/projects/$PROJECT_ID/refine" \

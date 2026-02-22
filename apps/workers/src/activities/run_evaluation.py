@@ -170,11 +170,21 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
 
         activity.heartbeat("models_loaded")
 
-        # Create judge using unified module
-        settings = infra.settings
-        judge_api_base = input.judge_api_base or settings.llm_api_base_url
-        judge_model = input.judge_model or settings.llm_model
-        judge_api_key = settings.llm_api_key
+        # Create judge using per-tenant LLM config (DB lookup, falls back to env defaults)
+        from src.tenant_config import get_tenant_llm_config
+
+        llm_config = await get_tenant_llm_config(
+            db=infra.db,
+            tenant_id=input.tenant_id,
+            default_api_base_url=infra.settings.llm_api_base_url,
+            default_api_key=infra.settings.llm_api_key,
+            default_model=infra.settings.llm_model,
+        )
+
+        # Workflow-level overrides still take precedence over tenant config
+        judge_api_base = input.judge_api_base or llm_config.api_base_url
+        judge_model = input.judge_model or llm_config.model
+        judge_api_key = llm_config.api_key
 
         judge = OpenAICompatibleJudge(judge_api_base, judge_api_key, judge_model)
 

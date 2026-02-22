@@ -1,7 +1,8 @@
 """Synthetic pair generation activity — creates instruction/response pairs from chunks.
 
 Uses a configurable LLM API (OpenAI-compatible format) to generate
-training data from document chunks.
+training data from document chunks. LLM provider config is resolved
+per-tenant from the database at execution time.
 """
 
 import json
@@ -14,6 +15,7 @@ from temporalio import activity
 
 from src import s3_paths
 from src.infra import InfraContainer
+from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 
 logger = logging.getLogger("platform.generate")
 
@@ -71,11 +73,29 @@ class GeneratePairsActivity:
         """Generate instruction/response pairs from chunked text using LLM API."""
         s3 = self.infra.s3
         bucket = self.infra.s3_bucket
-        settings = self.infra.settings
 
-        if not settings.llm_api_key:
+        # Resolve LLM config for this tenant (DB lookup, falls back to env var defaults)
+        llm_config = await get_tenant_llm_config(
+            db=self.infra.db,
+            tenant_id=input.tenant_id,
+            default_api_base_url=self.infra.settings.llm_api_base_url,
+            default_api_key=self.infra.settings.llm_api_key,
+            default_model=self.infra.settings.llm_model,
+            default_max_tokens=self.infra.settings.llm_max_tokens,
+        )
+
+        if not llm_config.api_key:
             raise ValueError(
-                "LLM API key not configured. Set APP_LLM_API_KEY environment variable."
+                "LLM API key not configured. Set per-tenant LLM settings via "
+                "PUT /api/v1/settings/llm or set APP_LLM_API_KEY environment variable."
+            )
+
+        if llm_config.is_custom:
+            logger.info(
+                "Using tenant-specific LLM config for %s (provider: %s, model: %s)",
+                input.tenant_id,
+                llm_config.api_base_url,
+                llm_config.model,
             )
 
         # Download chunks
@@ -106,7 +126,9 @@ class GeneratePairsActivity:
                 )
 
                 try:
-                    pairs = await self.infra.circuit_breaker.call(_call_llm, http, settings, prompt)
+                    pairs = await self.infra.circuit_breaker.call(
+                        _call_llm, http, llm_config, prompt
+                    )
                     for pair in pairs:
                         all_pairs.append(
                             {
@@ -145,19 +167,19 @@ class GeneratePairsActivity:
 
 async def _call_llm(
     http: httpx.AsyncClient,
-    settings,
+    llm_config: TenantLlmConfig,
     prompt: str,
 ) -> list[dict]:
     """Call an OpenAI-compatible LLM API and parse the JSON response."""
-    url = f"{settings.llm_api_base_url.rstrip('/')}/chat/completions"
+    url = f"{llm_config.api_base_url.rstrip('/')}/chat/completions"
 
     resp = await http.post(
         url,
-        headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+        headers={"Authorization": f"Bearer {llm_config.api_key}"},
         json={
-            "model": settings.llm_model,
+            "model": llm_config.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": settings.llm_max_tokens,
+            "max_tokens": llm_config.max_tokens,
             "temperature": 0.7,
         },
     )
