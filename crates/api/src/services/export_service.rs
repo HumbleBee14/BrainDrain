@@ -64,7 +64,7 @@ impl ExportService {
             .await?;
 
         // Trigger ExportWorkflow via Temporal
-        let result = orchestrator
+        let result = match orchestrator
             .start_export(
                 tenant_id,
                 model_id,
@@ -74,9 +74,25 @@ impl ExportService {
                 quant_type,
             )
             .await
-            .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("Failed to start ExportWorkflow: {e}"))
-            })?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Mark export as failed so it doesn't stay orphaned as "pending"
+                let _ = export_repo
+                    .update_status(
+                        tenant_id,
+                        export.id,
+                        "failed",
+                        None,
+                        None,
+                        Some(&format!("Workflow start failed: {e}")),
+                    )
+                    .await;
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "Failed to start ExportWorkflow: {e}"
+                )));
+            }
+        };
 
         tracing::info!(
             model_id = %model_id,

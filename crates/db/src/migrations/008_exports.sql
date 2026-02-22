@@ -13,5 +13,9 @@ CREATE TABLE IF NOT EXISTS model_exports (
     completed_at    TIMESTAMPTZ
 );
 
+ALTER TABLE model_exports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation_model_exports ON model_exports
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
 CREATE INDEX IF NOT EXISTS idx_model_exports_model ON model_exports (model_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_model_exports_tenant ON model_exports (tenant_id);

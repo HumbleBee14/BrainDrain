@@ -12,6 +12,7 @@ use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::error::{AppError, AppResult};
 use crate::services::billing_batcher;
+use crate::services::token_estimator;
 
 /// Hard cap on max_tokens to prevent GPU abuse.
 const MAX_TOKENS_LIMIT: i64 = 8192;
@@ -172,6 +173,11 @@ async fn chat_completions(
                 }
             });
 
+        // Estimate prompt tokens from request for fallback billing.
+        let estimated_prompt_tokens = token_estimator::estimate_tokens_from_messages(
+            body.messages.iter().map(|m| m.content.as_str()),
+        );
+
         // Spawn billing task that waits for usage from the stream.
         // If the client disconnects before the final chunk, usage_rx.recv()
         // returns None and we bill conservatively using max_tokens to prevent
@@ -185,9 +191,9 @@ async fn chat_completions(
                     // Client disconnected before usage chunk — bill conservatively
                     tracing::warn!(
                         model_id = %model_id,
-                        "Client disconnected before usage chunk; billing max_tokens estimate"
+                        "Client disconnected before usage chunk; billing estimate"
                     );
-                    (0, capped_max_tokens)
+                    (estimated_prompt_tokens, capped_max_tokens)
                 }
             };
 
@@ -200,7 +206,7 @@ async fn chat_completions(
                     tokens_in,
                     tokens_out,
                     gpu_seconds: 0,
-                    cost_usd: estimate_cost(tokens_in, tokens_out),
+                    cost_usd: token_estimator::estimate_inference_cost(tokens_in, tokens_out),
                     metadata: serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
                 });
         });
@@ -231,19 +237,11 @@ async fn chat_completions(
                 tokens_in,
                 tokens_out,
                 gpu_seconds: 0,
-                cost_usd: estimate_cost(tokens_in, tokens_out),
+                cost_usd: token_estimator::estimate_inference_cost(tokens_in, tokens_out),
                 metadata: serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
             });
         }
 
         Ok(Json(response).into_response())
     }
-}
-
-/// Simple cost estimation based on token counts.
-fn estimate_cost(tokens_in: i64, tokens_out: i64) -> f64 {
-    // Approximate pricing: $0.15 per 1M input tokens, $0.60 per 1M output tokens
-    let input_cost = tokens_in as f64 * 0.15 / 1_000_000.0;
-    let output_cost = tokens_out as f64 * 0.60 / 1_000_000.0;
-    input_cost + output_cost
 }

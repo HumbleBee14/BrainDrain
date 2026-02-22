@@ -138,7 +138,7 @@ class ExportGgufActivity:
         paginator = s3.get_paginator("list_objects_v2")
         async_pages = paginator.paginate(Bucket=bucket, Prefix=adapter_path)
 
-        for page in async_pages:
+        async for page in async_pages:
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 rel = key[len(adapter_path) :].lstrip("/")
@@ -185,6 +185,12 @@ class ExportGgufActivity:
             Path.home() / "llama.cpp" / "convert_hf_to_gguf.py"
         )
 
+        if not Path(convert_script).exists():
+            raise RuntimeError(
+                f"convert_hf_to_gguf.py not found at '{convert_script}'. "
+                "Please install llama.cpp and ensure convert_hf_to_gguf.py is on PATH."
+            )
+
         result = await asyncio.to_thread(
             subprocess.run,
             ["python", convert_script, model_dir, "--outfile", output_path, "--outtype", "f16"],
@@ -204,6 +210,12 @@ class ExportGgufActivity:
         quantize_bin = shutil.which("llama-quantize") or str(
             Path.home() / "llama.cpp" / "build" / "bin" / "llama-quantize"
         )
+
+        if not Path(quantize_bin).exists():
+            raise RuntimeError(
+                f"llama-quantize not found at '{quantize_bin}'. "
+                "Please install llama.cpp and ensure llama-quantize is on PATH."
+            )
 
         result = await asyncio.to_thread(
             subprocess.run,

@@ -168,11 +168,18 @@ class DeployModelActivity:
         api_url = self.infra.settings.platform_api_url
         token = self.infra.settings.platform_internal_token
 
+        if not token:
+            raise RuntimeError(
+                "platform_internal_token is not configured; "
+                "refusing to call deploy endpoint without authentication"
+            )
+
         activity.logger.info("Deploying model %s (adapter: %s)", input.model_id, input.adapter_path)
 
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(

@@ -86,6 +86,7 @@ export default function ModelDetailPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
   const [exportQuantType, setExportQuantType] = useState("Q5_K_M");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const evaluations = evalsData?.data ?? [];
   const keys = apiKeys ?? [];
@@ -411,6 +412,9 @@ export default function ModelDetailPage() {
           {createExport.isError && (
             <p className="text-sm text-red-400 mt-2">{createExport.error.message}</p>
           )}
+          {downloadError && (
+            <p className="text-sm text-red-400 mt-2">{downloadError}</p>
+          )}
         </div>
 
         {exports && exports.length > 0 && (
@@ -439,8 +443,13 @@ export default function ModelDetailPage() {
                   {exp.status === "completed" && (
                     <button
                       onClick={async () => {
-                        const result = await downloadExport.mutateAsync(exp.id);
-                        window.open(result.download_url, "_blank");
+                        try {
+                          setDownloadError(null);
+                          const result = await downloadExport.mutateAsync(exp.id);
+                          window.open(result.download_url, "_blank");
+                        } catch (e) {
+                          setDownloadError(e instanceof Error ? e.message : "Download failed");
+                        }
                       }}
                       disabled={downloadExport.isPending}
                       className="text-xs text-blue-400 hover:text-blue-300 transition"
