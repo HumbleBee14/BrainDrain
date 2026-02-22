@@ -17,6 +17,8 @@ import type {
   TriggerParseResponse,
   TriggerRefineResponse,
   PaginatedResponse,
+  LlmSettingsResponse,
+  UpdateLlmSettingsRequest,
 } from "./generated";
 
 // ── Re-export generated types with frontend-friendly aliases ──
@@ -61,6 +63,9 @@ export type { CreateProjectRequest as CreateProjectInput } from "./generated";
 export type { CreateTrainingJobRequest as CreateTrainingJobInput } from "./generated";
 export type { CreateEvaluationRequest as CreateEvaluationInput } from "./generated";
 export type { CreateApiKeyRequest as CreateApiKeyInput } from "./generated";
+
+// Settings types
+export type { LlmSettingsResponse, UpdateLlmSettingsRequest } from "./generated";
 
 // Backward-compatible alias
 export type { DeploymentStatus as ModelDeploymentStatus } from "./generated";
@@ -609,5 +614,20 @@ export const api = {
         `/api/v1/notifications/deliveries?offset=${offset}&limit=${limit}`,
         { token }
       ),
+  },
+
+  settings: {
+    getLlm: (token: string) =>
+      request<LlmSettingsResponse>("/api/v1/settings/llm", { token }),
+
+    updateLlm: (token: string, data: UpdateLlmSettingsRequest) =>
+      request<LlmSettingsResponse>("/api/v1/settings/llm", {
+        token,
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+
+    deleteLlm: (token: string) =>
+      request<void>("/api/v1/settings/llm", { token, method: "DELETE" }),
   },
 };

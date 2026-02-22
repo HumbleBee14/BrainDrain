@@ -55,6 +55,10 @@ export type { TriggerTrainResponse } from "./TriggerTrainResponse";
 export type { UpdateProjectRequest } from "./UpdateProjectRequest";
 export type { UploadResponse } from "./UploadResponse";
 
+// Settings (from crates/api/src/dto/tenant_settings.rs)
+export type { LlmSettingsResponse } from "./LlmSettingsResponse";
+export type { UpdateLlmSettingsRequest } from "./UpdateLlmSettingsRequest";
+
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {
   data: T[];

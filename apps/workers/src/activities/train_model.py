@@ -22,7 +22,7 @@ from pathlib import Path
 from temporalio import activity
 
 from src import s3_paths
-from src.activities.llm_judge import create_judge_from_settings
+from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import (
     EvaluateHoldoutInput,
     EvaluateHoldoutOutput,
@@ -348,6 +348,17 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             target_modules=target_modules,
         )
 
+        # Resolve per-tenant LLM config for judge (DPO/GRPO need an LLM judge)
+        from src.tenant_config import get_tenant_llm_config
+
+        llm_config = await get_tenant_llm_config(
+            db=infra.db,
+            tenant_id=input.tenant_id,
+            default_api_base_url=infra.settings.llm_api_base_url,
+            default_api_key=infra.settings.llm_api_key,
+            default_model=infra.settings.llm_model,
+        )
+
         # Dispatch to registered strategy
         strategy = get_strategy(input.mode)
         metrics = strategy.execute(
@@ -361,6 +372,7 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             dataset_path=input.dataset_path,
             s3=infra.s3,
             bucket=infra.s3_bucket,
+            llm_config=llm_config,
         )
 
         # Save adapter via engine protocol
@@ -426,7 +438,10 @@ class AlignedStrategy:
             s3=s3,
             bucket=bucket,
         )
-        metrics_dpo = _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
+        llm_config = kwargs.get("llm_config")
+        metrics_dpo = _train_dpo(
+            model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config=llm_config
+        )
         return {**metrics_sft, "dpo": metrics_dpo}
 
 
@@ -440,6 +455,7 @@ class ReasoningStrategy:
         tenant_id = kwargs.get("tenant_id")
         s3 = kwargs.get("s3")
         bucket = kwargs.get("bucket")
+        llm_config = kwargs.get("llm_config")
         metrics_sft = _train_sft(
             model,
             tokenizer,
@@ -452,7 +468,9 @@ class ReasoningStrategy:
             s3=s3,
             bucket=bucket,
         )
-        metrics_grpo = _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length)
+        metrics_grpo = _train_grpo(
+            model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config=llm_config
+        )
         return {**metrics_sft, "grpo": metrics_grpo}
 
 
@@ -528,14 +546,14 @@ def _train_sft(
 # -- DPO Training --
 
 
-def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
+def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config):
     """Run DPO (Direct Preference Optimization) training."""
     from trl import DPOConfig, DPOTrainer
 
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase="dpo")
 
-    dpo_dataset = _create_dpo_pairs(dataset, tokenizer)
+    dpo_dataset = _create_dpo_pairs(dataset, tokenizer, llm_config)
 
     dpo_epochs = max(1, hp.get("num_train_epochs", 3) // 2)
     training_args = DPOConfig(
@@ -574,7 +592,7 @@ def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
 # -- GRPO Training --
 
 
-def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
+def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config):
     """Run GRPO (Group Relative Policy Optimization) for reasoning tasks."""
     from trl import GRPOConfig, GRPOTrainer
 
@@ -600,8 +618,11 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length):
         report_to="none",
     )
 
-    # Create reward function using the unified judge
-    judge = create_judge_from_settings()
+    judge = OpenAICompatibleJudge(
+        api_base=llm_config.api_base_url,
+        api_key=llm_config.api_key,
+        model=llm_config.model,
+    )
 
     def reasoning_reward(completions: list[str], **kwargs) -> list[float]:
         return [judge.score_reasoning(c) for c in completions]
@@ -836,11 +857,15 @@ def _format_chatml(messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def _create_dpo_pairs(dataset, tokenizer):
-    """Create DPO preference pairs using unified LLM judge."""
+def _create_dpo_pairs(dataset, tokenizer, llm_config):
+    """Create DPO preference pairs using per-tenant LLM judge."""
     from datasets import Dataset
 
-    judge = create_judge_from_settings()
+    judge = OpenAICompatibleJudge(
+        api_base=llm_config.api_base_url,
+        api_key=llm_config.api_key,
+        model=llm_config.model,
+    )
     chosen_texts = []
     rejected_texts = []
 

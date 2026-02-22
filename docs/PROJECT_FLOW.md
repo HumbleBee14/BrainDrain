@@ -165,6 +165,8 @@ HTTP Request
 - `dyn BillingProvider` (Stripe or NoOp)
 - `AuthProviderChain` (Clerk JWKS verification)
 
+**Per-Tenant Settings:** Tenant configuration (LLM provider, API keys, model preferences) is stored in the `tenants.settings` JSONB column. The Settings API (`GET/PUT/DELETE /api/v1/settings/llm`) lets admins configure their own LLM provider — workers resolve this config from the database at activity execution time, falling back to platform env var defaults. API keys are never returned in full (masked in responses) and never appear in Temporal workflow history.
+
 **API Documentation:** OpenAPI spec is auto-generated via `utoipa` proc macros. In non-production environments, Swagger UI is served at `/docs` for interactive API exploration. All 53+ endpoints are documented with request/response schemas, authentication requirements, and parameter descriptions.
 
 ### 4.2 Next.js Web — The User Interface
@@ -187,6 +189,7 @@ Key pages:
 | Playground | `.../models/[modelId]/playground` | Chat with your model (SSE streaming) |
 | Evaluation | `.../models/[modelId]/evaluation` | Score cards, charts |
 | Settings/Usage | `/settings/usage` | Token usage charts, daily breakdown |
+| Settings/LLM | `/settings/llm` | Configure LLM provider, API key, model |
 
 ### 4.3 Python Workers — The Execution Plane
 
@@ -226,6 +229,8 @@ Workflows (9 total):
 ```
 
 **Key Pattern:** Workers use `Protocol`-based dependency injection (`TrainingEngine Protocol`, `LLMJudge Protocol`, `BenchmarkSource Protocol`). The `UnslothEngine` is the default implementation, but any ML backend can be swapped in by implementing the same Protocol.
+
+**Per-Tenant LLM Config:** Every activity that calls an LLM (synthetic pair generation, DPO/GRPO judge, evaluation judge) resolves the LLM provider config per-tenant from the database at execution time via `get_tenant_llm_config()`. If a tenant has configured their own provider (e.g., Groq, Anthropic, local Ollama), that config is used; otherwise, the worker falls back to platform env var defaults (`APP_LLM_API_KEY`, etc.).
 
 ---
 
@@ -318,15 +323,18 @@ For each uploaded document:
 ### Stage 3: Synthetic Data Generation (RefineWorkflow — Step 2)
 
 ```
-1. For each chunk, call an LLM (GPT-4o-mini / Claude / Qwen) via OpenAI-compatible API
-2. Generate Q&A pairs grounded in the chunk content
-3. Three task types supported:
+1. Resolve LLM provider config for this tenant (DB lookup → env var fallback)
+2. For each chunk, call the tenant's LLM via OpenAI-compatible API
+3. Generate Q&A pairs grounded in the chunk content
+4. Three task types supported:
    • Q&A: Factual questions about the document
    • Instruction: "Write/summarize/explain" style tasks
    • Reasoning: Multi-step analytical questions
-4. Each pair includes source span for grounding verification
-5. Upload raw pairs to S3
+5. Each pair includes source span for grounding verification
+6. Upload raw pairs to S3
 ```
+
+**LLM Config:** The tenant's LLM provider (configured via `PUT /api/v1/settings/llm`) is resolved from the database at execution time. If no custom config exists, falls back to platform defaults (`APP_LLM_API_KEY` env var). Works with any OpenAI-compatible provider (OpenAI, Groq, Anthropic, Together AI, local Ollama, etc.).
 
 **File:** `apps/workers/src/activities/generate_pairs.py` (activity name: `generate_synthetic_pairs`)
 
@@ -468,6 +476,14 @@ BrainDrain has a **dual authentication system**:
 - Roles: `Owner`, `Admin`, `Member`, `Viewer`
 - Enforced via `require_role(&user, TeamRole::Admin)?` guard in route handlers
 - Team invitations with token-based acceptance flow
+
+### Per-Tenant Configuration
+- **Storage:** `tenants.settings` JSONB column (no extra tables or migrations)
+- **LLM Provider:** Each tenant can configure their own LLM provider, API key, model, and max tokens via `PUT /api/v1/settings/llm` (admin role required)
+- **Security:** API keys stored in DB JSONB, masked in API responses (`sk-p...wxyz`), never appear in Temporal workflow payloads
+- **Resolution:** Workers query tenant config from DB at activity execution time → fall back to platform env var defaults if not set
+- **Audit:** All settings changes are logged with `api_key_changed: bool` (never the actual key)
+- **Extensible:** Same JSONB structure supports future config namespaces (HuggingFace token, vLLM URL, etc.) without migrations
 
 ---
 
@@ -684,10 +700,11 @@ Dashboard Request → Check Redis → Cache Hit?
 | Document upload (multipart → S3) | ✅ | ✅ | — | Ready |
 | Document parsing | ✅ | ✅ | ✅ | Ready |
 | Text chunking | ✅ | — | ✅ | Ready |
-| Synthetic data generation | ✅ | — | ✅ | Ready (needs LLM API key) |
+| Per-tenant LLM provider settings | ✅ | — | ✅ | Ready |
+| Synthetic data generation | ✅ | — | ✅ | Ready (needs LLM API key via settings or env var) |
 | Dataset building + preview | ✅ | ✅ | ✅ | Ready |
 | Training (4 modes) | ✅ | ✅ | ✅ | Ready (needs GPU) |
-| Evaluation (4 suites) | ✅ | ✅ | ✅ | Ready (needs GPU + LLM key) |
+| Evaluation (4 suites) | ✅ | ✅ | ✅ | Ready (needs GPU + LLM key via settings or env var) |
 | Model deployment to vLLM | ✅ | ✅ | ✅ | Ready (needs vLLM running) |
 | API key management | ✅ | ✅ | — | Ready |
 | Inference proxy (circuit breaker) | ✅ | — | — | Ready (needs vLLM) |
@@ -718,7 +735,7 @@ These core data pipeline features work on CPU and are the first things to test:
 6. ✅ Upload a document (PDF, DOCX, TXT)
 7. ✅ Start Temporal workers
 8. ✅ Trigger document parsing
-9. ✅ Trigger data refinement (needs LLM API key for pair generation)
+9. ✅ Trigger data refinement (needs LLM API key — via `PUT /settings/llm` or env var)
 10. ✅ Review generated dataset
 
 ### What Requires Additional Infrastructure
@@ -726,7 +743,7 @@ These core data pipeline features work on CPU and are the first things to test:
 | Feature | Requires |
 |---------|----------|
 | Training | GPU (NVIDIA, A10G+ recommended) |
-| Evaluation | GPU + LLM API key |
+| Evaluation | GPU + LLM API key (via settings or env var) |
 | vLLM deployment | NVIDIA GPU + base model downloaded |
 | Inference/Playground | Running vLLM server |
 | Stripe billing | Stripe test keys |

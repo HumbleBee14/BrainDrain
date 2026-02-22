@@ -169,6 +169,35 @@ pub struct SafetyScores {
     pub total: Option<i64>,
 }
 
+/// Per-tenant LLM provider configuration (stored in tenants.settings.llm).
+///
+/// Used by Python workers to resolve LLM credentials at activity execution time.
+/// API keys are stored in the DB JSONB but never returned via the API — see
+/// `LlmSettingsResponse` in the dto layer for the masked version.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS, ToSchema)]
+#[ts(export)]
+pub struct LlmProviderConfig {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub api_base_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<i32>,
+}
+
+/// Top-level tenant settings structure (stored in tenants.settings JSONB).
+///
+/// Extensible — new config namespaces are added as optional fields.
+/// No migration needed: the `settings` column already exists.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS, ToSchema)]
+#[ts(export)]
+pub struct TenantSettings {
+    #[serde(default)]
+    pub llm: Option<LlmProviderConfig>,
+}
+
 /// Deployment configuration (stored in models.deployment_config).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS, ToSchema)]
 #[ts(export)]
