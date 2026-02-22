@@ -1,4 +1,4 @@
-use std::net::ToSocketAddrs;
+use std::net::IpAddr;
 
 use uuid::Uuid;
 
@@ -6,14 +6,50 @@ use crate::dto::notification::{NotificationPreferenceResponse, PreferenceUpdate}
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::NotificationRepository;
 
+/// Returns `true` if the IP address is in a private, reserved, or internal range.
+fn is_private_ip(ip: &IpAddr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        return true;
+    }
+    match ip {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local)
+            octets[0] == 10
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+                || (octets[0] == 169 && octets[1] == 254)
+        }
+        IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            // fc00::/7 — unique local addresses
+            (segments[0] & 0xfe00) == 0xfc00
+                // fe80::/10 — link-local
+                || (segments[0] & 0xffc0) == 0xfe80
+                // ::1/128 — loopback (already covered above, defensive)
+                || v6.is_loopback()
+                // ::ffff:0:0/96 — IPv4-mapped (check the embedded v4)
+                || segments[0..5] == [0, 0, 0, 0, 0]
+                    && segments[5] == 0xffff
+                    && is_private_ip(&IpAddr::V4(std::net::Ipv4Addr::new(
+                        (segments[6] >> 8) as u8,
+                        segments[6] as u8,
+                        (segments[7] >> 8) as u8,
+                        segments[7] as u8,
+                    )))
+        }
+    }
+}
+
 /// Reject webhook URLs that point to private/internal networks (SSRF protection).
-fn is_safe_webhook_url(url: &str) -> bool {
+/// Uses async DNS resolution to avoid blocking the Tokio runtime.
+async fn is_safe_webhook_url(url: &str) -> bool {
     let parsed = match reqwest::Url::parse(url) {
         Ok(u) => u,
         Err(_) => return false,
     };
 
-    // Only allow HTTPS (or HTTP for localhost in dev)
+    // Only allow HTTPS or HTTP schemes
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
         return false;
     }
@@ -23,43 +59,25 @@ fn is_safe_webhook_url(url: &str) -> bool {
         None => return false,
     };
 
-    // Resolve hostname and check all IPs are public
+    // Async DNS resolution — avoids blocking the Tokio runtime
     let port = parsed
         .port()
         .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-    let addrs = match (host, port).to_socket_addrs() {
+    let addrs = match tokio::net::lookup_host(format!("{host}:{port}")).await {
         Ok(a) => a,
         Err(_) => return false,
     };
 
+    let mut found_any = false;
     for addr in addrs {
-        let ip = addr.ip();
-        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+        found_any = true;
+        if is_private_ip(&addr.ip()) {
             return false;
-        }
-        // Check private ranges
-        match ip {
-            std::net::IpAddr::V4(v4) => {
-                let octets = v4.octets();
-                // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local)
-                if octets[0] == 10
-                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                    || (octets[0] == 192 && octets[1] == 168)
-                    || (octets[0] == 169 && octets[1] == 254)
-                {
-                    return false;
-                }
-            }
-            std::net::IpAddr::V6(_) => {
-                // Reject all IPv6 private/link-local for simplicity
-                if !ip.is_loopback() {
-                    // Already checked above, but be defensive
-                }
-            }
         }
     }
 
-    true
+    // Reject if DNS resolved to zero addresses
+    found_any
 }
 
 /// Handles notification preference management and delivery dispatch.
@@ -89,7 +107,7 @@ impl NotificationService {
             match pref.channel.as_str() {
                 "webhook" => {
                     if let Some(url) = pref.config.get("url").and_then(|v| v.as_str()) {
-                        if !is_safe_webhook_url(url) {
+                        if !is_safe_webhook_url(url).await {
                             tracing::warn!(
                                 tenant_id = %tenant_id,
                                 url,
@@ -188,7 +206,7 @@ impl NotificationService {
             if update.channel == "webhook"
                 && let Some(ref config) = update.config
                 && let Some(url) = config.get("url").and_then(|v| v.as_str())
-                && !is_safe_webhook_url(url)
+                && !is_safe_webhook_url(url).await
             {
                 return Err(AppError::BadRequest {
                     message: format!(

@@ -101,9 +101,16 @@ async fn create_checkout(
     let customer_id = match tenant.stripe_customer_id {
         Some(id) => id,
         None => {
+            // Look up the user's email from their team member record
+            let member = state
+                .team_member_repo()
+                .get_by_user(user.tenant_id, &user.user_id)
+                .await?;
+            let email = member.map(|m| m.email).unwrap_or_default();
+
             let billing = state.billing_provider();
             let id = billing
-                .create_customer(user.tenant_id, &user.user_id, &tenant.name)
+                .create_customer(user.tenant_id, &email, &tenant.name)
                 .await?;
             tenant_repo
                 .update_stripe_customer(user.tenant_id, &id)

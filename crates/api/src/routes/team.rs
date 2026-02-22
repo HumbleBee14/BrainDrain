@@ -112,12 +112,12 @@ async fn accept_invitation(
     // user_id comes from the auth token, not the request body —
     // prevents impersonation attacks where an attacker accepts
     // an invitation as a different user.
+    // Email is taken from the invitation record (set at invite time).
     let member = TeamService::accept_invitation(
         state.team_member_repo(),
         state.invitation_repo(),
         &token,
         &user.user_id,
-        "", // email not available from JWT — updated on next profile sync
     )
     .await?;
 

@@ -278,7 +278,7 @@ function formatEventType(eventType: string): string {
 function StatusBadge({ status }: { status: string }) {
   let classes = "text-xs px-2 py-0.5 rounded ";
   switch (status) {
-    case "delivered":
+    case "sent":
       classes += "bg-emerald-500/10 text-emerald-400";
       break;
     case "failed":

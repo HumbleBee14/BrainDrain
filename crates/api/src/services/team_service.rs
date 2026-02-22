@@ -92,7 +92,6 @@ impl TeamService {
         invite_repo: &dyn InvitationRepository,
         token: &str,
         user_id: &str,
-        email: &str,
     ) -> AppResult<TeamMemberResponse> {
         let invitation = invite_repo
             .get_by_token(token)
@@ -113,12 +112,12 @@ impl TeamService {
             });
         }
 
-        // Create team member
+        // Create team member using the email from the invitation
         let member = team_repo
             .create(
                 invitation.tenant_id,
                 user_id,
-                email,
+                &invitation.email,
                 &invitation.role,
                 Some(&invitation.invited_by),
             )
