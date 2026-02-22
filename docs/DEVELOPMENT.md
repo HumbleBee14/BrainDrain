@@ -35,8 +35,10 @@ Platform/
 │   │   └── PHASE0_COMPLETE.md           #   Phase 0 completion report
 │   ├── phase1/
 │   │   └── PHASE1_COMPLETE.md           #   Phase 1 completion report
-│   └── phase3/
-│       └── ARCHITECTURE_REVIEW.md       #   Architecture review + 19 fixes applied
+│   ├── phase3/
+│   │   └── ARCHITECTURE_REVIEW.md       #   Architecture review + 19 fixes applied
+│   └── phase5/
+│       └── PHASE5_COMPLETE.md           #   Phase 5 completion report
 │
 ├── Cargo.toml                           # Rust workspace root (all dep versions centralized)
 ├── package.json                         # JS workspace root (pnpm)
@@ -58,7 +60,7 @@ Platform/
 │   │
 │   ├── db/                              # Database layer (SQLx + PostgreSQL)
 │   │   └── src/
-│   │       ├── models.rs                #   9 SQLx FromRow structs (Tenant → BillingEvent)
+│   │       ├── models.rs                #   10 SQLx FromRow structs (Tenant → ModelExport)
 │   │       ├── migrations/
 │   │       │   ├── 001_initial_schema.sql  # Full schema: 9 tables, indexes, RLS, triggers
 │   │       │   └── 002_rls_policies_and_indexes.sql  # RLS policies + composite indexes
@@ -91,7 +93,8 @@ Platform/
 │           │   ├── evaluations.rs       #     Create/list/get evaluations
 │           │   ├── api_keys.rs          #     Create/list/revoke API keys
 │           │   ├── deployments.rs       #     Deploy/undeploy models, status
-│           │   ├── inference.rs         #     POST /v1/chat/completions (OpenAI-compatible)
+│           │   ├── inference.rs         #     POST /v1/chat/completions (OpenAI-compatible, SSE)
+│           │   ├── exports.rs           #     GGUF export: create, list, download
 │           │   └── billing.rs           #     Usage summary + billing events
 │           ├── services/
 │           │   ├── project_service.rs   #     Business logic (validation, orchestration)
@@ -101,7 +104,11 @@ Platform/
 │           │   ├── training_job_service.rs #   Training job creation, Temporal dispatch
 │           │   ├── evaluation_service.rs #    Evaluation creation, Temporal dispatch
 │           │   ├── api_key_service.rs   #     Key generation, SHA-256 hashing, rate limiting
-│           │   └── deployment_service.rs #    vLLM adapter management
+│           │   ├── deployment_service.rs #    vLLM adapter management
+│           │   ├── circuit_breaker.rs   #     Async circuit breaker for vLLM
+│           │   ├── billing_batcher.rs   #     Channel-based billing micro-batcher
+│           │   ├── token_estimator.rs   #     Token count + cost estimation
+│           │   └── export_service.rs    #     GGUF export validation + Temporal trigger
 │           ├── repositories/
 │           │   ├── project_repo.rs      #     SQL queries (ALL require tenant_id — enforced)
 │           │   ├── document_repo.rs     #     SQL queries (ALL require tenant_id — enforced)
@@ -110,7 +117,8 @@ Platform/
 │           │   ├── model_repo.rs        #     Model CRUD + deployment status
 │           │   ├── evaluation_repo.rs   #     Evaluation CRUD + score storage
 │           │   ├── api_key_repo.rs      #     Key hash lookup, revocation
-│           │   └── billing_event_repo.rs #    Append-only billing events
+│           │   ├── billing_event_repo.rs #    Append-only billing events + usage queries
+│           │   └── export_repo.rs       #    Model export CRUD
 │           └── dto/
 │               ├── common.rs            #     PaginationParams, PaginatedResponse<T>
 │               ├── project.rs           #     CreateProject, UpdateProject, ProjectResponse
@@ -120,7 +128,8 @@ Platform/
 │               ├── training_job.rs      #     CreateTrainingJob, TrainingJobResponse
 │               ├── evaluation.rs        #     CreateEvaluation, EvaluationResponse
 │               ├── api_key.rs           #     CreateApiKey, ApiKeyResponse
-│               └── billing.rs           #     BillingEventResponse, UsageSummary
+│               ├── billing.rs           #     BillingEventResponse, UsageSummary
+│               └── export.rs            #     ExportRequest, ExportResponse
 │
 ├── apps/                                # ═══ APPLICATIONS ═══
 │   │
@@ -160,7 +169,8 @@ Platform/
 │   │       │   ├── use-training.ts      #   Training job hooks (list, create, cancel)
 │   │       │   ├── use-evaluations.ts   #   Evaluation hooks (list, get, create, polling)
 │   │       │   ├── use-deployments.ts   #   Deploy/undeploy hooks
-│   │       │   └── use-api-keys.ts      #   API key hooks (list, create, revoke)
+│   │       │   ├── use-api-keys.ts      #   API key hooks (list, create, revoke)
+│   │       │   └── use-exports.ts       #   GGUF export hooks (list, create, download)
 │   │       └── lib/
 │   │           ├── api-client.ts        #   Typed fetch with auth, timeout, retry
 │   │           ├── query-keys.ts        #   Centralized query key factories
@@ -183,6 +193,7 @@ Platform/
 │           │   ├── build_dataset.py     #   Quality filter, ChatML format, train/val split
 │           │   ├── train_model.py       #   4-mode training (quick/aligned/reasoning/iterative)
 │           │   ├── run_evaluation.py    #   4-suite eval (domain/general/A-B/safety)
+│           │   ├── export_gguf.py       #   GGUF merge + quantize + S3 upload
 │           │   ├── training_engine.py   #   TrainingEngine Protocol + UnslothEngine impl
 │           │   ├── llm_judge.py         #   LLMJudge Protocol + OpenAICompatibleJudge impl
 │           │   ├── benchmark_source.py  #   BenchmarkSource Protocol + local file impl
@@ -194,7 +205,8 @@ Platform/
 │               ├── refine.py            #   Chunk → Generate → Build dataset (implemented)
 │               ├── train.py             #   Dataset → Fine-tuned LoRA adapter (implemented)
 │               ├── evaluate.py          #   Model → 4-suite evaluation report (implemented)
-│               └── full_pipeline.py     #   Chains all stages end-to-end
+│               ├── full_pipeline.py     #   Chains all stages end-to-end
+│               └── export.py            #   GGUF export workflow
 │
 ├── packages/                            # ═══ SHARED PACKAGES ═══
 │   └── shared-types/                    # TypeScript API types (mirrors Rust DTOs)
@@ -541,6 +553,10 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 | `POST` | `/v1/chat/completions` | API Key | Inference (OpenAI-compatible) |
 | `GET` | `/api/v1/billing/usage` | Clerk JWT | Usage summary |
 | `GET` | `/api/v1/billing/events` | Clerk JWT | List billing events |
+| `POST` | `/api/v1/models/:id/exports` | Clerk JWT | Start GGUF export |
+| `GET` | `/api/v1/models/:id/exports` | Clerk JWT | List exports for model |
+| `GET` | `/api/v1/exports/:id/download` | Clerk JWT | Presigned download URL |
+| `GET` | `/api/v1/dashboard/inference-usage` | Clerk JWT | 30-day inference usage |
 
 ### Temporal Workflows (All Implemented)
 
@@ -551,6 +567,10 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 | `TrainWorkflow` | start_training (6hr timeout) | gpu |
 | `EvaluateWorkflow` | run_evaluation (1hr timeout) | gpu |
 | `FullPipelineWorkflow` | Ingest → Refine → Train → Evaluate → Deploy | default → gpu |
+| `TrainIterativeWorkflow` | Multi-round SFT with holdout eval + early stopping | gpu |
+| `TrainReasoningWorkflow` | SFT → GRPO reasoning optimization | gpu |
+| `TrainAlignedWorkflow` | SFT → DPO preference alignment | gpu |
+| `ExportWorkflow` | GGUF merge → convert → quantize → S3 upload | default |
 
 ---
 
@@ -592,22 +612,75 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 
 ---
 
-## Phase 4: Product Polish
+## Phase 4: Product Polish — COMPLETE
 
-### Goals
-
-- Production-ready billing, team management, onboarding
+> Production-ready billing, team management, onboarding.
 
 ### Work Items
 
 | Task | Description | Status |
 |---|---|---|
-| Stripe billing integration | Usage-based pricing tied to billing_events | PENDING |
-| Team management | Invite members, roles (admin/member/viewer) | PENDING |
-| Onboarding flow | Guided first-project experience | PENDING |
-| Usage dashboard | Costs, API calls, storage breakdown | PENDING |
-| Notifications | Email/webhook on training complete, errors | PENDING |
-| Audit log | Track who did what | PENDING |
+| Stripe billing integration | Usage-based pricing tied to billing_events, webhook handlers with HMAC verification | **COMPLETE** |
+| Team management | Invite members, roles (admin/member/viewer), RBAC middleware | **COMPLETE** |
+| Onboarding flow | Guided first-project experience with step completion tracking | **COMPLETE** |
+| Usage dashboard | Dashboard stats overview with Redis caching (30s/60s TTL) | **COMPLETE** |
+| Notifications | Webhook delivery with SSRF protection, notification preferences | **COMPLETE** |
+| Audit log | Append-only audit_logger service for tracking actions | **COMPLETE** |
+
+See `docs/phase4/PHASE4A_COMPLETE.md` and `docs/phase4/PHASE4BC_COMPLETE.md` for details.
+
+---
+
+## Phase 5: Serving & Deployment — COMPLETE
+
+> Production-ready inference. Circuit breaker, SSE streaming, GGUF export, usage metering.
+
+### Work Items
+
+| Task | Description | Status |
+|---|---|---|
+| Circuit breaker | Async state machine protecting vLLM calls (503 on open) | **COMPLETE** |
+| Billing micro-batching | Channel + background worker, bulk inserts (10K req/min → 12 inserts/min) | **COMPLETE** |
+| SSE streaming inference | Forward vLLM byte stream, usage extraction from final chunk | **COMPLETE** |
+| Frontend streaming | ReadableStream playground with incremental token display | **COMPLETE** |
+| Real deploy activity | Python activity calls Rust API with auth token | **COMPLETE** |
+| GGUF export pipeline | Temporal workflow: merge LoRA → GGUF → quantize → S3 | **COMPLETE** |
+| Usage dashboard page | Inference usage by day, bar charts, daily breakdown table | **COMPLETE** |
+| Token estimator | Centralized token/cost estimation for billing | **COMPLETE** |
+| Dashboard Redis cache | 30s/60s TTL to prevent DB pool exhaustion | **COMPLETE** |
+
+See `docs/phase5/PHASE5_COMPLETE.md` for details.
+
+---
+
+## Phase 6: Polish & Scale — Status
+
+> Production-grade, scalable, polished.
+
+Most Phase 6 items were completed as part of earlier phases. Remaining items are optional scale/ops tasks.
+
+| Task | Description | Status | Notes |
+|---|---|---|---|
+| Usage tracking & metering | Token counting, request tracking, cost attribution | **COMPLETE** | Done in Phase 5 (billing_batcher + usage page) |
+| Cost estimation | Per-operation cost calculation | **COMPLETE** | Done in Phase 5 (token_estimator.rs) |
+| GRPO training mode | Reasoning-optimized SFT → GRPO | **COMPLETE** | Done in Phase 2 (train_reasoning.py) |
+| Iterative training mode | Multi-round SFT with holdout eval + early stopping | **COMPLETE** | Done in Phase 2 (train_iterative.py) |
+| Webhook system | Stripe webhooks + custom notification webhooks | **COMPLETE** | Done in Phase 4 (stripe_webhooks.rs, notification_service.rs) |
+| Multi-model base support | Support Llama, Qwen, Mistral, DeepSeek | **PARTIAL** | Architecture supports any HuggingFace model; only Llama-3.1-8B validated |
+| Advanced evaluation | Custom benchmarks, pluggable suites | **COMPLETE** | Done in Phase 3 (BenchmarkSource protocol, 197-item benchmark, LLMJudge) |
+| Load testing | 50+ concurrent users, performance gates | **NOT DONE** | No automated test harness; gates defined in ARCHITECTURE.md only |
+| RunPod integration | Serverless GPU for cost optimization | **NOT DONE** | Documented as future; using Modal currently |
+| API documentation | OpenAPI spec, endpoint reference | **NOT DONE** | Routes documented inline in DEVELOPMENT.md; no formal spec |
+
+### What's Left (Optional / Post-MVP)
+
+These are **nice-to-haves** for production scale, not blockers for the platform to function:
+
+1. **Load testing harness** — k6 or Locust scripts for benchmarking inference at scale
+2. **RunPod integration** — alternative GPU provider for cost optimization
+3. **OpenAPI spec** — auto-generated from Rust DTOs for API consumers
+4. **Multi-model UI** — base model selector dropdown in training form (engine already supports any model)
+5. **ClickHouse migration** — move billing_events to OLAP store when Postgres query latency exceeds SLA
 
 ---
 
