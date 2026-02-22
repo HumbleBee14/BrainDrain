@@ -306,6 +306,8 @@ curl -s "$API/datasets/$DATASET_ID/preview" \
 
 Training requires a machine with an NVIDIA GPU (A10G+ recommended for 7B models).
 
+### Setup
+
 ```bash
 # In apps/workers/.env:
 APP_HF_TOKEN=hf_your_huggingface_token   # For downloading base models
@@ -318,22 +320,76 @@ cd apps/workers
 uv sync --extra ml    # Installs unsloth, transformers, trl, etc.
 ```
 
-Create a training job:
+### GPU Provider (local vs. serverless)
+
+Training dispatches through a pluggable GPU provider. Set `APP_GPU_PROVIDER` in `apps/workers/.env`:
+
+| Provider | Config | When to use |
+|----------|--------|-------------|
+| **Local** (default) | `APP_GPU_PROVIDER=local` | Dev/testing on your own GPU. No extra setup. |
+| **Modal** (serverless) | `APP_GPU_PROVIDER=modal` | Production. Auto-provisions cloud GPUs, scales to zero. |
+
+**Local (default — no config needed):**
+```bash
+# Just start the worker. It uses whatever GPU is on the machine.
+APP_GPU_PROVIDER=local    # This is the default, you can omit it
+```
+
+**Modal (serverless GPUs for production):**
+```bash
+# 1. Install Modal
+pip install modal    # or: uv sync --extra gpu-cloud
+
+# 2. Add to apps/workers/.env:
+APP_GPU_PROVIDER=modal
+MODAL_TOKEN_ID=ak-xxxxx        # From https://modal.com/settings
+MODAL_TOKEN_SECRET=as-xxxxx
+
+# 3. That's it — training jobs auto-provision GPUs on Modal
+```
+
+### Create a training job
+
 ```bash
 curl -s -X POST "$API/projects/$PROJECT_ID/training-jobs" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "dataset_id": "'$DATASET_ID'",
-    "base_model": "unsloth/Llama-3.1-8B-Instruct",
-    "training_mode": "quick"
+    "base_model": "unsloth/Llama-3.2-1B-Instruct",
+    "method": "qlora",
+    "mode": "quick"
   }' | jq .
+```
 
-# Training modes: "quick" (SFT), "aligned" (SFT→DPO), "reasoning" (SFT→GRPO), "iterative"
-# Monitor live metrics via SSE:
+**Training modes:** `quick` (SFT only), `aligned` (SFT+DPO), `reasoning` (SFT+GRPO), `iterative` (multi-round)
+
+**GPU class** (optional — defaults to Auto/A10G):
+```bash
+# For larger models, specify a GPU class:
+  -d '{
+    "dataset_id": "'$DATASET_ID'",
+    "base_model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+    "method": "qlora",
+    "mode": "aligned",
+    "gpu_class": "a100"
+  }'
+# Options: t4, a10g, l40s, a10040gb, a10080gb, h100
+```
+
+### Monitor training
+
+```bash
+# Check job status:
 JOB_ID=<from-response>
+curl -s "$API/training-jobs/$JOB_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# Stream live metrics (loss, learning rate, GPU utilization):
 curl -N "$API/training-jobs/$JOB_ID/metrics/stream" \
   -H "Authorization: Bearer $TOKEN"
+
+# Or watch in Temporal UI: http://localhost:8088
 ```
 
 ---
@@ -419,18 +475,64 @@ curl -s "$API/exports/$EXPORT_ID/download" \
 
 ---
 
-## Docker Builds (for Deployment)
+## 12. Deploy to Cloud
+
+### Build Docker images
 
 ```bash
-# Build Rust API image (~20MB final)
-docker build -t braindrain-api -f crates/api/Dockerfile .
-
-# Build Next.js Web image (~50MB final)
-docker build -t braindrain-web -f apps/web/Dockerfile .
-
-# Build Python Workers image (~500MB+ with ML deps)
-docker build -t braindrain-workers -f apps/workers/Dockerfile .
+# Build all three images:
+docker build -t braindrain-api -f crates/api/Dockerfile .          # ~20MB final
+docker build -t braindrain-web -f apps/web/Dockerfile .            # ~50MB final
+docker build -t braindrain-workers -f apps/workers/Dockerfile .    # ~500MB+ with ML deps
 ```
+
+### Option A: VPS with Docker Compose (simplest)
+
+```bash
+# On your server (Hetzner, DigitalOcean, AWS EC2, etc.):
+git clone <your-repo> /opt/platform
+cd /opt/platform
+
+# 1. Configure environment
+cp .env.example .env
+# Edit .env with production values:
+#   - Strong passwords for DATABASE_URL, REDIS_URL
+#   - Real Clerk keys (CLERK_SECRET_KEY, CLERK_JWKS_URL)
+#   - Real Stripe keys (if billing enabled)
+#   - Domain in CORS_ORIGINS
+#   - LLM API key (APP_LLM_API_KEY)
+#   - HuggingFace token (APP_HF_TOKEN)
+#   - Platform internal token (PLATFORM_INTERNAL_TOKEN — generate a UUID)
+
+# 2. Start everything
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+
+# 3. Verify
+curl http://localhost:8000/health
+curl http://localhost:3000
+```
+
+### Option B: Railway / Fly.io
+
+Deploy templates are included in `.github/workflows/deploy-staging.yml` (commented out). Uncomment the matching section and configure:
+
+1. Set `push: true` in the build jobs
+2. Uncomment the registry login step
+3. Uncomment the deploy job for your platform
+4. Add secrets to your GitHub repo settings
+
+### Production checklist
+
+| Item | What to do |
+|------|-----------|
+| **Clerk** | Create production instance at clerk.com, get `pk_live_` and `sk_live_` keys |
+| **Stripe** (optional) | Create 3 products/prices (Starter/Growth/Pro), configure webhook to `https://yourdomain.com/api/webhooks/stripe` |
+| **Domain + TLS** | Point `yourdomain.com` → web, `api.yourdomain.com` → API. Use Caddy/Traefik for auto-TLS |
+| **GPU training** | Set `APP_GPU_PROVIDER=modal` + Modal tokens, or run workers on a GPU VPS |
+| **Monitoring** | Set `OTEL_ENABLED=true` for observability, or use Grafana Cloud |
+
+> For the full deployment reference (env var checklist, cloud platform comparison, DNS/TLS setup), see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ---
 
@@ -480,4 +582,4 @@ make infra-down
 
 ---
 
-*For detailed architecture and flow explanations, see [PROJECT_FLOW.md](./PROJECT_FLOW.md).*
+*For architecture and flow details, see [PROJECT_FLOW.md](./PROJECT_FLOW.md). For the full deployment reference, see [DEPLOYMENT.md](./DEPLOYMENT.md).*
