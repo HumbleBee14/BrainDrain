@@ -2,9 +2,10 @@ use chrono::{DateTime, Utc};
 use platform_db::models::ApiKey;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Request to create a new API key.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct CreateApiKeyRequest {
     pub name: String,
@@ -16,7 +17,7 @@ pub struct CreateApiKeyRequest {
 
 /// Response returned when an API key is created.
 /// Includes the full key — only shown once.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct CreateApiKeyResponse {
     pub id: String,
@@ -30,7 +31,7 @@ pub struct CreateApiKeyResponse {
 
 /// API key information returned by list/get endpoints.
 /// Does NOT include the full key (it's hashed in DB).
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ApiKeyResponse {
     pub id: String,

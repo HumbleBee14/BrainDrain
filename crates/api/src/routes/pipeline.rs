@@ -24,10 +24,19 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{project_id}/status", get(get_status))
 }
 
-/// POST /api/v1/projects/:project_id/parse
-///
 /// Trigger IngestWorkflow for all unparsed documents in the project.
-async fn trigger_parse(
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/parse",
+    tag = "Pipeline",
+    params(("project_id" = Uuid, Path, description = "Project ID")),
+    responses(
+        (status = 202, description = "Parse triggered", body = TriggerParseResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn trigger_parse(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -54,10 +63,20 @@ async fn trigger_parse(
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
-/// POST /api/v1/projects/:project_id/refine
-///
 /// Trigger RefineWorkflow for all parsed documents in the project.
-async fn trigger_refine(
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/refine",
+    tag = "Pipeline",
+    params(("project_id" = Uuid, Path, description = "Project ID")),
+    request_body = TriggerRefineRequest,
+    responses(
+        (status = 202, description = "Refine triggered", body = TriggerRefineResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn trigger_refine(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -89,10 +108,19 @@ async fn trigger_refine(
     Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
-/// GET /api/v1/projects/:project_id/status
-///
 /// Get aggregate pipeline status (document and dataset counts by status).
-async fn get_status(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/status",
+    tag = "Pipeline",
+    params(("project_id" = Uuid, Path, description = "Project ID")),
+    responses(
+        (status = 200, description = "Pipeline status", body = ProjectPipelineStatus),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_status(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,

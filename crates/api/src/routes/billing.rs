@@ -28,7 +28,21 @@ pub fn router() -> Router<AppState> {
 }
 
 /// GET /api/v1/billing/events
-async fn list_billing_events(
+#[utoipa::path(
+    get,
+    path = "/api/v1/billing/events",
+    tag = "Billing",
+    params(
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of billing events", body = inline(PaginatedResponse<BillingEventResponse>)),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_billing_events(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Query(pagination): Query<PaginationParams>,
@@ -52,7 +66,17 @@ async fn list_billing_events(
 }
 
 /// GET /api/v1/billing/usage
-async fn get_usage_summary(
+#[utoipa::path(
+    get,
+    path = "/api/v1/billing/usage",
+    tag = "Billing",
+    responses(
+        (status = 200, description = "Tenant usage summary", body = TenantUsageSummary),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_usage_summary(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<TenantUsageSummary>> {
@@ -73,8 +97,8 @@ async fn get_usage_summary(
     }))
 }
 
-#[derive(Debug, serde::Serialize)]
-struct TenantUsageSummary {
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct TenantUsageSummary {
     total_events: i64,
     total_tokens_in: i64,
     total_tokens_out: i64,
@@ -82,7 +106,18 @@ struct TenantUsageSummary {
 }
 
 /// POST /api/v1/billing/checkout — create a Stripe checkout session.
-async fn create_checkout(
+#[utoipa::path(
+    post,
+    path = "/api/v1/billing/checkout",
+    tag = "Billing",
+    request_body = CreateCheckoutRequest,
+    responses(
+        (status = 200, description = "Checkout session created", body = CheckoutSessionResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_checkout(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Json(body): Json<CreateCheckoutRequest>,
@@ -133,7 +168,18 @@ async fn create_checkout(
 }
 
 /// POST /api/v1/billing/portal — create a Stripe customer portal session.
-async fn create_portal_session(
+#[utoipa::path(
+    post,
+    path = "/api/v1/billing/portal",
+    tag = "Billing",
+    request_body = CreatePortalRequest,
+    responses(
+        (status = 200, description = "Portal session created", body = PortalSessionResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_portal_session(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Json(body): Json<CreatePortalRequest>,
@@ -162,7 +208,17 @@ async fn create_portal_session(
 }
 
 /// GET /api/v1/billing/subscription — get current subscription info.
-async fn get_subscription(
+#[utoipa::path(
+    get,
+    path = "/api/v1/billing/subscription",
+    tag = "Billing",
+    responses(
+        (status = 200, description = "Current subscription details", body = SubscriptionResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_subscription(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<SubscriptionResponse>> {
@@ -194,7 +250,17 @@ async fn get_subscription(
 }
 
 /// GET /api/v1/billing/limits — get current plan limits.
-async fn get_plan_limits(
+#[utoipa::path(
+    get,
+    path = "/api/v1/billing/limits",
+    tag = "Billing",
+    responses(
+        (status = 200, description = "Current plan limits", body = PlanLimits),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_plan_limits(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<PlanLimits>> {

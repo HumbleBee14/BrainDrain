@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use crate::app_state::AppState;
 
@@ -13,21 +14,29 @@ pub fn router() -> Router<AppState> {
         .route("/ready", get(ready))
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
+#[derive(Serialize, ToSchema)]
+pub struct HealthResponse {
     status: &'static str,
     version: &'static str,
 }
 
-#[derive(Serialize)]
-struct ReadyResponse {
+#[derive(Serialize, ToSchema)]
+pub struct ReadyResponse {
     status: &'static str,
     database: bool,
     redis: bool,
 }
 
 /// Basic liveness check — always returns OK if the process is running.
-async fn health() -> Json<HealthResponse> {
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Service is alive", body = HealthResponse),
+    )
+)]
+pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
@@ -35,7 +44,16 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// Readiness check — verifies database and Redis connectivity.
-async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, StatusCode> {
+#[utoipa::path(
+    get,
+    path = "/ready",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Service is ready", body = ReadyResponse),
+        (status = 503, description = "Service degraded"),
+    )
+)]
+pub async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, StatusCode> {
     let db_ok = sqlx::query("SELECT 1").execute(state.db()).await.is_ok();
 
     let redis_ok = redis::cmd("PING")

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Request to start a GGUF export.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ExportRequest {
     /// Quantization type: Q4_K_M, Q5_K_M, Q6_K, Q8_0
     #[serde(default = "default_quant_type")]
@@ -14,7 +15,7 @@ fn default_quant_type() -> String {
 }
 
 /// Export response (returned from API).
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ExportResponse {
     pub id: String,
@@ -48,7 +49,7 @@ impl From<platform_db::models::ModelExport> for ExportResponse {
 }
 
 /// Presigned download URL response.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ExportDownloadResponse {
     pub download_url: String,

@@ -63,6 +63,10 @@ tokio-stream = { workspace = true }
 # Type generation
 ts-rs = { workspace = true }
 
+# OpenAPI documentation
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+
 # Internal crates
 platform-shared = { workspace = true }
 platform-db = { workspace = true }

@@ -2,10 +2,11 @@ use chrono::{DateTime, Utc};
 use platform_db::models::AuditLog;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Audit log entry returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct AuditLogResponse {
     pub id: String,
@@ -13,6 +14,7 @@ pub struct AuditLogResponse {
     pub action: String,
     pub resource_type: String,
     pub resource_id: Option<String>,
+    #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
@@ -32,7 +34,7 @@ impl From<AuditLog> for AuditLogResponse {
 }
 
 /// Optional filters for audit log queries.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct AuditLogFilterParams {
     #[serde(default)]
     pub offset: i64,

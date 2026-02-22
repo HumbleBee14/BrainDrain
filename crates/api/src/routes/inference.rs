@@ -7,6 +7,7 @@ use axum::{Json, Router};
 use futures::StreamExt;
 use platform_shared::enums::DeploymentStatus;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
@@ -24,8 +25,8 @@ pub fn router() -> Router<AppState> {
 }
 
 /// OpenAI-compatible chat completion request (subset of fields we support).
-#[derive(Debug, Deserialize)]
-struct ChatCompletionRequest {
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChatCompletionRequest {
     /// Client-specified model name (ignored — we route by API key's model).
     #[serde(default)]
     #[allow(dead_code)]
@@ -41,8 +42,8 @@ struct ChatCompletionRequest {
     stream: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct ChatMessage {
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
+pub struct ChatMessage {
     role: String,
     content: String,
 }
@@ -55,13 +56,49 @@ fn default_max_tokens() -> i64 {
     512
 }
 
-/// POST /v1/chat/completions
+/// OpenAI-compatible chat completion response (schema-only for docs).
+#[derive(Serialize, ToSchema)]
+pub struct ChatCompletionResponse {
+    id: String,
+    object: String,
+    created: i64,
+    model: String,
+    choices: Vec<ChatChoice>,
+    usage: ChatUsage,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ChatChoice {
+    index: i32,
+    message: ChatMessage,
+    finish_reason: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ChatUsage {
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+}
+
+/// OpenAI-compatible chat completion endpoint.
 ///
 /// Proxies the request to the vLLM backend, routing to the correct
 /// LoRA adapter based on the API key's associated model.
 /// Supports both streaming (SSE) and non-streaming responses.
-/// Protected by a circuit breaker against vLLM outages.
-async fn chat_completions(
+#[utoipa::path(
+    post,
+    path = "/v1/chat/completions",
+    tag = "Inference",
+    request_body = ChatCompletionRequest,
+    responses(
+        (status = 200, description = "Chat completion response", body = ChatCompletionResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 401, body = crate::error::ErrorEnvelope),
+    ),
+    security(("api_key" = []))
+)]
+pub async fn chat_completions(
     State(state): State<AppState>,
     api_key: ApiKeyAuth,
     Json(body): Json<ChatCompletionRequest>,

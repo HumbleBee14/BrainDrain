@@ -4,9 +4,10 @@ use platform_shared::enums::DeploymentStatus;
 use platform_shared::types::EvaluationScores;
 use serde::Serialize;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Model information returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ModelResponse {
     pub id: String,

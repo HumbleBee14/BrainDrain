@@ -2,6 +2,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -20,8 +21,22 @@ pub fn router() -> Router<AppState> {
         .route("/documents/{id}/parsed", get(get_parsed_content))
 }
 
-/// GET /api/v1/projects/:project_id/datasets
-async fn list_datasets(
+/// List datasets for a project.
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/datasets",
+    tag = "Datasets",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of datasets", body = inline(PaginatedResponse<DatasetResponse>)),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_datasets(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -39,8 +54,19 @@ async fn list_datasets(
     Ok(Json(result))
 }
 
-/// GET /api/v1/datasets/:id
-async fn get_dataset(
+/// Get a single dataset by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/datasets/{id}",
+    tag = "Datasets",
+    params(("id" = Uuid, Path, description = "Dataset ID")),
+    responses(
+        (status = 200, description = "Dataset details", body = DatasetResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_dataset(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -49,8 +75,8 @@ async fn get_dataset(
     Ok(Json(dataset))
 }
 
-#[derive(Debug, Deserialize)]
-struct PreviewParams {
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct PreviewParams {
     #[serde(default = "default_max_rows")]
     max_rows: usize,
 }
@@ -59,8 +85,22 @@ fn default_max_rows() -> usize {
     20
 }
 
-/// GET /api/v1/datasets/:id/preview
-async fn preview_dataset(
+/// Preview dataset rows.
+#[utoipa::path(
+    get,
+    path = "/api/v1/datasets/{id}/preview",
+    tag = "Datasets",
+    params(
+        ("id" = Uuid, Path, description = "Dataset ID"),
+        PreviewParams,
+    ),
+    responses(
+        (status = 200, description = "Dataset preview rows", body = Vec<serde_json::Value>),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn preview_dataset(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -78,10 +118,19 @@ async fn preview_dataset(
     Ok(Json(rows))
 }
 
-/// GET /api/v1/documents/:id/parsed
-///
-/// Returns a presigned URL for the parsed content JSON.
-async fn get_parsed_content(
+/// Get presigned URL for parsed document content.
+#[utoipa::path(
+    get,
+    path = "/api/v1/documents/{id}/parsed",
+    tag = "Datasets",
+    params(("id" = Uuid, Path, description = "Document ID")),
+    responses(
+        (status = 200, description = "Presigned URL for parsed content", body = ParsedContentResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_parsed_content(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -99,7 +148,7 @@ async fn get_parsed_content(
     Ok(Json(ParsedContentResponse { url }))
 }
 
-#[derive(Debug, serde::Serialize)]
-struct ParsedContentResponse {
+#[derive(Debug, serde::Serialize, ToSchema)]
+pub struct ParsedContentResponse {
     url: String,
 }

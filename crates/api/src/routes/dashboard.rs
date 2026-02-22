@@ -9,6 +9,7 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::dashboard::{ActivityEntry, DashboardStats, UsageSummary};
 use crate::error::AppResult;
 use crate::rbac::require_role;
+use crate::repositories::billing_event_repo::InferenceUsageDay;
 use crate::services::dashboard_service::DashboardService;
 
 /// Dashboard routes.
@@ -21,7 +22,17 @@ pub fn router() -> Router<AppState> {
 }
 
 /// GET /api/v1/dashboard/stats
-async fn get_stats(
+#[utoipa::path(
+    get,
+    path = "/api/v1/dashboard/stats",
+    tag = "Dashboard",
+    responses(
+        (status = 200, description = "Dashboard statistics", body = DashboardStats),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_stats(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<DashboardStats>> {
@@ -42,7 +53,17 @@ async fn get_stats(
 }
 
 /// GET /api/v1/dashboard/usage
-async fn get_usage(
+#[utoipa::path(
+    get,
+    path = "/api/v1/dashboard/usage",
+    tag = "Dashboard",
+    responses(
+        (status = 200, description = "Usage summary", body = UsageSummary),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_usage(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<UsageSummary>> {
@@ -58,7 +79,17 @@ async fn get_usage(
 /// GET /api/v1/dashboard/inference-usage
 ///
 /// Cached in Redis for 30s per tenant (same as stats).
-async fn get_inference_usage(
+#[utoipa::path(
+    get,
+    path = "/api/v1/dashboard/inference-usage",
+    tag = "Dashboard",
+    responses(
+        (status = 200, description = "Daily inference usage breakdown", body = Vec<InferenceUsageDay>),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_inference_usage(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<crate::repositories::billing_event_repo::InferenceUsageDay>>> {
@@ -92,7 +123,17 @@ async fn get_inference_usage(
 }
 
 /// GET /api/v1/dashboard/activity
-async fn get_activity(
+#[utoipa::path(
+    get,
+    path = "/api/v1/dashboard/activity",
+    tag = "Dashboard",
+    responses(
+        (status = 200, description = "Recent activity entries", body = Vec<ActivityEntry>),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_activity(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<ActivityEntry>>> {

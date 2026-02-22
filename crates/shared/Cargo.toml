@@ -10,3 +10,4 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 strum = { version = "0.26", features = ["derive"] }
 ts-rs = { workspace = true }
+utoipa = { workspace = true }

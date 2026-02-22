@@ -25,7 +25,20 @@ pub fn router() -> Router<AppState> {
 }
 
 /// POST /api/v1/models/:model_id/deploy
-async fn deploy_model(
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/deploy",
+    tag = "Deployments",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 200, description = "Model deployed", body = ModelResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn deploy_model(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -54,7 +67,20 @@ async fn deploy_model(
 }
 
 /// POST /api/v1/models/:model_id/undeploy
-async fn undeploy_model(
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/undeploy",
+    tag = "Deployments",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 200, description = "Model undeployed", body = ModelResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn undeploy_model(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -81,7 +107,20 @@ async fn undeploy_model(
 }
 
 /// GET /api/v1/models/:model_id/deployment
-async fn get_deployment_status(
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{model_id}/deployment",
+    tag = "Deployments",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 200, description = "Deployment status", body = DeploymentStatusResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_deployment_status(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,

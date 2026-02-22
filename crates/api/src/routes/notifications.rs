@@ -24,8 +24,17 @@ pub fn router() -> Router<AppState> {
         .route("/notifications/deliveries", get(list_deliveries))
 }
 
-/// GET /api/v1/notifications/preferences
-async fn list_preferences(
+/// List notification preferences.
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/preferences",
+    tag = "Notifications",
+    responses(
+        (status = 200, description = "Notification preferences", body = Vec<NotificationPreferenceResponse>),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_preferences(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<NotificationPreferenceResponse>>> {
@@ -37,8 +46,18 @@ async fn list_preferences(
     Ok(Json(prefs))
 }
 
-/// PUT /api/v1/notifications/preferences
-async fn update_preferences(
+/// Update notification preferences.
+#[utoipa::path(
+    put,
+    path = "/api/v1/notifications/preferences",
+    tag = "Notifications",
+    request_body = UpdatePreferencesRequest,
+    responses(
+        (status = 200, description = "Preferences updated", body = Vec<NotificationPreferenceResponse>),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn update_preferences(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Json(body): Json<UpdatePreferencesRequest>,
@@ -55,8 +74,21 @@ async fn update_preferences(
     Ok(Json(prefs))
 }
 
-/// GET /api/v1/notifications/deliveries
-async fn list_deliveries(
+/// List notification deliveries.
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/deliveries",
+    tag = "Notifications",
+    params(
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "Notification deliveries", body = inline(PaginatedResponse<NotificationDeliveryResponse>)),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_deliveries(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Query(pagination): Query<PaginationParams>,

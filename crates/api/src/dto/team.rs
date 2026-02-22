@@ -2,10 +2,11 @@ use chrono::{DateTime, Utc};
 use platform_shared::enums::{InvitationStatus, TeamRole};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// API response for a team member.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TeamMemberResponse {
     pub id: Uuid,
@@ -28,7 +29,7 @@ impl From<platform_db::models::TeamMember> for TeamMemberResponse {
 }
 
 /// API response for an invitation.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct InvitationResponse {
     pub id: Uuid,
@@ -55,7 +56,7 @@ impl From<platform_db::models::Invitation> for InvitationResponse {
 }
 
 /// Request body for inviting a team member.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct InviteRequest {
     pub email: String,
@@ -64,7 +65,7 @@ pub struct InviteRequest {
 }
 
 /// Request body for updating a team member's role.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct UpdateRoleRequest {
     pub role: TeamRole,

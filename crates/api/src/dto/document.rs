@@ -2,10 +2,11 @@ use chrono::{DateTime, Utc};
 use platform_shared::enums::DocumentStatus;
 use serde::Serialize;
 use ts_rs::TS;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// API response for a document.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DocumentResponse {
     pub id: Uuid,
@@ -42,7 +43,7 @@ impl From<platform_db::models::Document> for DocumentResponse {
 }
 
 /// Response after successful document upload.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct UploadResponse {
     pub id: Uuid,

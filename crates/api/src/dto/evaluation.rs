@@ -4,9 +4,10 @@ use platform_shared::enums::EvaluationStatus;
 use platform_shared::types::EvaluationScores;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Request to create a new evaluation.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct CreateEvaluationRequest {
     #[ts(optional)]
@@ -16,13 +17,14 @@ pub struct CreateEvaluationRequest {
 }
 
 /// Evaluation information returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct EvaluationResponse {
     pub id: String,
     pub model_id: String,
     pub status: EvaluationStatus,
     pub scores: Option<EvaluationScores>,
+    #[schema(value_type = Object)]
     pub report: serde_json::Value,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,

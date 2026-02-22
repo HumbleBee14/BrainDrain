@@ -63,7 +63,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Build router (layers applied outside-in: last .layer() is outermost)
     // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → handler
-    let app = routes::router()
+    let mut app = routes::router();
+
+    // Mount Swagger UI docs in non-production environments
+    if let Some(docs) = routes::docs_router(&config) {
+        tracing::info!("Swagger UI enabled at /docs");
+        app = app.merge(docs);
+    }
+
+    let app = app
         .with_state(state)
         .layer(propagate_request_id)
         .layer(axum::middleware::from_fn_with_state(

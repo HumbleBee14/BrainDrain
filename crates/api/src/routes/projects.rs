@@ -26,7 +26,19 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{id}", delete(delete_project))
 }
 
-async fn create_project(
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects",
+    tag = "Projects",
+    request_body = CreateProjectRequest,
+    responses(
+        (status = 201, description = "Project created", body = ProjectResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 401, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_project(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Json(body): Json<CreateProjectRequest>,
@@ -53,7 +65,21 @@ async fn create_project(
     Ok((StatusCode::CREATED, Json(project)))
 }
 
-async fn list_projects(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects",
+    tag = "Projects",
+    params(
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of projects", body = inline(PaginatedResponse<ProjectResponse>)),
+        (status = 401, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_projects(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Query(params): Query<PaginationParams>,
@@ -68,7 +94,18 @@ async fn list_projects(
     Ok(Json(result))
 }
 
-async fn get_project(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{id}",
+    tag = "Projects",
+    params(("id" = Uuid, Path, description = "Project ID")),
+    responses(
+        (status = 200, description = "Project details", body = ProjectResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_project(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -77,7 +114,19 @@ async fn get_project(
     Ok(Json(project))
 }
 
-async fn update_project(
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{id}",
+    tag = "Projects",
+    params(("id" = Uuid, Path, description = "Project ID")),
+    request_body = UpdateProjectRequest,
+    responses(
+        (status = 200, description = "Project updated", body = ProjectResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn update_project(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -97,7 +146,18 @@ async fn update_project(
     Ok(Json(project))
 }
 
-async fn delete_project(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{id}",
+    tag = "Projects",
+    params(("id" = Uuid, Path, description = "Project ID")),
+    responses(
+        (status = 204, description = "Project deleted"),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn delete_project(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,

@@ -13,10 +13,23 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/audit-logs", get(list_audit_logs))
 }
 
-/// GET /api/v1/audit-logs
-///
-/// Supports optional filtering by `resource_type` and `resource_id`.
-async fn list_audit_logs(
+/// List audit logs with optional filtering.
+#[utoipa::path(
+    get,
+    path = "/api/v1/audit-logs",
+    tag = "Audit Logs",
+    params(
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+        ("resource_type" = Option<String>, Query, description = "Filter by resource type"),
+        ("resource_id" = Option<uuid::Uuid>, Query, description = "Filter by resource ID"),
+    ),
+    responses(
+        (status = 200, description = "Audit log entries", body = inline(PaginatedResponse<AuditLogResponse>)),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_audit_logs(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Query(params): Query<AuditLogFilterParams>,

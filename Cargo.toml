@@ -82,6 +82,10 @@ tokio-stream = "0.1"
 # Type generation (Rust → TypeScript)
 ts-rs = { version = "12", features = ["chrono-impl", "uuid-impl", "serde-json-impl", "serde-compat"] }
 
+# OpenAPI documentation
+utoipa = { version = "5", features = ["uuid", "chrono"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
 # Internal crates
 platform-shared = { path = "crates/shared" }
 platform-db = { path = "crates/db" }

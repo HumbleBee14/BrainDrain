@@ -670,7 +670,7 @@ Most Phase 6 items were completed as part of earlier phases. Remaining items are
 | Advanced evaluation | Custom benchmarks, pluggable suites | **COMPLETE** | Done in Phase 3 (BenchmarkSource protocol, 197-item benchmark, LLMJudge) |
 | Load testing | 50+ concurrent users, performance gates | **NOT DONE** | No automated test harness; gates defined in ARCHITECTURE.md only |
 | RunPod integration | Serverless GPU for cost optimization | **NOT DONE** | Documented as future; using Modal currently |
-| API documentation | OpenAPI spec, endpoint reference | **NOT DONE** | Routes documented inline in DEVELOPMENT.md; no formal spec |
+| API documentation | OpenAPI spec, endpoint reference | **COMPLETE** | utoipa v5 + Swagger UI at `/docs`. 53 endpoints, 80+ schemas, 17 tags. All handlers annotated with `#[utoipa::path]`. |
 
 ### What's Left (Optional / Post-MVP)
 
@@ -678,9 +678,8 @@ These are **nice-to-haves** for production scale, not blockers for the platform 
 
 1. **Load testing harness** — k6 or Locust scripts for benchmarking inference at scale
 2. **RunPod integration** — alternative GPU provider for cost optimization
-3. **OpenAPI spec** — auto-generated from Rust DTOs for API consumers
-4. **Multi-model UI** — base model selector dropdown in training form (engine already supports any model)
-5. **ClickHouse migration** — move billing_events to OLAP store when Postgres query latency exceeds SLA
+3. **Multi-model UI** — base model selector dropdown in training form (engine already supports any model)
+4. **ClickHouse migration** — move billing_events to OLAP store when Postgres query latency exceeds SLA
 
 ---
 

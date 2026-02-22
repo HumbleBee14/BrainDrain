@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// High-level platform statistics across all projects for a tenant.
-#[derive(Debug, Serialize, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DashboardStats {
     pub total_projects: i64,
@@ -15,7 +16,7 @@ pub struct DashboardStats {
 }
 
 /// Billing usage summary with daily cost breakdown.
-#[derive(Debug, Serialize, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct UsageSummary {
     pub total_cost_usd: f64,
@@ -26,7 +27,7 @@ pub struct UsageSummary {
 }
 
 /// Cost for a single day.
-#[derive(Debug, Serialize, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DailyCost {
     pub date: String,
@@ -34,7 +35,7 @@ pub struct DailyCost {
 }
 
 /// Recent activity entry from the audit log.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ActivityEntry {
     pub id: String,
