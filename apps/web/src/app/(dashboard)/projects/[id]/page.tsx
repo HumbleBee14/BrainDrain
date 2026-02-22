@@ -346,7 +346,7 @@ export default function ProjectDetailPage() {
         {/* Training form */}
         {showTrainForm && (
           <div className="rounded-lg border border-zinc-800 p-4 mb-4 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">Dataset</label>
                 <select
@@ -400,6 +400,22 @@ export default function ProjectDetailPage() {
                   <option value="aligned">Aligned (SFT + DPO)</option>
                   <option value="reasoning">Reasoning (SFT + GRPO)</option>
                   <option value="iterative">Iterative (Multi-round)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 mb-1">GPU Class</label>
+                <select
+                  value={trainForm.gpu_class ?? ""}
+                  onChange={(e) => setTrainForm({ ...trainForm, gpu_class: e.target.value || undefined })}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Auto (default)</option>
+                  <option value="t4">T4 (budget, small models)</option>
+                  <option value="a10g">A10G (7B-13B LoRA)</option>
+                  <option value="l40s">L40S (13B-30B)</option>
+                  <option value="a10040gb">A100 40GB (30B+)</option>
+                  <option value="a10080gb">A100 80GB (large models)</option>
+                  <option value="h100">H100 (max throughput)</option>
                 </select>
               </div>
             </div>

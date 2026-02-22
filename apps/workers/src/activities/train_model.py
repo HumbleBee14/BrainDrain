@@ -37,18 +37,24 @@ from src.activities.training_engine import (
     register_strategy,
 )
 from src.constants import TrainingJobStatus
+from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.training")
 
 
 class StartTrainingActivity:
-    def __init__(self, infra: InfraContainer):
+    def __init__(self, infra: InfraContainer, gpu_provider: GpuProvider | None = None):
         self.infra = infra
+        self.gpu_provider = gpu_provider
 
     @activity.defn(name="start_training")
     async def run(self, input: StartTrainingInput) -> StartTrainingOutput:
-        """Run a fine-tuning job. Called by TrainWorkflow."""
+        """Run a fine-tuning job. Called by TrainWorkflow.
+
+        Dispatches to the configured GpuProvider (local or Modal).
+        Falls back to direct local execution if no provider is set.
+        """
         db = self.infra.db
         job_id = input.training_job_id
 
@@ -59,7 +65,24 @@ class StartTrainingActivity:
                 job_id,
             )
 
-            result = await _run_training(input, self.infra)
+            if self.gpu_provider is not None:
+                result_dict = await self.gpu_provider.run_training(
+                    tenant_id=input.tenant_id,
+                    training_job_id=job_id,
+                    dataset_path=input.dataset_path,
+                    base_model=input.base_model,
+                    method=input.method,
+                    mode=input.mode,
+                    hyperparams=input.hyperparams,
+                    gpu_class=input.gpu_class,
+                )
+                result = StartTrainingOutput(
+                    adapter_path=result_dict["adapter_path"],
+                    adapter_size_bytes=result_dict["adapter_size_bytes"],
+                    metrics=result_dict["metrics"],
+                )
+            else:
+                result = await _run_training(input, self.infra)
 
             await db.execute(
                 """UPDATE training_jobs

@@ -41,6 +41,9 @@ class WorkerSettings(BaseSettings):
     model_cache_dir: str = "/tmp/model_cache"
     worker_mode: str = "all"  # "all" | "main" | "gpu"
 
+    # GPU provider: "local" (default, worker's own GPU) | "modal" (serverless)
+    gpu_provider: str = "local"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"  # "json" (production) | "text" (local dev)

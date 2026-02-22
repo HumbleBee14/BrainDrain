@@ -156,7 +156,64 @@ NEXT_PUBLIC_API_URL=https://api.yourdomain.com
 
 ---
 
-## 9. Observability (OPTIONAL)
+## 9. GPU Compute Provider (DONE)
+
+### Architecture
+
+Training jobs dispatch through a **`GpuProvider` protocol** (`apps/workers/src/gpu_provider.py`) with pluggable implementations:
+
+| Provider | Config | Use Case |
+|----------|--------|----------|
+| `LocalGpuProvider` | `APP_GPU_PROVIDER=local` (default) | Dev/testing on worker's own GPU |
+| `ModalGpuProvider` | `APP_GPU_PROVIDER=modal` | Production — serverless GPUs (scale to zero, auto-scaling) |
+
+### How it works
+
+1. Worker reads `APP_GPU_PROVIDER` from config at startup
+2. `create_gpu_provider()` factory returns the configured provider
+3. `StartTrainingActivity` dispatches training through the provider
+4. **Local**: runs `_run_training()` in-process (same behavior as before)
+5. **Modal**: provisions an ephemeral GPU container, installs ML deps, runs training, returns results
+
+### Local development (no changes needed)
+
+```bash
+# Default — uses your local GPU
+APP_GPU_PROVIDER=local   # This is the default, you can omit it
+```
+
+### Production with Modal
+
+```bash
+# 1. Install modal
+pip install modal
+
+# 2. Set env vars
+APP_GPU_PROVIDER=modal
+MODAL_TOKEN_ID=ak-xxxxx      # From https://modal.com/settings
+MODAL_TOKEN_SECRET=as-xxxxx
+
+# 3. That's it — training jobs will auto-provision GPUs on Modal
+```
+
+### GPU types (Modal)
+
+The `gpu_class` field maps to Modal GPU specifiers:
+- `A10G` → cost-effective for 7B-13B LoRA (default)
+- `A100` → larger models, faster training
+- `A100-80GB` → 30B+ models
+- `H100` → maximum throughput
+
+### Adding a new provider (e.g., RunPod, Lambda)
+
+1. Create a class implementing `GpuProvider` protocol in `gpu_provider.py`
+2. Add it to `create_gpu_provider()` factory
+3. Add config vars to `WorkerSettings`
+4. Add optional dependency to `pyproject.toml`
+
+---
+
+## 10. Observability (OPTIONAL)
 
 ### What exists:
 - OTEL docker-compose (`infra/otel/docker-compose.otel.yml`) — Prometheus, Tempo, Loki, Grafana
@@ -189,6 +246,6 @@ NEXT_PUBLIC_API_URL=https://api.yourdomain.com
 | Clerk production keys | SETUP | Create production instance |
 | Stripe configuration | SETUP | Products, prices, webhook URL |
 | Domain + DNS + TLS | SETUP | Register, point, configure |
-| GPU provider (optional) | SETUP | Modal/RunPod for training |
+| GPU provider | DONE | Trait-based: Local (default) + Modal (serverless) |
 
 **Bottom line:** All code and configuration is done. The remaining items are account creation and credential setup — things that require human decisions and credit cards.

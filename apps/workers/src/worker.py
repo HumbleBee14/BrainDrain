@@ -133,6 +133,11 @@ async def main() -> None:
         interceptors=interceptors,
     )
 
+    # Initialize GPU provider (local by default, Modal for serverless GPUs)
+    from src.gpu_provider import create_gpu_provider
+
+    gpu_provider = create_gpu_provider(infra, settings.gpu_provider)
+
     # Import and instantiate activity classes with injected infrastructure
     from src.activities.build_dataset import BuildDatasetActivity
     from src.activities.chunk_text import ChunkTextActivity
@@ -158,7 +163,7 @@ async def main() -> None:
 
     # GPU-bound activities (training, evaluation)
     gpu_activities = [
-        StartTrainingActivity(infra),
+        StartTrainingActivity(infra, gpu_provider=gpu_provider),
         TrainSftRoundActivity(infra),
         EvaluateHoldoutActivity(infra),
         RunEvaluationActivity(infra),
