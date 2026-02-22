@@ -5,6 +5,16 @@ use uuid::Uuid;
 use crate::error::AppResult;
 use crate::repositories::traits::{BillingEventRepository, BoxFuture};
 
+/// Daily inference usage breakdown.
+#[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct InferenceUsageDay {
+    pub date: String,
+    pub request_count: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost_usd: f64,
+}
+
 /// Aggregated usage summary for a resource.
 #[derive(Debug, sqlx::FromRow, serde::Serialize)]
 #[allow(dead_code)]
@@ -176,6 +186,37 @@ impl BillingEventRepository for PgBillingEventRepo {
             .await?;
 
             Ok(row)
+        })
+    }
+
+    fn inference_usage_by_day(
+        &self,
+        tenant_id: Uuid,
+        days: i32,
+    ) -> BoxFuture<'_, AppResult<Vec<InferenceUsageDay>>> {
+        Box::pin(async move {
+            let rows = sqlx::query_as::<_, InferenceUsageDay>(
+                r#"
+                SELECT
+                    TO_CHAR(DATE(created_at), 'YYYY-MM-DD') AS date,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM(tokens_in), 0)::BIGINT AS prompt_tokens,
+                    COALESCE(SUM(tokens_out), 0)::BIGINT AS completion_tokens,
+                    COALESCE(SUM(cost_usd), 0)::FLOAT8 AS cost_usd
+                FROM billing_events
+                WHERE tenant_id = $1
+                  AND operation = 'inference'
+                  AND created_at >= NOW() - make_interval(days => $2)
+                GROUP BY DATE(created_at)
+                ORDER BY DATE(created_at)
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(days)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(rows)
         })
     }
 }

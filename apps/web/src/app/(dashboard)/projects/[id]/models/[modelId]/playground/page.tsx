@@ -87,6 +87,7 @@ export default function PlaygroundPage() {
           messages: fullMessages,
           temperature,
           max_tokens: maxTokens,
+          stream: true,
         }),
       });
 
@@ -95,13 +96,45 @@ export default function PlaygroundPage() {
         throw new Error(body.error?.message || `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
-      const assistantContent = data.choices?.[0]?.message?.content || "No response";
+      // SSE streaming: read tokens incrementally
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response body");
 
-      setMessages([...newMessages, { role: "assistant", content: assistantContent }]);
+      const decoder = new TextDecoder();
+      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
-      // Scroll to bottom
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        // Keep last incomplete line in buffer
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]") continue;
+
+          try {
+            const chunk = JSON.parse(trimmed.slice(6));
+            const token = chunk.choices?.[0]?.delta?.content;
+            if (token) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, content: last.content + token };
+                return updated;
+              });
+            }
+          } catch {
+            // Skip malformed chunks
+          }
+        }
+
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
@@ -233,7 +266,7 @@ export default function PlaygroundPage() {
                 </div>
               </div>
             ))}
-            {isLoading && (
+            {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
               <div className="flex justify-start">
                 <div className="bg-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400 animate-pulse">
                   Generating...

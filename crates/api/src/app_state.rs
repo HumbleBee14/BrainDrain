@@ -1,6 +1,7 @@
 use platform_storage::s3::{S3Config, S3Storage};
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::auth::{AuthProviderChain, ClerkAuthProvider};
 use crate::config::Config;
@@ -10,6 +11,7 @@ use crate::repositories::billing_event_repo::PgBillingEventRepo;
 use crate::repositories::dataset_repo::PgDatasetRepo;
 use crate::repositories::document_repo::PgDocumentRepo;
 use crate::repositories::evaluation_repo::PgEvaluationRepo;
+use crate::repositories::export_repo::PgExportRepo;
 use crate::repositories::invitation_repo::PgInvitationRepo;
 use crate::repositories::model_repo::PgModelRepo;
 use crate::repositories::notification_repo::PgNotificationRepo;
@@ -19,11 +21,13 @@ use crate::repositories::tenant_repo::PgTenantRepo;
 use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
     ApiKeyRepository, AuditLogRepository, BillingEventRepository, DatasetRepository,
-    DocumentRepository, EvaluationRepository, InvitationRepository, ModelRepository,
-    NotificationRepository, ProjectRepository, TeamMemberRepository, TenantRepository,
-    TrainingJobRepository,
+    DocumentRepository, EvaluationRepository, ExportRepository, InvitationRepository,
+    ModelRepository, NotificationRepository, ProjectRepository, TeamMemberRepository,
+    TenantRepository, TrainingJobRepository,
 };
+use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
+use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -51,6 +55,7 @@ struct AppStateInner {
     pub training_job_repo: Arc<dyn TrainingJobRepository>,
     pub model_repo: Arc<dyn ModelRepository>,
     pub evaluation_repo: Arc<dyn EvaluationRepository>,
+    pub export_repo: Arc<dyn ExportRepository>,
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub billing_event_repo: Arc<dyn BillingEventRepository>,
     pub audit_log_repo: Arc<dyn AuditLogRepository>,
@@ -59,6 +64,8 @@ struct AppStateInner {
     pub notification_repo: Arc<dyn NotificationRepository>,
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
+    pub vllm_circuit_breaker: CircuitBreaker,
+    pub billing_batcher: Arc<BillingBatcher>,
 }
 
 impl AppState {
@@ -138,6 +145,7 @@ impl AppState {
         let model_repo: Arc<dyn ModelRepository> = Arc::new(PgModelRepo::new(db.clone()));
         let evaluation_repo: Arc<dyn EvaluationRepository> =
             Arc::new(PgEvaluationRepo::new(db.clone()));
+        let export_repo: Arc<dyn ExportRepository> = Arc::new(PgExportRepo::new(db.clone()));
         let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
             Arc::new(PgBillingEventRepo::new(db.clone()));
@@ -166,6 +174,22 @@ impl AppState {
                 Arc::new(NoOpBillingProvider)
             };
 
+        // Circuit breaker for vLLM calls (configurable via VLLM_CB_FAILURE_THRESHOLD / VLLM_CB_RECOVERY_TIMEOUT_SECS)
+        let vllm_circuit_breaker = CircuitBreaker::new(
+            config.vllm_cb_failure_threshold,
+            Duration::from_secs(config.vllm_cb_recovery_timeout_secs),
+        );
+
+        // Billing micro-batcher (10K channel capacity, flush every 5s or 1000 events)
+        let billing_batcher = Arc::new(BillingBatcher::new(
+            db.clone(),
+            10_000,
+            1_000,
+            Duration::from_secs(5),
+        ));
+
+        tracing::info!("Infrastructure hardening initialized (circuit breaker + billing batcher)");
+
         Ok(Self {
             inner: Arc::new(AppStateInner {
                 config,
@@ -181,6 +205,7 @@ impl AppState {
                 training_job_repo,
                 model_repo,
                 evaluation_repo,
+                export_repo,
                 api_key_repo,
                 billing_event_repo,
                 audit_log_repo,
@@ -189,6 +214,8 @@ impl AppState {
                 notification_repo,
                 tenant_repo,
                 billing_provider,
+                vllm_circuit_breaker,
+                billing_batcher,
             }),
         })
     }
@@ -245,6 +272,10 @@ impl AppState {
         &*self.inner.evaluation_repo
     }
 
+    pub fn export_repo(&self) -> &dyn ExportRepository {
+        &*self.inner.export_repo
+    }
+
     pub fn api_key_repo(&self) -> &dyn ApiKeyRepository {
         &*self.inner.api_key_repo
     }
@@ -275,5 +306,18 @@ impl AppState {
 
     pub fn billing_provider(&self) -> &dyn BillingProvider {
         &*self.inner.billing_provider
+    }
+
+    pub fn vllm_circuit_breaker(&self) -> &CircuitBreaker {
+        &self.inner.vllm_circuit_breaker
+    }
+
+    pub fn billing_batcher(&self) -> &BillingBatcher {
+        &self.inner.billing_batcher
+    }
+
+    /// Get a cloneable handle for explicit shutdown of the billing batcher.
+    pub fn billing_batcher_handle(&self) -> Arc<BillingBatcher> {
+        Arc::clone(&self.inner.billing_batcher)
     }
 }

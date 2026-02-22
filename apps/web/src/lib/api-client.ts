@@ -100,6 +100,33 @@ export interface ParsedContentResponse {
   url: string;
 }
 
+export interface ExportResponse {
+  id: string;
+  model_id: string;
+  format: string;
+  quant_type: string;
+  status: string;
+  has_download: boolean;
+  file_size_bytes: number | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface ExportDownloadResponse {
+  download_url: string;
+  file_size_bytes: number | null;
+  filename: string;
+}
+
+export interface InferenceUsageDay {
+  date: string;
+  request_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
 // ── API client infrastructure ──
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -426,6 +453,26 @@ export const api = {
       }),
   },
 
+  exports: {
+    list: (token: string, modelId: string) =>
+      request<ExportResponse[]>(
+        `/api/v1/models/${modelId}/exports`,
+        { token }
+      ),
+
+    create: (token: string, modelId: string, data: { quant_type?: string }) =>
+      request<ExportResponse>(`/api/v1/models/${modelId}/exports`, {
+        token,
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    download: (token: string, exportId: string) =>
+      request<ExportDownloadResponse>(`/api/v1/exports/${exportId}/download`, {
+        token,
+      }),
+  },
+
   deployments: {
     deploy: (token: string, modelId: string) =>
       request<ModelResponse>(`/api/v1/models/${modelId}/deploy`, {
@@ -534,6 +581,12 @@ export const api = {
     getActivity: (token: string) =>
       request<Array<{ id: string; actor_id: string; action: string; resource_type: string; resource_id: string | null; created_at: string }>>(
         "/api/v1/dashboard/activity",
+        { token }
+      ),
+
+    getInferenceUsage: (token: string) =>
+      request<InferenceUsageDay[]>(
+        "/api/v1/dashboard/inference-usage",
         { token }
       ),
   },

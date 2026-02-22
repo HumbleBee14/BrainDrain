@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod dataset;
 pub mod document;
 pub mod evaluation;
+pub mod export;
 pub mod model;
 pub mod notification;
 pub mod pipeline;

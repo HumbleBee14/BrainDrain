@@ -152,10 +152,50 @@ class DeployModelOutput:
 
 
 class DeployModelActivity:
+    """Deploy a model by calling the Rust API to load the LoRA adapter into vLLM.
+
+    The Rust API handles the vLLM adapter load/unload and circuit breaker.
+    This activity is the Temporal bridge from the full pipeline workflow.
+    """
+
     def __init__(self, infra: InfraContainer):
         self.infra = infra
 
     @activity.defn(name="deploy_model")
     async def run(self, input: DeployModelInput) -> DeployModelOutput:
-        activity.logger.info("Stub: deploy_model for %s", input.model_id)
-        return DeployModelOutput(endpoint_url="", deployment_status="pending")
+        import aiohttp
+
+        api_url = self.infra.settings.platform_api_url
+        token = self.infra.settings.platform_internal_token
+
+        if not token:
+            raise RuntimeError(
+                "platform_internal_token is not configured; "
+                "refusing to call deploy endpoint without authentication"
+            )
+
+        activity.logger.info("Deploying model %s (adapter: %s)", input.model_id, input.adapter_path)
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{api_url}/api/v1/models/{input.model_id}/deploy",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    raise RuntimeError(f"Deploy failed ({resp.status}): {body}")
+
+                data = await resp.json()
+
+        activity.logger.info("Model %s deployed successfully", input.model_id)
+
+        return DeployModelOutput(
+            endpoint_url=f"{api_url}/v1/chat/completions",
+            deployment_status=data.get("deployment_status", "active"),
+        )

@@ -6,6 +6,7 @@ pub mod datasets;
 pub mod deployments;
 pub mod documents;
 pub mod evaluations;
+pub mod exports;
 pub mod health;
 pub mod inference;
 pub mod notifications;
@@ -40,6 +41,7 @@ fn v1_router() -> Router<AppState> {
         .merge(datasets::router())
         .merge(training::router())
         .merge(evaluations::router())
+        .merge(exports::router())
         .merge(api_keys::router())
         .merge(deployments::router())
         .merge(billing::router())

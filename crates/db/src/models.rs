@@ -218,3 +218,18 @@ pub struct NotificationDelivery {
     pub created_at: DateTime<Utc>,
     pub sent_at: Option<DateTime<Utc>>,
 }
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ModelExport {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub model_id: Uuid,
+    pub format: String,
+    pub quant_type: String,
+    pub status: String,
+    pub storage_path: Option<String>,
+    pub file_size_bytes: Option<i64>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}

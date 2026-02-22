@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// High-level platform statistics across all projects for a tenant.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DashboardStats {
     pub total_projects: i64,
@@ -15,7 +15,7 @@ pub struct DashboardStats {
 }
 
 /// Billing usage summary with daily cost breakdown.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct UsageSummary {
     pub total_cost_usd: f64,
@@ -26,7 +26,7 @@ pub struct UsageSummary {
 }
 
 /// Cost for a single day.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DailyCost {
     pub date: String,
