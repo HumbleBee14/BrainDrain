@@ -46,7 +46,21 @@ pub fn router() -> Router<AppState> {
 /// POST /api/v1/projects/:project_id/training-jobs
 ///
 /// Create a training job and auto-trigger the TrainWorkflow.
-async fn create_training_job(
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/training-jobs",
+    tag = "Training",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID")
+    ),
+    request_body = CreateTrainingJobRequest,
+    responses(
+        (status = 201, description = "Training job created", body = TrainingJobResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_training_job(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -81,7 +95,22 @@ async fn create_training_job(
 }
 
 /// GET /api/v1/projects/:project_id/training-jobs
-async fn list_training_jobs(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/training-jobs",
+    tag = "Training",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of training jobs", body = inline(PaginatedResponse<TrainingJobResponse>)),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_training_jobs(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -100,7 +129,20 @@ async fn list_training_jobs(
 }
 
 /// GET /api/v1/training-jobs/:id
-async fn get_training_job(
+#[utoipa::path(
+    get,
+    path = "/api/v1/training-jobs/{id}",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Training job ID")
+    ),
+    responses(
+        (status = 200, description = "Training job details", body = TrainingJobResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_training_job(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -110,7 +152,20 @@ async fn get_training_job(
 }
 
 /// POST /api/v1/training-jobs/:id/cancel
-async fn cancel_training_job(
+#[utoipa::path(
+    post,
+    path = "/api/v1/training-jobs/{id}/cancel",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Training job ID")
+    ),
+    responses(
+        (status = 200, description = "Training job cancelled", body = TrainingJobResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn cancel_training_job(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -132,7 +187,20 @@ async fn cancel_training_job(
 /// GET /api/v1/training-jobs/:id/metrics/stream
 ///
 /// SSE endpoint that streams real-time training metrics from Redis.
-async fn stream_training_metrics(
+#[utoipa::path(
+    get,
+    path = "/api/v1/training-jobs/{id}/metrics/stream",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Training job ID")
+    ),
+    responses(
+        (status = 200, description = "SSE stream", content_type = "text/event-stream"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn stream_training_metrics(
     State(state): State<AppState>,
     _user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -213,7 +281,20 @@ async fn stream_training_metrics(
 /// GET /api/v1/training-jobs/:id/metrics
 ///
 /// Get the latest training metrics snapshot from the job record.
-async fn get_training_metrics(
+#[utoipa::path(
+    get,
+    path = "/api/v1/training-jobs/{id}/metrics",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Training job ID")
+    ),
+    responses(
+        (status = 200, description = "Training metrics snapshot", body = serde_json::Value),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_training_metrics(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -223,7 +304,22 @@ async fn get_training_metrics(
 }
 
 /// GET /api/v1/projects/:project_id/models
-async fn list_models(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/models",
+    tag = "Training",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of models", body = inline(PaginatedResponse<ModelResponse>)),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_models(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -242,7 +338,20 @@ async fn list_models(
 }
 
 /// GET /api/v1/models/:id
-async fn get_model(
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{id}",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 200, description = "Model details", body = ModelResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_model(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,

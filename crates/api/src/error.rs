@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Application error type that maps cleanly to HTTP responses.
@@ -46,13 +47,13 @@ pub enum AppError {
 }
 
 /// JSON error response envelope.
-#[derive(Serialize)]
-struct ErrorEnvelope {
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ErrorEnvelope {
     error: ErrorBody,
 }
 
-#[derive(Serialize)]
-struct ErrorBody {
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ErrorBody {
     code: &'static str,
     message: String,
 }

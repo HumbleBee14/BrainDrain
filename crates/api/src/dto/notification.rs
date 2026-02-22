@@ -1,15 +1,17 @@
 use platform_db::models::{NotificationDelivery, NotificationPreference};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Notification preference returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct NotificationPreferenceResponse {
     pub id: String,
     pub channel: String,
     pub event_type: String,
     pub enabled: bool,
+    #[schema(value_type = Object)]
     pub config: serde_json::Value,
 }
 
@@ -26,22 +28,23 @@ impl From<NotificationPreference> for NotificationPreferenceResponse {
 }
 
 /// Request to batch-update notification preferences.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdatePreferencesRequest {
     pub preferences: Vec<PreferenceUpdate>,
 }
 
 /// Single preference update within a batch.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PreferenceUpdate {
     pub channel: String,
     pub event_type: String,
     pub enabled: bool,
+    #[schema(value_type = Option<Object>)]
     pub config: Option<serde_json::Value>,
 }
 
 /// Notification delivery record returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct NotificationDeliveryResponse {
     pub id: String,

@@ -2,9 +2,10 @@ use chrono::{DateTime, Utc};
 use platform_db::models::BillingEvent;
 use serde::Serialize;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Billing event returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct BillingEventResponse {
     pub id: String,
@@ -14,6 +15,7 @@ pub struct BillingEventResponse {
     pub tokens_out: Option<i64>,
     pub gpu_seconds: Option<i32>,
     pub cost_usd: f64,
+    #[schema(value_type = Object)]
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Response from triggering document parsing.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TriggerParseResponse {
     pub workflow_id: String,
@@ -10,17 +11,18 @@ pub struct TriggerParseResponse {
 }
 
 /// Request body for triggering data refinement.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TriggerRefineRequest {
     #[ts(optional)]
     pub task_type: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub config: serde_json::Value,
 }
 
 /// Response from triggering data refinement.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TriggerRefineResponse {
     pub workflow_id: String,
@@ -29,7 +31,7 @@ pub struct TriggerRefineResponse {
 
 /// Response from triggering training.
 #[allow(dead_code)]
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TriggerTrainResponse {
     pub workflow_id: String,
@@ -37,7 +39,7 @@ pub struct TriggerTrainResponse {
 }
 
 /// Aggregate pipeline status for a project.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ProjectPipelineStatus {
     pub project_id: String,
@@ -48,7 +50,7 @@ pub struct ProjectPipelineStatus {
     pub evaluations: EvaluationStatusCounts,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DocumentStatusCounts {
     pub total: i64,
@@ -58,7 +60,7 @@ pub struct DocumentStatusCounts {
     pub failed: i64,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DatasetStatusCounts {
     pub total: i64,
@@ -67,7 +69,7 @@ pub struct DatasetStatusCounts {
     pub approved: i64,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TrainingJobStatusCounts {
     pub total: i64,
@@ -77,7 +79,7 @@ pub struct TrainingJobStatusCounts {
     pub failed: i64,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ModelStatusCounts {
     pub total: i64,
@@ -85,7 +87,7 @@ pub struct ModelStatusCounts {
     pub active: i64,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct EvaluationStatusCounts {
     pub total: i64,

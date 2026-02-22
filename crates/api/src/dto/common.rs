@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Pagination query parameters.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PaginationParams {
     #[serde(default = "default_offset")]
     pub offset: i64,
@@ -18,8 +19,8 @@ fn default_limit() -> i64 {
 
 /// Paginated list response wrapper.
 /// Note: Generic type — manually defined in generated/index.ts rather than auto-exported.
-#[derive(Debug, Serialize)]
-pub struct PaginatedResponse<T: Serialize> {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PaginatedResponse<T: Serialize + ToSchema> {
     pub data: Vec<T>,
     pub total: i64,
     pub offset: i64,

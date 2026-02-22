@@ -25,7 +25,21 @@ pub fn router() -> Router<AppState> {
 }
 
 /// POST /api/v1/models/:model_id/exports
-async fn create_export(
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/exports",
+    tag = "Exports",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    request_body = ExportRequest,
+    responses(
+        (status = 201, description = "Export created", body = ExportResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_export(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -56,7 +70,20 @@ async fn create_export(
 }
 
 /// GET /api/v1/models/:model_id/exports
-async fn list_exports(
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{model_id}/exports",
+    tag = "Exports",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 200, description = "List of exports", body = Vec<ExportResponse>),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_exports(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -66,7 +93,20 @@ async fn list_exports(
 }
 
 /// GET /api/v1/exports/:export_id/download
-async fn download_export(
+#[utoipa::path(
+    get,
+    path = "/api/v1/exports/{export_id}/download",
+    tag = "Exports",
+    params(
+        ("export_id" = Uuid, Path, description = "Export ID")
+    ),
+    responses(
+        (status = 200, description = "Export download URL", body = ExportDownloadResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn download_export(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(export_id): Path<Uuid>,

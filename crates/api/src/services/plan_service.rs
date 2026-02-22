@@ -9,7 +9,7 @@ use crate::repositories::traits::TenantRepository;
 ///
 /// Computed from the plan name string. The `plan_limits` JSONB column
 /// in the database is reserved for potential future per-tenant overrides.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PlanLimits {
     pub max_projects: i64,

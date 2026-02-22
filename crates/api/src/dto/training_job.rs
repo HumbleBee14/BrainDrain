@@ -4,9 +4,10 @@ use platform_shared::enums::{TrainingJobStatus, TrainingMethod, TrainingMode};
 use platform_shared::types::{Hyperparams, TrainingMetrics};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Request to create a new training job.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct CreateTrainingJobRequest {
     pub dataset_id: String,
@@ -22,7 +23,7 @@ pub struct CreateTrainingJobRequest {
 }
 
 /// Training job information returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct TrainingJobResponse {
     pub id: String,

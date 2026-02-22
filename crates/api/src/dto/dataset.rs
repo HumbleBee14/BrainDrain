@@ -3,9 +3,10 @@ use platform_db::models::Dataset;
 use platform_shared::enums::DatasetStatus;
 use serde::Serialize;
 use ts_rs::TS;
+use utoipa::ToSchema;
 
 /// Dataset information returned by API.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct DatasetResponse {
     pub id: String,
@@ -14,6 +15,7 @@ pub struct DatasetResponse {
     pub format: String,
     pub status: DatasetStatus,
     pub pair_count: Option<i32>,
+    #[schema(value_type = Object)]
     pub stats: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

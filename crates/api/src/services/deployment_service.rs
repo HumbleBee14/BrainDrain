@@ -208,7 +208,7 @@ impl DeploymentService {
 }
 
 /// Deployment status response.
-#[derive(Debug, serde::Serialize, ts_rs::TS)]
+#[derive(Debug, serde::Serialize, ts_rs::TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct DeploymentStatusResponse {
     pub model_id: String,

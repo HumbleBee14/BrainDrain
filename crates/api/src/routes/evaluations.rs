@@ -26,7 +26,21 @@ pub fn router() -> Router<AppState> {
 }
 
 /// POST /api/v1/models/:model_id/evaluations
-async fn create_evaluation(
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/evaluations",
+    tag = "Evaluations",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID")
+    ),
+    request_body = CreateEvaluationRequest,
+    responses(
+        (status = 201, description = "Evaluation created", body = EvaluationResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_evaluation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -59,7 +73,22 @@ async fn create_evaluation(
 }
 
 /// GET /api/v1/models/:model_id/evaluations
-async fn list_evaluations(
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{model_id}/evaluations",
+    tag = "Evaluations",
+    params(
+        ("model_id" = Uuid, Path, description = "Model ID"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of evaluations", body = inline(PaginatedResponse<EvaluationResponse>)),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_evaluations(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -78,7 +107,20 @@ async fn list_evaluations(
 }
 
 /// GET /api/v1/evaluations/:id
-async fn get_evaluation(
+#[utoipa::path(
+    get,
+    path = "/api/v1/evaluations/{id}",
+    tag = "Evaluations",
+    params(
+        ("id" = Uuid, Path, description = "Evaluation ID")
+    ),
+    responses(
+        (status = 200, description = "Evaluation details", body = EvaluationResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_evaluation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,

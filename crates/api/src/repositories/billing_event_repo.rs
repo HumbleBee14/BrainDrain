@@ -6,7 +6,7 @@ use crate::error::AppResult;
 use crate::repositories::traits::{BillingEventRepository, BoxFuture};
 
 /// Daily inference usage breakdown.
-#[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct InferenceUsageDay {
     pub date: String,
     pub request_count: i64,

@@ -2,10 +2,11 @@ use chrono::{DateTime, Utc};
 use platform_shared::enums::ProjectStatus;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Request body for creating a new project.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct CreateProjectRequest {
     pub name: String,
@@ -16,7 +17,7 @@ pub struct CreateProjectRequest {
 }
 
 /// Request body for updating an existing project.
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct UpdateProjectRequest {
     #[ts(optional)]
@@ -28,7 +29,7 @@ pub struct UpdateProjectRequest {
 }
 
 /// API response for a project.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ProjectResponse {
     pub id: Uuid,
