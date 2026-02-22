@@ -81,6 +81,7 @@ impl ApiKeyRepository for PgApiKeyRepo {
                 SELECT * FROM api_keys
                 WHERE model_id = $1 AND tenant_id = $2
                 ORDER BY created_at DESC
+                LIMIT 1000
                 "#,
             )
             .bind(model_id)

@@ -5,6 +5,7 @@ mod config;
 mod dto;
 mod error;
 mod middleware;
+mod rbac;
 mod repositories;
 mod routes;
 mod services;

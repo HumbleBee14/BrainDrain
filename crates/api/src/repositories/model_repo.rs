@@ -174,4 +174,34 @@ impl ModelRepository for PgModelRepo {
             Ok(result.rows_affected() > 0)
         })
     }
+
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let count =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM models WHERE tenant_id = $1")
+                    .bind(tenant_id)
+                    .fetch_one(&self.db)
+                    .await?;
+
+            Ok(count)
+        })
+    }
+
+    fn count_by_tenant_deployment_status(
+        &self,
+        tenant_id: Uuid,
+        status: DeploymentStatus,
+    ) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM models WHERE tenant_id = $1 AND deployment_status = $2",
+            )
+            .bind(tenant_id)
+            .bind(status.to_string())
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(count)
+        })
+    }
 }

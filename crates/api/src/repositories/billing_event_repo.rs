@@ -131,4 +131,51 @@ impl BillingEventRepository for PgBillingEventRepo {
             Ok(row)
         })
     }
+
+    fn usage_by_day(
+        &self,
+        tenant_id: Uuid,
+        days: i32,
+    ) -> BoxFuture<'_, AppResult<Vec<(String, f64)>>> {
+        Box::pin(async move {
+            let rows = sqlx::query_as::<_, (String, f64)>(
+                r#"
+                SELECT
+                    TO_CHAR(DATE(created_at), 'YYYY-MM-DD') AS day,
+                    COALESCE(SUM(cost_usd), 0)::FLOAT8 AS cost
+                FROM billing_events
+                WHERE tenant_id = $1
+                  AND created_at >= NOW() - make_interval(days => $2)
+                GROUP BY DATE(created_at)
+                ORDER BY DATE(created_at)
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(days)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(rows)
+        })
+    }
+
+    fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>> {
+        Box::pin(async move {
+            let row = sqlx::query_as::<_, (f64, i64, i64)>(
+                r#"
+                SELECT
+                    COALESCE(SUM(cost_usd), 0)::FLOAT8,
+                    COALESCE(SUM(tokens_in), 0)::BIGINT,
+                    COALESCE(SUM(tokens_out), 0)::BIGINT
+                FROM billing_events
+                WHERE tenant_id = $1
+                "#,
+            )
+            .bind(tenant_id)
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(row)
+        })
+    }
 }

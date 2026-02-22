@@ -182,4 +182,16 @@ impl DocumentRepository for PgDocumentRepo {
             Ok(count)
         })
     }
+
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let count =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE tenant_id = $1")
+                    .bind(tenant_id)
+                    .fetch_one(&self.db)
+                    .await?;
+
+            Ok(count)
+        })
+    }
 }

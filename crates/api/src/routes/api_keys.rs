@@ -4,10 +4,13 @@ use axum::routing::post;
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::api_key::{ApiKeyResponse, CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::api_key_service::ApiKeyService;
 use crate::services::audit_logger::AuditLogger;
 
@@ -28,6 +31,7 @@ async fn create_api_key(
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> AppResult<(StatusCode, Json<CreateApiKeyResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let result = ApiKeyService::create(
         state.api_key_repo(),
         state.model_repo(),
@@ -66,6 +70,7 @@ async fn revoke_api_key(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiKeyResponse>> {
+    require_role(&user, TeamRole::Member)?;
     let key = ApiKeyService::revoke(state.api_key_repo(), user.tenant_id, id).await?;
     AuditLogger::log(
         state.audit_log_repo(),

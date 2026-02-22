@@ -1,10 +1,16 @@
 pub mod api_key_service;
 pub mod audit_logger;
+pub mod billing_provider;
+pub mod dashboard_service;
 pub mod dataset_service;
 pub mod deployment_service;
 pub mod document_service;
 pub mod evaluation_service;
 pub mod model_service;
+pub mod notification_service;
 pub mod pipeline_service;
+pub mod plan_service;
 pub mod project_service;
+pub mod stripe_billing;
+pub mod team_service;
 pub mod training_job_service;

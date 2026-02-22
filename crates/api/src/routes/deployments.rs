@@ -3,10 +3,13 @@ use axum::routing::post;
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::model::ModelResponse;
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::deployment_service::{DeploymentService, DeploymentStatusResponse};
 
@@ -27,6 +30,7 @@ async fn deploy_model(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
+    require_role(&user, TeamRole::Member)?;
     let result = DeploymentService::deploy(
         state.model_repo(),
         state.billing_event_repo(),
@@ -53,6 +57,7 @@ async fn undeploy_model(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
+    require_role(&user, TeamRole::Member)?;
     let result =
         DeploymentService::undeploy(state.model_repo(), state.config(), user.tenant_id, model_id)
             .await?;

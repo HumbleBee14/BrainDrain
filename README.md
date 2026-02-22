@@ -20,3 +20,6 @@ cd apps/web && pnpm install && pnpm dev  # Start frontend
 | -------------------------------------------- | ------------------------------------------------------------------- |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, technical decision records, component registry |
 | [docs/RESEARCH.md](docs/RESEARCH.md)         | LLM fine-tuning landscape research and analysis                     |
+
+
+---

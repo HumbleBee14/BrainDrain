@@ -4,12 +4,15 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::pipeline::{
     ProjectPipelineStatus, TriggerParseResponse, TriggerRefineRequest, TriggerRefineResponse,
 };
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::pipeline_service::PipelineService;
 
@@ -29,6 +32,7 @@ async fn trigger_parse(
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
 ) -> AppResult<(StatusCode, Json<TriggerParseResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let result = PipelineService::trigger_parse(
         state.document_repo(),
         state.orchestrator(),
@@ -59,6 +63,7 @@ async fn trigger_refine(
     Path(project_id): Path<Uuid>,
     Json(body): Json<TriggerRefineRequest>,
 ) -> AppResult<(StatusCode, Json<TriggerRefineResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
     let result = PipelineService::trigger_refine(

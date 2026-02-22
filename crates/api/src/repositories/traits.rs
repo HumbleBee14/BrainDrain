@@ -1,5 +1,7 @@
+use chrono::{DateTime, Utc};
 use platform_db::models::{
-    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Model, Project, TrainingJob,
+    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Invitation, Model,
+    NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant, TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
@@ -20,6 +22,7 @@ pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T
 ///
 /// All queries enforce multi-tenancy via `tenant_id`.
 pub trait ProjectRepository: Send + Sync {
+    #[allow(dead_code)]
     fn create(
         &self,
         tenant_id: Uuid,
@@ -27,6 +30,17 @@ pub trait ProjectRepository: Send + Sync {
         description: Option<&str>,
         task_type: Option<&str>,
     ) -> BoxFuture<'_, AppResult<Project>>;
+
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current count < max_count. Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        name: &str,
+        description: Option<&str>,
+        task_type: Option<&str>,
+        max_count: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>>;
 
     fn get_by_id(
         &self,
@@ -105,6 +119,9 @@ pub trait DocumentRepository: Send + Sync {
     ) -> BoxFuture<'_, AppResult<bool>>;
 
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Count all documents across all projects for a tenant.
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for dataset database operations.
@@ -149,6 +166,23 @@ pub trait TrainingJobRepository: Send + Sync {
         cost_estimate: Option<f64>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current model count for tenant < max_models.
+    /// Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        base_model: &str,
+        method: &str,
+        mode: &str,
+        hyperparams: serde_json::Value,
+        gpu_class: Option<&str>,
+        cost_estimate: Option<f64>,
+        max_models: i64,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
     fn get_by_id(
         &self,
         tenant_id: Uuid,
@@ -184,6 +218,16 @@ pub trait TrainingJobRepository: Send + Sync {
         tenant_id: Uuid,
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
+    /// Count all training jobs for a tenant.
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Count training jobs by status for a tenant (across all projects).
+    fn count_by_tenant_status(
+        &self,
+        tenant_id: Uuid,
+        status: TrainingJobStatus,
+    ) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for model database operations.
@@ -230,6 +274,16 @@ pub trait ModelRepository: Send + Sync {
         model_id: Uuid,
         scores: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<bool>>;
+
+    /// Count all models for a tenant.
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Count models by deployment status for a tenant (across all projects).
+    fn count_by_tenant_deployment_status(
+        &self,
+        tenant_id: Uuid,
+        status: DeploymentStatus,
+    ) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for evaluation database operations.
@@ -267,6 +321,9 @@ pub trait EvaluationRepository: Send + Sync {
         eval_id: Uuid,
         workflow_id: &str,
     ) -> BoxFuture<'_, AppResult<bool>>;
+
+    /// Count all evaluations for a tenant.
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for API key database operations.
@@ -329,6 +386,16 @@ pub trait BillingEventRepository: Send + Sync {
         tenant_id: Uuid,
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<UsageSummary>>;
+
+    /// Aggregate daily costs over the last N days.
+    fn usage_by_day(
+        &self,
+        tenant_id: Uuid,
+        days: i32,
+    ) -> BoxFuture<'_, AppResult<Vec<(String, f64)>>>;
+
+    /// Aggregate total cost, tokens_in, and tokens_out for a tenant.
+    fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>>;
 }
 
 /// Contract for audit log database operations.
@@ -370,4 +437,148 @@ pub trait AuditLogRepository: Send + Sync {
         resource_type: &str,
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<i64>>;
+}
+
+/// Contract for team member database operations.
+#[allow(dead_code)]
+pub trait TeamMemberRepository: Send + Sync {
+    fn create(
+        &self,
+        tenant_id: Uuid,
+        user_id: &str,
+        email: &str,
+        role: &str,
+        invited_by: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<TeamMember>>;
+
+    fn get_by_user(
+        &self,
+        tenant_id: Uuid,
+        user_id: &str,
+    ) -> BoxFuture<'_, AppResult<Option<TeamMember>>>;
+
+    fn get_role(&self, tenant_id: Uuid, user_id: &str) -> BoxFuture<'_, AppResult<Option<String>>>;
+
+    fn list_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<Vec<TeamMember>>>;
+
+    fn update_role(
+        &self,
+        tenant_id: Uuid,
+        user_id: &str,
+        role: &str,
+    ) -> BoxFuture<'_, AppResult<TeamMember>>;
+
+    fn remove(&self, tenant_id: Uuid, user_id: &str) -> BoxFuture<'_, AppResult<()>>;
+
+    fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+}
+
+/// Contract for invitation database operations.
+#[allow(clippy::too_many_arguments)]
+pub trait InvitationRepository: Send + Sync {
+    fn create(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+        role: &str,
+        token: &str,
+        invited_by: &str,
+        expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'_, AppResult<Invitation>>;
+
+    /// Atomic create with plan limit enforcement.
+    /// Inserts only if current team member count for tenant < max_members.
+    /// Returns None if limit exceeded.
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+        role: &str,
+        token: &str,
+        invited_by: &str,
+        expires_at: DateTime<Utc>,
+        max_members: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Invitation>>>;
+
+    fn get_by_token(&self, token: &str) -> BoxFuture<'_, AppResult<Option<Invitation>>>;
+
+    fn list_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<Vec<Invitation>>>;
+
+    fn accept(&self, id: Uuid) -> BoxFuture<'_, AppResult<Invitation>>;
+
+    fn revoke(&self, tenant_id: Uuid, id: Uuid) -> BoxFuture<'_, AppResult<Invitation>>;
+}
+
+/// Contract for tenant database operations.
+///
+/// Note: `get_by_id` and `get_by_stripe_customer` do not require `tenant_id`
+/// as a filter because tenants are the root entity (the tenant IS the row).
+#[allow(dead_code)]
+pub trait TenantRepository: Send + Sync {
+    fn get_by_id(&self, id: Uuid) -> BoxFuture<'_, AppResult<Option<Tenant>>>;
+
+    fn update_stripe_customer(&self, id: Uuid, customer_id: &str) -> BoxFuture<'_, AppResult<()>>;
+
+    fn update_subscription(
+        &self,
+        id: Uuid,
+        subscription_id: &str,
+        plan: &str,
+        limits: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn get_by_stripe_customer(&self, customer_id: &str)
+    -> BoxFuture<'_, AppResult<Option<Tenant>>>;
+
+    fn get_plan_limits(&self, id: Uuid) -> BoxFuture<'_, AppResult<serde_json::Value>>;
+}
+
+/// Contract for notification database operations.
+#[allow(dead_code)]
+pub trait NotificationRepository: Send + Sync {
+    fn list_preferences(
+        &self,
+        tenant_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationPreference>>>;
+
+    fn upsert_preference(
+        &self,
+        tenant_id: Uuid,
+        channel: &str,
+        event_type: &str,
+        enabled: bool,
+        config: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<NotificationPreference>>;
+
+    fn get_enabled_preferences(
+        &self,
+        tenant_id: Uuid,
+        event_type: &str,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationPreference>>>;
+
+    fn create_delivery(
+        &self,
+        tenant_id: Uuid,
+        preference_id: Uuid,
+        event_type: &str,
+        channel: &str,
+        payload: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<NotificationDelivery>>;
+
+    fn list_deliveries(
+        &self,
+        tenant_id: Uuid,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
+
+    fn count_deliveries(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn update_delivery_status(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        status: &str,
+        error: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<()>>;
 }

@@ -1,14 +1,118 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
+use platform_shared::enums::TeamRole;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::error::AppError;
+
+// ---------------------------------------------------------------------------
+// JWKS cache — avoids fetching keys on every request
+// ---------------------------------------------------------------------------
+
+/// Cached JWKS key set with TTL-based expiry.
+///
+/// Keys are stored by `kid` for O(1) lookup. The cache refreshes
+/// when the TTL expires or when a JWT presents a `kid` not in the cache
+/// (key rotation scenario).
+#[derive(Clone)]
+pub struct JwksCache {
+    inner: Arc<RwLock<JwksCacheInner>>,
+    jwks_url: String,
+    http_client: reqwest::Client,
+}
+
+struct JwksCacheInner {
+    /// kid → (n, e) RSA components
+    keys: HashMap<String, (String, String)>,
+    /// When the cache was last refreshed
+    fetched_at: Option<Instant>,
+}
+
+const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600); // 1 hour
+const JWKS_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+
+impl JwksCache {
+    pub fn new(jwks_url: String, http_client: reqwest::Client) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(JwksCacheInner {
+                keys: HashMap::new(),
+                fetched_at: None,
+            })),
+            jwks_url,
+            http_client,
+        }
+    }
+
+    /// Get the decoding key for a given `kid`. Refreshes cache if needed.
+    async fn get_key(&self, kid: &str) -> Result<DecodingKey, AppError> {
+        // Fast path: cache hit within TTL
+        {
+            let cache = self.inner.read().await;
+            if let Some(fetched_at) = cache.fetched_at
+                && fetched_at.elapsed() < JWKS_CACHE_TTL
+                && let Some((n, e)) = cache.keys.get(kid)
+            {
+                return DecodingKey::from_rsa_components(n, e).map_err(|_| AppError::Unauthorized);
+            }
+        }
+
+        // Slow path: refresh cache
+        self.refresh().await?;
+
+        let cache = self.inner.read().await;
+        let (n, e) = cache.keys.get(kid).ok_or(AppError::Unauthorized)?;
+        DecodingKey::from_rsa_components(n, e).map_err(|_| AppError::Unauthorized)
+    }
+
+    /// Fetch JWKS from the provider and update the cache.
+    async fn refresh(&self) -> Result<(), AppError> {
+        if self.jwks_url.is_empty() {
+            return Err(AppError::Unauthorized);
+        }
+
+        let jwks: serde_json::Value = self
+            .http_client
+            .get(&self.jwks_url)
+            .timeout(JWKS_FETCH_TIMEOUT)
+            .send()
+            .await
+            .map_err(|_| AppError::Unauthorized)?
+            .json()
+            .await
+            .map_err(|_| AppError::Unauthorized)?;
+
+        let keys_array = jwks["keys"].as_array().ok_or(AppError::Unauthorized)?;
+
+        let mut key_map = HashMap::new();
+        for key in keys_array {
+            if let (Some(kid), Some(n), Some(e)) =
+                (key["kid"].as_str(), key["n"].as_str(), key["e"].as_str())
+            {
+                key_map.insert(kid.to_string(), (n.to_string(), e.to_string()));
+            }
+        }
+
+        if key_map.is_empty() {
+            return Err(AppError::Unauthorized);
+        }
+
+        let mut cache = self.inner.write().await;
+        cache.keys = key_map;
+        cache.fetched_at = Some(Instant::now());
+
+        Ok(())
+    }
+}
 
 /// Boxed future returned by [`AuthProvider::authenticate`].
 type AuthFuture<'a> =
@@ -28,6 +132,8 @@ pub struct AuthenticatedUser {
     pub tenant_id: Uuid,
     /// External organization ID (raw), if any.
     pub org_id: Option<String>,
+    /// Team role for RBAC enforcement.
+    pub role: TeamRole,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,15 +191,19 @@ impl AuthProviderChain {
 /// Clerk JWT authentication provider.
 ///
 /// Verifies tokens against Clerk's JWKS endpoint and resolves the
-/// corresponding tenant from the database.
+/// corresponding tenant from the database. JWKS keys are cached
+/// with a 1-hour TTL and refreshed on cache miss (key rotation).
 pub struct ClerkAuthProvider {
-    jwks_url: String,
+    jwks_cache: JwksCache,
     is_dev: bool,
 }
 
 impl ClerkAuthProvider {
-    pub fn new(jwks_url: String, is_dev: bool) -> Self {
-        Self { jwks_url, is_dev }
+    pub fn new(jwks_url: String, is_dev: bool, http_client: reqwest::Client) -> Self {
+        Self {
+            jwks_cache: JwksCache::new(jwks_url, http_client),
+            is_dev,
+        }
     }
 }
 
@@ -107,8 +217,8 @@ impl AuthProvider for ClerkAuthProvider {
                 return Some(Ok(dev_user));
             }
 
-            // Try Clerk JWT verification
-            let claims = match verify_clerk_jwt(token, &self.jwks_url).await {
+            // Try Clerk JWT verification (uses cached JWKS keys)
+            let claims = match verify_clerk_jwt(token, &self.jwks_cache).await {
                 Ok(c) => c,
                 Err(e) => return Some(Err(e)),
             };
@@ -129,6 +239,7 @@ impl AuthProvider for ClerkAuthProvider {
                 user_id: claims.sub,
                 tenant_id,
                 org_id: claims.org_id,
+                role: TeamRole::Member,
             }))
         })
     }
@@ -155,7 +266,83 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .strip_prefix("Bearer ")
             .ok_or(AppError::Unauthorized)?;
 
-        state.auth_chain().authenticate(token, state.db()).await
+        let mut user = state.auth_chain().authenticate(token, state.db()).await?;
+
+        // Dev tokens keep their assigned role (Owner) — skip role lookup.
+        if user.role != TeamRole::Owner || user.org_id.is_some() {
+            // Look up actual role from team_members table.
+            match state
+                .team_member_repo()
+                .get_role(user.tenant_id, &user.user_id)
+                .await?
+            {
+                Some(role_str) => {
+                    user.role = match role_str.parse() {
+                        Ok(r) => r,
+                        Err(_) => {
+                            tracing::error!(
+                                tenant_id = %user.tenant_id,
+                                user_id = %user.user_id,
+                                role = %role_str,
+                                "Corrupted role in team_members — defaulting to Member"
+                            );
+                            TeamRole::Member
+                        }
+                    };
+                }
+                None => {
+                    // No team_member row — auto-bootstrap if tenant has zero members.
+                    let count = state
+                        .team_member_repo()
+                        .count_by_tenant(user.tenant_id)
+                        .await?;
+                    if count == 0 {
+                        // First user for this tenant becomes Owner.
+                        // Check the result — ON CONFLICT DO NOTHING means a concurrent
+                        // request may have won the race. The create() implementation
+                        // returns the existing row on conflict, so we verify the returned
+                        // row actually belongs to this user.
+                        match state
+                            .team_member_repo()
+                            .create(
+                                user.tenant_id,
+                                &user.user_id,
+                                "", // email not available from JWT — updated on next profile sync
+                                "owner",
+                                None,
+                            )
+                            .await
+                        {
+                            Ok(member) => {
+                                // Verify the returned member is actually this user
+                                // (ON CONFLICT DO NOTHING + fetch returns the existing row)
+                                if member.user_id == user.user_id {
+                                    user.role = member.role.parse().unwrap_or(TeamRole::Owner);
+                                } else {
+                                    return Err(AppError::Forbidden {
+                                        message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, tenant_id = %user.tenant_id, "Owner auto-bootstrap failed");
+                                return Err(AppError::Forbidden {
+                                    message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(AppError::Forbidden {
+                            message:
+                                "You are not a member of this team. Ask an admin for an invitation."
+                                    .to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(user)
     }
 }
 
@@ -181,37 +368,24 @@ fn parse_dev_token(token: &str) -> Option<AuthenticatedUser> {
             user_id: parts[2].to_string(),
             tenant_id,
             org_id: None,
+            role: TeamRole::Owner,
         })
     } else {
         None
     }
 }
 
-/// Verify a Clerk JWT using the JWKS endpoint.
-async fn verify_clerk_jwt(token: &str, jwks_url: &str) -> Result<ClerkClaims, AppError> {
-    if jwks_url.is_empty() {
-        return Err(AppError::Unauthorized);
-    }
+/// Verify a Clerk JWT using cached JWKS keys.
+///
+/// Extracts the `kid` from the JWT header to find the correct signing key.
+/// Uses the JWKS cache (1h TTL) to avoid per-request HTTP calls.
+async fn verify_clerk_jwt(token: &str, jwks_cache: &JwksCache) -> Result<ClerkClaims, AppError> {
+    // Extract kid from JWT header for key matching
+    let header = jsonwebtoken::decode_header(token).map_err(|_| AppError::Unauthorized)?;
+    let kid = header.kid.ok_or(AppError::Unauthorized)?;
 
-    // Fetch JWKS (in production, this should be cached with TTL)
-    let jwks: serde_json::Value = reqwest::get(jwks_url)
-        .await
-        .map_err(|_| AppError::Unauthorized)?
-        .json()
-        .await
-        .map_err(|_| AppError::Unauthorized)?;
-
-    // Get the first RSA key from JWKS
-    let key = jwks["keys"]
-        .as_array()
-        .and_then(|keys| keys.first())
-        .ok_or(AppError::Unauthorized)?;
-
-    let n = key["n"].as_str().ok_or(AppError::Unauthorized)?;
-    let e = key["e"].as_str().ok_or(AppError::Unauthorized)?;
-
-    let decoding_key =
-        DecodingKey::from_rsa_components(n, e).map_err(|_| AppError::Unauthorized)?;
+    // Get the decoding key from cache (auto-refreshes on miss or TTL expiry)
+    let decoding_key = jwks_cache.get_key(&kid).await?;
 
     let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
     validation.validate_exp = true;

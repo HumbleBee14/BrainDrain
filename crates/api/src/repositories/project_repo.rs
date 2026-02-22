@@ -49,6 +49,38 @@ impl ProjectRepository for PgProjectRepo {
         })
     }
 
+    fn create_with_limit(
+        &self,
+        tenant_id: Uuid,
+        name: &str,
+        description: Option<&str>,
+        task_type: Option<&str>,
+        max_count: i64,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>> {
+        let name = name.to_string();
+        let description = description.map(|s| s.to_string());
+        let task_type = task_type.map(|s| s.to_string());
+        Box::pin(async move {
+            let project = sqlx::query_as::<_, Project>(
+                r#"
+                INSERT INTO projects (tenant_id, name, description, task_type)
+                SELECT $1, $2, $3, $4
+                WHERE (SELECT COUNT(*) FROM projects WHERE tenant_id = $1 AND deleted_at IS NULL) < $5
+                RETURNING *
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(&name)
+            .bind(description.as_deref())
+            .bind(task_type.as_deref())
+            .bind(max_count)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(project)
+        })
+    }
+
     fn get_by_id(
         &self,
         tenant_id: Uuid,

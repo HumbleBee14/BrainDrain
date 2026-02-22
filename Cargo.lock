@@ -2320,6 +2320,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "axum 0.8.8",
  "base64",
  "bytes",
@@ -2327,6 +2328,8 @@ dependencies = [
  "dotenvy",
  "envy",
  "futures",
+ "hex",
+ "hmac",
  "jsonwebtoken",
  "opentelemetry",
  "opentelemetry-otlp",

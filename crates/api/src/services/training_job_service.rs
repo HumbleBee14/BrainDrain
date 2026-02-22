@@ -12,6 +12,7 @@ pub struct TrainingJobService;
 
 impl TrainingJobService {
     /// Create a new training job and auto-trigger the TrainWorkflow.
+    /// Uses atomic plan limit enforcement when max_models is provided.
     pub async fn create(
         training_repo: &dyn TrainingJobRepository,
         dataset_repo: &dyn DatasetRepository,
@@ -19,6 +20,7 @@ impl TrainingJobService {
         tenant_id: Uuid,
         project_id: Uuid,
         req: CreateTrainingJobRequest,
+        max_models: Option<i64>,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Training workflows are not available (orchestrator not configured)"
@@ -68,20 +70,43 @@ impl TrainingJobService {
             req.gpu_class.as_deref(),
         );
 
-        // Create the job in DB
-        let job = training_repo
-            .create(
-                tenant_id,
-                project_id,
-                dataset_id,
-                &req.base_model,
-                &method_str,
-                &mode_str,
-                hyperparams.clone(),
-                req.gpu_class.as_deref(),
-                Some(cost_estimate),
-            )
-            .await?;
+        // Create the job in DB with atomic plan limit enforcement
+        let job = if let Some(max) = max_models {
+            training_repo
+                .create_with_limit(
+                    tenant_id,
+                    project_id,
+                    dataset_id,
+                    &req.base_model,
+                    &method_str,
+                    &mode_str,
+                    hyperparams.clone(),
+                    req.gpu_class.as_deref(),
+                    Some(cost_estimate),
+                    max,
+                )
+                .await?
+                .ok_or(AppError::Forbidden {
+                    message: format!(
+                        "Plan limit reached: maximum {} models on your current plan",
+                        max
+                    ),
+                })?
+        } else {
+            training_repo
+                .create(
+                    tenant_id,
+                    project_id,
+                    dataset_id,
+                    &req.base_model,
+                    &method_str,
+                    &mode_str,
+                    hyperparams.clone(),
+                    req.gpu_class.as_deref(),
+                    Some(cost_estimate),
+                )
+                .await?
+        };
 
         // Build dataset S3 path
         let dataset_path = dataset.storage_path.unwrap_or_else(|| {

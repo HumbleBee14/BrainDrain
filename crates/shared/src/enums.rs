@@ -176,6 +176,43 @@ pub enum ProjectStatus {
     Archived,
 }
 
+/// Team member role for RBAC.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    TS,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum TeamRole {
+    Viewer,
+    Member,
+    Admin,
+    Owner,
+}
+
+/// Status of a team invitation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum InvitationStatus {
+    Pending,
+    Accepted,
+    Expired,
+    Revoked,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +274,41 @@ mod tests {
         ] {
             let json = serde_json::to_string(&status).unwrap();
             let back: ProjectStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn team_role_ordering() {
+        assert!(TeamRole::Viewer < TeamRole::Member);
+        assert!(TeamRole::Member < TeamRole::Admin);
+        assert!(TeamRole::Admin < TeamRole::Owner);
+    }
+
+    #[test]
+    fn team_role_roundtrip() {
+        for role in [
+            TeamRole::Viewer,
+            TeamRole::Member,
+            TeamRole::Admin,
+            TeamRole::Owner,
+        ] {
+            let json = serde_json::to_string(&role).unwrap();
+            let back: TeamRole = serde_json::from_str(&json).unwrap();
+            assert_eq!(role, back);
+        }
+    }
+
+    #[test]
+    fn invitation_status_roundtrip() {
+        for status in [
+            InvitationStatus::Pending,
+            InvitationStatus::Accepted,
+            InvitationStatus::Expired,
+            InvitationStatus::Revoked,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: InvitationStatus = serde_json::from_str(&json).unwrap();
             assert_eq!(status, back);
         }
     }

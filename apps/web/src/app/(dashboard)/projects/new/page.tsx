@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateProject } from "@/hooks/use-projects";
 import { useFormValidation } from "@/hooks/use-form-validation";
+import { useOnboarding } from "@/hooks/use-onboarding";
 import { createProjectSchema, type CreateProjectInput } from "@/lib/validations";
 
 const TASK_TYPES = [
@@ -20,6 +21,7 @@ const TASK_TYPES = [
 export default function NewProjectPage() {
   const router = useRouter();
   const createProject = useCreateProject();
+  const { markStepComplete } = useOnboarding();
   const { errors, validate, clearFieldError } = useFormValidation<CreateProjectInput>(createProjectSchema);
 
   const [name, setName] = useState("");
@@ -31,8 +33,13 @@ export default function NewProjectPage() {
     const data = validate({ name, description, task_type: taskType || undefined });
     if (!data) return;
 
-    await createProject.mutateAsync(data);
-    router.push("/projects");
+    try {
+      await createProject.mutateAsync(data);
+      markStepComplete("create_project");
+      router.push("/projects");
+    } catch {
+      // Error is captured by React Query and surfaced via createProject.isError
+    }
   };
 
   return (

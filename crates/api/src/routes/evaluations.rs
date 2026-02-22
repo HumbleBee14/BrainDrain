@@ -4,11 +4,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use platform_shared::enums::TeamRole;
+
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::evaluation::{CreateEvaluationRequest, EvaluationResponse};
 use crate::error::AppResult;
+use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::evaluation_service::EvaluationService;
 
@@ -29,6 +32,7 @@ async fn create_evaluation(
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateEvaluationRequest>,
 ) -> AppResult<(StatusCode, Json<EvaluationResponse>)> {
+    require_role(&user, TeamRole::Member)?;
     let result = EvaluationService::create(
         state.evaluation_repo(),
         state.model_repo(),

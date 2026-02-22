@@ -202,9 +202,16 @@ impl IpRateLimiter {
 
 /// Extract the client IP address from the request.
 ///
-/// Priority: X-Forwarded-For (first IP) > X-Real-IP > peer socket address > "unknown".
+/// Priority: ConnectInfo (direct socket) > X-Forwarded-For > X-Real-IP > "unknown".
 fn extract_client_ip(request: &Request<Body>) -> String {
-    // X-Forwarded-For: client, proxy1, proxy2
+    // Prefer the direct socket address when available -- immune to header spoofing.
+    // In production behind a reverse proxy, ConnectInfo will be the proxy's IP.
+    // Configure the proxy to set X-Forwarded-For and only trust it from known CIDRs.
+    if let Some(connect_info) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
+        return connect_info.0.ip().to_string();
+    }
+
+    // Fallback: forwarded headers (only reliable when behind a trusted proxy)
     if let Some(xff) = request.headers().get("x-forwarded-for")
         && let Ok(value) = xff.to_str()
         && let Some(first_ip) = value.split(',').next()
@@ -215,7 +222,6 @@ fn extract_client_ip(request: &Request<Body>) -> String {
         }
     }
 
-    // X-Real-IP (single IP, set by nginx)
     if let Some(real_ip) = request.headers().get("x-real-ip")
         && let Ok(value) = real_ip.to_str()
     {
@@ -223,11 +229,6 @@ fn extract_client_ip(request: &Request<Body>) -> String {
         if !ip.is_empty() {
             return ip.to_string();
         }
-    }
-
-    // Fallback: peer socket address from ConnectInfo
-    if let Some(connect_info) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        return connect_info.0.ip().to_string();
     }
 
     "unknown".to_string()
@@ -371,6 +372,8 @@ mod tests {
 
     #[test]
     fn extract_ip_xff_takes_priority() {
+        // ConnectInfo is not set in this test (Request::builder doesn't add extensions),
+        // so XFF is used as the first available fallback, which still takes priority over X-Real-IP.
         let req = Request::builder()
             .header("x-forwarded-for", "1.2.3.4")
             .header("x-real-ip", "5.6.7.8")

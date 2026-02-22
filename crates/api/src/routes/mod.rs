@@ -1,14 +1,18 @@
 pub mod api_keys;
 pub mod audit_logs;
 pub mod billing;
+pub mod dashboard;
 pub mod datasets;
 pub mod deployments;
 pub mod documents;
 pub mod evaluations;
 pub mod health;
 pub mod inference;
+pub mod notifications;
 pub mod pipeline;
 pub mod projects;
+pub mod stripe_webhooks;
+pub mod team;
 pub mod training;
 pub mod ws;
 
@@ -23,6 +27,8 @@ pub fn router() -> Router<AppState> {
         .merge(health::router())
         // Inference routes at /v1/ (OpenAI-compatible, API key auth)
         .merge(inference::router())
+        // Stripe webhooks — NOT behind Clerk auth, mounted at /api/webhooks/stripe
+        .merge(stripe_webhooks::router())
 }
 
 /// V1 API routes.
@@ -38,5 +44,9 @@ fn v1_router() -> Router<AppState> {
         .merge(deployments::router())
         .merge(billing::router())
         .merge(audit_logs::router())
+        .merge(dashboard::router())
+        .merge(notifications::router())
         .merge(ws::router())
+        .merge(team::router())
+        .merge(team::public_router())
 }

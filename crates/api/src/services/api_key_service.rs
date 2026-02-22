@@ -134,20 +134,22 @@ impl ApiKeyService {
             minute
         );
 
-        let count: i64 = redis::cmd("INCR")
-            .arg(&rl_key)
-            .query_async(redis)
-            .await
-            .unwrap_or(1);
-
-        if count == 1 {
-            // Set TTL on first request in this window
-            let _: Result<(), redis::RedisError> = redis::cmd("EXPIRE")
-                .arg(&rl_key)
-                .arg(60)
-                .query_async(redis)
-                .await;
-        }
+        // Atomic INCR + EXPIRE via Lua script to prevent race where
+        // EXPIRE fails and the key never expires (permanent rate limit).
+        let count: i64 = redis::Script::new(
+            r#"
+            local count = redis.call('INCR', KEYS[1])
+            if count == 1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            return count
+            "#,
+        )
+        .key(&rl_key)
+        .arg(60)
+        .invoke_async(redis)
+        .await
+        .unwrap_or(1);
 
         if count > key.rate_limit as i64 {
             return Err(AppError::RateLimited);

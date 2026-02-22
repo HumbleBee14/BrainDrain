@@ -106,6 +106,27 @@ pub struct Config {
     #[serde(default = "default_hsts_max_age")]
     pub security_hsts_max_age: u64,
 
+    // ── Stripe Billing ──
+    /// Stripe secret key. When `None`, billing provider falls back to no-op.
+    #[serde(default)]
+    pub stripe_secret_key: Option<String>,
+
+    /// Stripe webhook signing secret for signature verification.
+    #[serde(default)]
+    pub stripe_webhook_secret: Option<String>,
+
+    /// Stripe price ID for the starter plan.
+    #[serde(default)]
+    pub stripe_price_starter: Option<String>,
+
+    /// Stripe price ID for the growth plan.
+    #[serde(default)]
+    pub stripe_price_growth: Option<String>,
+
+    /// Stripe price ID for the pro plan.
+    #[serde(default)]
+    pub stripe_price_pro: Option<String>,
+
     // ── Observability (OTEL) ──
     /// Whether OpenTelemetry export is enabled.
     #[serde(default)]
@@ -143,7 +164,7 @@ fn default_app_name() -> String {
     "Platform API".to_string()
 }
 fn default_environment() -> String {
-    "development".to_string()
+    "production".to_string()
 }
 fn default_log_level() -> String {
     "debug".to_string()

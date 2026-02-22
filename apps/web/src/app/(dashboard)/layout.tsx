@@ -27,6 +27,12 @@ export default function DashboardLayout({
           >
             Projects
           </Link>
+          <Link
+            href="/settings/team"
+            className="rounded-md px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+          >
+            Settings
+          </Link>
         </nav>
 
         <div className="pt-4 border-t border-zinc-800">

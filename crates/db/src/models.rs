@@ -10,6 +10,9 @@ pub struct Tenant {
     pub name: String,
     pub plan: String,
     pub settings: serde_json::Value,
+    pub stripe_customer_id: Option<String>,
+    pub stripe_subscription_id: Option<String>,
+    pub plan_limits: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -159,4 +162,59 @@ pub struct AuditLog {
     pub resource_id: Option<Uuid>,
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub user_id: String,
+    pub email: String,
+    pub role: String,
+    pub invited_by: Option<String>,
+    pub joined_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Invitation {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub email: String,
+    pub role: String,
+    pub token: String,
+    pub invited_by: String,
+    pub expires_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct NotificationPreference {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub channel: String,
+    pub event_type: String,
+    pub enabled: bool,
+    pub config: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct NotificationDelivery {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub preference_id: Uuid,
+    pub event_type: String,
+    pub channel: String,
+    pub payload: serde_json::Value,
+    pub status: String,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub sent_at: Option<DateTime<Utc>>,
 }
