@@ -1,3 +1,21 @@
+# Platform
+
+Project: An end-to-end LLM fine-tuning platform where users upload raw data, the system handles data curation and generates training data, and fine-tunes models, evaluates quality, and serves the result.
+
+## Quick Start
+
+```bash
+make lint && make test
+docker compose up -d              # Start PostgreSQL, Redis, MinIO
+make migrate                      # Run database migrations
+make dev-api                      # Start Rust API server
+cd apps/web && pnpm install && pnpm dev  # Start frontend
+```
+
+> **Type generation:** TypeScript types are auto-generated from Rust via `ts-rs`. After changing any Rust DTO or enum, run `make typegen` to regenerate the TypeScript interfaces in `apps/web/src/lib/generated/`. This also runs automatically as part of `make test`.
+
+---
+---
 
 ## Format, Lint & Test Reference
 
@@ -36,3 +54,16 @@
 | All tests | `make test` |
 | Full CI pass | `make lint && make test` |
 
+
+---
+
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/PROJECT_FLOW.md](docs/PROJECT_FLOW.md) | **Start here** — Complete end-to-end project guide with flow diagrams |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Setup, run, test, and deploy commands (concise & copy-pasteable) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, technical decision records, component registry |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Development tracker — phase-by-phase build history |
+| [docs/RESEARCH.md](docs/RESEARCH.md) | LLM fine-tuning landscape research and analysis |

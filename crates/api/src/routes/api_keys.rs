@@ -24,8 +24,20 @@ pub fn router() -> Router<AppState> {
         .route("/api-keys/{id}/revoke", post(revoke_api_key))
 }
 
-/// POST /api/v1/models/:model_id/api-keys
-async fn create_api_key(
+/// Create a new API key for a model.
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/api-keys",
+    tag = "API Keys",
+    params(("model_id" = Uuid, Path, description = "Model ID")),
+    request_body = CreateApiKeyRequest,
+    responses(
+        (status = 201, description = "API key created", body = CreateApiKeyResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_api_key(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -54,8 +66,18 @@ async fn create_api_key(
     Ok((StatusCode::CREATED, Json(result)))
 }
 
-/// GET /api/v1/models/:model_id/api-keys
-async fn list_api_keys(
+/// List API keys for a model.
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{model_id}/api-keys",
+    tag = "API Keys",
+    params(("model_id" = Uuid, Path, description = "Model ID")),
+    responses(
+        (status = 200, description = "List of API keys", body = Vec<ApiKeyResponse>),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_api_keys(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
@@ -64,8 +86,19 @@ async fn list_api_keys(
     Ok(Json(keys))
 }
 
-/// POST /api/v1/api-keys/:id/revoke
-async fn revoke_api_key(
+/// Revoke an API key.
+#[utoipa::path(
+    post,
+    path = "/api/v1/api-keys/{id}/revoke",
+    tag = "API Keys",
+    params(("id" = Uuid, Path, description = "API key ID")),
+    responses(
+        (status = 200, description = "API key revoked", body = ApiKeyResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn revoke_api_key(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,

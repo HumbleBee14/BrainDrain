@@ -26,7 +26,19 @@ pub fn router() -> Router<AppState> {
         .route("/documents/{id}", get(get_document))
 }
 
-async fn upload_document(
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/documents",
+    tag = "Documents",
+    params(("project_id" = Uuid, Path, description = "Project ID")),
+    request_body(content_type = "multipart/form-data", content = String, description = "File upload"),
+    responses(
+        (status = 201, description = "Documents uploaded", body = Vec<UploadResponse>),
+        (status = 400, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn upload_document(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -108,7 +120,21 @@ async fn upload_document(
     Ok((StatusCode::CREATED, Json(uploads)))
 }
 
-async fn list_documents(
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/documents",
+    tag = "Documents",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("limit" = Option<i64>, Query, description = "Pagination limit"),
+    ),
+    responses(
+        (status = 200, description = "List of documents", body = inline(PaginatedResponse<DocumentResponse>)),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_documents(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(project_id): Path<Uuid>,
@@ -125,7 +151,18 @@ async fn list_documents(
     Ok(Json(result))
 }
 
-async fn get_document(
+#[utoipa::path(
+    get,
+    path = "/api/v1/documents/{id}",
+    tag = "Documents",
+    params(("id" = Uuid, Path, description = "Document ID")),
+    responses(
+        (status = 200, description = "Document details", body = DocumentResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn get_document(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,

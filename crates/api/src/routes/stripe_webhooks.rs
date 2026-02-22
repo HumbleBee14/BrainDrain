@@ -16,7 +16,17 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/api/webhooks/stripe", post(handle_stripe_webhook))
 }
 
-async fn handle_stripe_webhook(
+/// Handle incoming Stripe webhook events.
+#[utoipa::path(
+    post,
+    path = "/api/webhooks/stripe",
+    tag = "Webhooks",
+    responses(
+        (status = 200, description = "Webhook processed"),
+        (status = 400, description = "Invalid signature"),
+    )
+)]
+pub async fn handle_stripe_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,

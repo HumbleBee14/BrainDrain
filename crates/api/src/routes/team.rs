@@ -32,7 +32,17 @@ pub fn public_router() -> Router<AppState> {
     Router::new().route("/invitations/{token}/accept", post(accept_invitation))
 }
 
-async fn list_members(
+/// List all team members.
+#[utoipa::path(
+    get,
+    path = "/api/v1/team/members",
+    tag = "Team",
+    responses(
+        (status = 200, description = "List of team members", body = Vec<TeamMemberResponse>),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_members(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<TeamMemberResponse>>> {
@@ -41,7 +51,20 @@ async fn list_members(
     Ok(Json(members))
 }
 
-async fn create_invitation(
+/// Create a team invitation.
+#[utoipa::path(
+    post,
+    path = "/api/v1/team/invitations",
+    tag = "Team",
+    request_body = InviteRequest,
+    responses(
+        (status = 201, description = "Invitation created", body = InvitationResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 409, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn create_invitation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Json(body): Json<InviteRequest>,
@@ -72,7 +95,17 @@ async fn create_invitation(
     Ok((StatusCode::CREATED, Json(invitation)))
 }
 
-async fn list_invitations(
+/// List all pending invitations.
+#[utoipa::path(
+    get,
+    path = "/api/v1/team/invitations",
+    tag = "Team",
+    responses(
+        (status = 200, description = "List of invitations", body = Vec<InvitationResponse>),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_invitations(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<InvitationResponse>>> {
@@ -82,7 +115,19 @@ async fn list_invitations(
     Ok(Json(invitations))
 }
 
-async fn revoke_invitation(
+/// Revoke a pending invitation.
+#[utoipa::path(
+    post,
+    path = "/api/v1/team/invitations/{id}/revoke",
+    tag = "Team",
+    params(("id" = Uuid, Path, description = "Invitation ID")),
+    responses(
+        (status = 200, description = "Invitation revoked", body = InvitationResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn revoke_invitation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
@@ -104,7 +149,19 @@ async fn revoke_invitation(
     Ok(Json(invitation))
 }
 
-async fn accept_invitation(
+/// Accept an invitation using its token.
+#[utoipa::path(
+    post,
+    path = "/api/v1/invitations/{token}/accept",
+    tag = "Team",
+    params(("token" = String, Path, description = "Invitation token")),
+    responses(
+        (status = 201, description = "Invitation accepted", body = TeamMemberResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn accept_invitation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(token): Path<String>,
@@ -124,7 +181,20 @@ async fn accept_invitation(
     Ok((StatusCode::CREATED, Json(member)))
 }
 
-async fn update_role(
+/// Update a team member's role.
+#[utoipa::path(
+    put,
+    path = "/api/v1/team/members/{user_id}/role",
+    tag = "Team",
+    params(("user_id" = String, Path, description = "User ID")),
+    request_body = UpdateRoleRequest,
+    responses(
+        (status = 200, description = "Role updated", body = TeamMemberResponse),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn update_role(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(target_user_id): Path<String>,
@@ -154,7 +224,19 @@ async fn update_role(
     Ok(Json(member))
 }
 
-async fn remove_member(
+/// Remove a team member.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/team/members/{user_id}",
+    tag = "Team",
+    params(("user_id" = String, Path, description = "User ID")),
+    responses(
+        (status = 204, description = "Member removed"),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn remove_member(
     State(state): State<AppState>,
     user: AuthenticatedUser,
     Path(target_user_id): Path<String>,
