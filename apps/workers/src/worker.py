@@ -20,6 +20,7 @@ from temporalio.worker import Worker
 from src.config import WorkerSettings
 from src.infra import init_container
 from src.workflows.evaluate import EvaluateWorkflow
+from src.workflows.export import ExportWorkflow
 from src.workflows.full_pipeline import FullPipelineWorkflow
 from src.workflows.ingest import IngestWorkflow
 from src.workflows.refine import RefineWorkflow
@@ -137,6 +138,7 @@ async def main() -> None:
     from src.activities.chunk_text import ChunkTextActivity
     from src.activities.generate_pairs import GeneratePairsActivity
     from src.activities.parse_document import ParseDocumentActivity
+    from src.activities.export_gguf import ExportGgufActivity
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
     from src.activities.train_model import (
@@ -161,6 +163,7 @@ async def main() -> None:
         EvaluateHoldoutActivity(infra),
         RunEvaluationActivity(infra),
         DeployModelActivity(infra),
+        ExportGgufActivity(infra),
     ]
 
     # All workflows (registered on every worker mode)
@@ -172,6 +175,7 @@ async def main() -> None:
         TrainAlignedWorkflow,
         TrainReasoningWorkflow,
         EvaluateWorkflow,
+        ExportWorkflow,
         FullPipelineWorkflow,
     ]
 

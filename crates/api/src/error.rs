@@ -28,6 +28,9 @@ pub enum AppError {
     #[error("Rate limit exceeded")]
     RateLimited,
 
+    #[error("{message}")]
+    ServiceUnavailable { message: String },
+
     #[allow(dead_code)]
     #[error("Not implemented")]
     NotImplemented,
@@ -97,6 +100,7 @@ impl AppError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Self::ServiceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -112,6 +116,7 @@ impl AppError {
             Self::Forbidden { .. } => "FORBIDDEN",
             Self::Conflict { .. } => "CONFLICT",
             Self::RateLimited => "RATE_LIMITED",
+            Self::ServiceUnavailable { .. } => "SERVICE_UNAVAILABLE",
             Self::NotImplemented => "NOT_IMPLEMENTED",
             Self::Internal(_) => "INTERNAL_ERROR",
             Self::Database(_) => "DATABASE_ERROR",
@@ -205,6 +210,12 @@ mod tests {
             StatusCode::CONFLICT,
         );
         assert_status(AppError::RateLimited, StatusCode::TOO_MANY_REQUESTS);
+        assert_status(
+            AppError::ServiceUnavailable {
+                message: "x".into(),
+            },
+            StatusCode::SERVICE_UNAVAILABLE,
+        );
         assert_status(AppError::NotImplemented, StatusCode::NOT_IMPLEMENTED);
     }
 
@@ -287,6 +298,9 @@ mod tests {
                 message: "x".into(),
             },
             AppError::RateLimited,
+            AppError::ServiceUnavailable {
+                message: "x".into(),
+            },
             AppError::NotImplemented,
             AppError::Internal(anyhow::anyhow!("x")),
         ];
@@ -334,6 +348,13 @@ mod tests {
             "CONFLICT",
         );
         assert_eq!(AppError::RateLimited.error_code(), "RATE_LIMITED");
+        assert_eq!(
+            AppError::ServiceUnavailable {
+                message: "x".into()
+            }
+            .error_code(),
+            "SERVICE_UNAVAILABLE",
+        );
         assert_eq!(AppError::NotImplemented.error_code(), "NOT_IMPLEMENTED");
         assert_eq!(
             AppError::Internal(anyhow::anyhow!("x")).error_code(),

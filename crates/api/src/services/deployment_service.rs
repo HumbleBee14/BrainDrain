@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BillingEventRepository, ModelRepository};
+use crate::services::circuit_breaker::CircuitBreaker;
 
 /// Business logic for model deployment via vLLM.
 ///
@@ -14,9 +15,12 @@ pub struct DeploymentService;
 
 impl DeploymentService {
     /// Deploy a fine-tuned model by loading its LoRA adapter into vLLM.
+    /// Protected by a circuit breaker against vLLM outages.
     pub async fn deploy(
         model_repo: &dyn ModelRepository,
         billing_repo: &dyn BillingEventRepository,
+        http_client: &reqwest::Client,
+        circuit_breaker: &CircuitBreaker,
         config: &Config,
         tenant_id: Uuid,
         model_id: Uuid,
@@ -46,17 +50,24 @@ impl DeploymentService {
         // Build a unique adapter name for vLLM
         let adapter_name = format!("adapter-{model_id}");
 
-        // Load LoRA adapter via vLLM REST API
-        let vllm_url = &config.vllm_api_url;
-        let http = reqwest::Client::new();
+        // Load LoRA adapter via vLLM REST API (through circuit breaker)
+        let vllm_url = config.vllm_api_url.clone();
+        let load_body = serde_json::json!({
+            "lora_name": adapter_name,
+            "lora_path": adapter_path,
+        });
+        let http = http_client.clone();
 
-        let load_result = http
-            .post(format!("{vllm_url}/v1/load_lora_adapter"))
-            .json(&serde_json::json!({
-                "lora_name": adapter_name,
-                "lora_path": adapter_path,
-            }))
-            .send()
+        let load_result = circuit_breaker
+            .execute(|| async {
+                http.post(format!("{vllm_url}/v1/load_lora_adapter"))
+                    .json(&load_body)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}"))
+                    })
+            })
             .await;
 
         match load_result {
@@ -111,17 +122,17 @@ impl DeploymentService {
                 model_repo
                     .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
                     .await?;
-                tracing::error!(model_id = %model_id, error = %e, "vLLM unreachable");
-                Err(AppError::Internal(anyhow::anyhow!(
-                    "Cannot reach vLLM service: {e}"
-                )))
+                tracing::error!(model_id = %model_id, error = %e, "vLLM deploy failed (circuit breaker)");
+                Err(e)
             }
         }
     }
 
     /// Undeploy a model by unloading its LoRA adapter from vLLM.
+    /// Uses shared HTTP client (not circuit breaker — unload is best-effort).
     pub async fn undeploy(
         model_repo: &dyn ModelRepository,
+        http_client: &reqwest::Client,
         config: &Config,
         tenant_id: Uuid,
         model_id: Uuid,
@@ -145,9 +156,8 @@ impl DeploymentService {
             .to_string();
 
         let vllm_url = &config.vllm_api_url;
-        let http = reqwest::Client::new();
 
-        let unload_result = http
+        let unload_result = http_client
             .post(format!("{vllm_url}/v1/unload_lora_adapter"))
             .json(&serde_json::json!({
                 "lora_name": adapter_name,

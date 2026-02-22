@@ -34,6 +34,8 @@ async fn deploy_model(
     let result = DeploymentService::deploy(
         state.model_repo(),
         state.billing_event_repo(),
+        state.http_client(),
+        state.vllm_circuit_breaker(),
         state.config(),
         user.tenant_id,
         model_id,
@@ -58,9 +60,14 @@ async fn undeploy_model(
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
     require_role(&user, TeamRole::Member)?;
-    let result =
-        DeploymentService::undeploy(state.model_repo(), state.config(), user.tenant_id, model_id)
-            .await?;
+    let result = DeploymentService::undeploy(
+        state.model_repo(),
+        state.http_client(),
+        state.config(),
+        user.tenant_id,
+        model_id,
+    )
+    .await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,

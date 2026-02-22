@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::{
     ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Invitation, Model,
-    NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant, TrainingJob,
+    ModelExport, NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant,
+    TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
@@ -9,7 +10,7 @@ use platform_shared::enums::{
 use uuid::Uuid;
 
 use crate::error::AppResult;
-use crate::repositories::billing_event_repo::UsageSummary;
+use crate::repositories::billing_event_repo::{InferenceUsageDay, UsageSummary};
 
 /// Convenience type alias for boxed futures (used by repository trait methods).
 ///
@@ -396,6 +397,13 @@ pub trait BillingEventRepository: Send + Sync {
 
     /// Aggregate total cost, tokens_in, and tokens_out for a tenant.
     fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>>;
+
+    /// Inference usage breakdown by day (last N days).
+    fn inference_usage_by_day(
+        &self,
+        tenant_id: Uuid,
+        days: i32,
+    ) -> BoxFuture<'_, AppResult<Vec<InferenceUsageDay>>>;
 }
 
 /// Contract for audit log database operations.
@@ -581,4 +589,39 @@ pub trait NotificationRepository: Send + Sync {
         status: &str,
         error: Option<&str>,
     ) -> BoxFuture<'_, AppResult<()>>;
+}
+
+/// Contract for model export database operations.
+#[allow(dead_code)]
+pub trait ExportRepository: Send + Sync {
+    fn create(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        format: &str,
+        quant_type: &str,
+    ) -> BoxFuture<'_, AppResult<ModelExport>>;
+
+    fn get_by_id(
+        &self,
+        tenant_id: Uuid,
+        export_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<ModelExport>>>;
+
+    fn list_by_model(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Vec<ModelExport>>>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        export_id: Uuid,
+        status: &str,
+        storage_path: Option<&str>,
+        file_size_bytes: Option<i64>,
+        error: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<bool>>;
 }

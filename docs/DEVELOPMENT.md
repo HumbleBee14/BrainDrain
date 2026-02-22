@@ -16,7 +16,8 @@
 - [Phase 2: Training Engine (COMPLETE)](#phase-2-training-engine--complete)
 - [Phase 3: Evaluation & Deployment (COMPLETE)](#phase-3-evaluation--deployment--complete)
 - [Architecture Hardening (COMPLETE)](#architecture-hardening--complete)
-- [Phase 4: Product Polish](#phase-4-product-polish)
+- [Phase 4: Product Polish (COMPLETE)](#phase-4-product-polish--complete)
+- [Phase 5: Serving & Deployment (COMPLETE)](#phase-5-serving--deployment--complete)
 - [Local Development](#local-development)
 
 ---
@@ -310,7 +311,8 @@ Each has its own `Dockerfile`. They share **zero runtime dependencies** — comm
 | **Phase 2: Training Engine** | **COMPLETE** | Unsloth/TRL fine-tuning, 4 training modes, GPU orchestration |
 | **Phase 3: Eval & Deploy** | **COMPLETE** | 4-suite evaluation, vLLM deployment, API keys, inference proxy |
 | **Architecture Hardening** | **COMPLETE** | 19 fixes: trait abstractions, RLS, indexes, DI, typed JSON |
-| **Phase 4: Product Polish** | **NEXT** | Billing, team management, onboarding, dashboards |
+| **Phase 4: Product Polish** | **COMPLETE** | Team RBAC, Stripe billing, dashboard, notifications, onboarding |
+| **Phase 5: Serving & Deploy** | **COMPLETE** | Circuit breaker, SSE streaming, GGUF export, usage metering |
 
 ---
 

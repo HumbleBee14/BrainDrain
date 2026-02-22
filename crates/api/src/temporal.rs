@@ -80,6 +80,16 @@ pub trait WorkflowOrchestrator: Send + Sync {
         judge_api_base: Option<&str>,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
+    fn start_export(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        export_id: Uuid,
+        adapter_path: &str,
+        base_model: &str,
+        quant_type: &str,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
     fn get_workflow_status(
         &self,
         workflow_id: &str,
@@ -293,6 +303,38 @@ impl WorkflowOrchestrator for TemporalClient {
                     dataset_path,
                     judge_model.as_deref().unwrap_or(""),
                     judge_api_base.as_deref().unwrap_or(""),
+                ]),
+                Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+            )
+            .await
+        })
+    }
+
+    fn start_export(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        export_id: Uuid,
+        adapter_path: &str,
+        base_model: &str,
+        quant_type: &str,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let adapter_path = adapter_path.to_string();
+        let base_model = base_model.to_string();
+        let quant_type = quant_type.to_string();
+        Box::pin(async move {
+            let workflow_id = format!("export-{export_id}-{}", chrono::Utc::now().timestamp());
+
+            self.start_workflow_on_queue(
+                "ExportWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    model_id.to_string(),
+                    export_id.to_string(),
+                    adapter_path,
+                    base_model,
+                    quant_type,
                 ]),
                 Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
             )

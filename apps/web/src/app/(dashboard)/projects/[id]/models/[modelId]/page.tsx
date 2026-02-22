@@ -8,6 +8,7 @@ import { useOnboarding } from "@/hooks/use-onboarding";
 import { useDeploymentStatus, useDeployModel, useUndeployModel } from "@/hooks/use-deployments";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/hooks/use-api-keys";
 import { useEvaluations } from "@/hooks/use-evaluations";
+import { useModelExports, useCreateExport, useExportDownload } from "@/hooks/use-exports";
 
 function DeploymentBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -21,6 +22,23 @@ function DeploymentBadge({ status }: { status: string }) {
 
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
+      {status}
+    </span>
+  );
+}
+
+function ExportStatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
+    processing: "bg-blue-900/50 text-blue-400 border-blue-800 animate-pulse",
+    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
+    failed: "bg-red-900/50 text-red-400 border-red-800",
+  };
+
+  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
       {status}
     </span>
   );
@@ -48,6 +66,9 @@ export default function ModelDetailPage() {
   const { data: deployment } = useDeploymentStatus(params.modelId);
   const { data: apiKeys } = useApiKeys(params.modelId);
   const { data: evalsData } = useEvaluations(params.modelId);
+  const { data: exports } = useModelExports(params.modelId);
+  const createExport = useCreateExport(params.modelId);
+  const downloadExport = useExportDownload();
   const deployModel = useDeployModel(params.modelId);
   const undeployModel = useUndeployModel(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
@@ -64,6 +85,7 @@ export default function ModelDetailPage() {
   const [keyName, setKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [exportQuantType, setExportQuantType] = useState("Q5_K_M");
 
   const evaluations = evalsData?.data ?? [];
   const keys = apiKeys ?? [];
@@ -357,6 +379,79 @@ export default function ModelDetailPage() {
           </div>
         ) : (
           <p className="text-sm text-zinc-600">No evaluations yet. Run one to measure model quality.</p>
+        )}
+      </div>
+
+      {/* GGUF Export section */}
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold text-white mb-4">GGUF Export</h2>
+        <div className="rounded-lg border border-zinc-800 p-6 mb-4">
+          <div className="flex items-center gap-3">
+            <select
+              value={exportQuantType}
+              onChange={(e) => setExportQuantType(e.target.value)}
+              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+            >
+              <option value="Q4_K_M">Q4_K_M (smallest)</option>
+              <option value="Q5_K_M">Q5_K_M (balanced)</option>
+              <option value="Q6_K">Q6_K (high quality)</option>
+              <option value="Q8_0">Q8_0 (highest quality)</option>
+            </select>
+            <button
+              onClick={() => createExport.mutate({ quant_type: exportQuantType })}
+              disabled={createExport.isPending}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition disabled:opacity-50"
+            >
+              {createExport.isPending ? "Starting..." : "Export GGUF"}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-600 mt-2">
+            Merge LoRA adapter into base model and export as quantized GGUF for local inference (llama.cpp, Ollama, LM Studio).
+          </p>
+          {createExport.isError && (
+            <p className="text-sm text-red-400 mt-2">{createExport.error.message}</p>
+          )}
+        </div>
+
+        {exports && exports.length > 0 && (
+          <div className="rounded-lg border border-zinc-800">
+            {exports.map((exp) => (
+              <div
+                key={exp.id}
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0"
+              >
+                <div>
+                  <p className="text-sm text-white">
+                    {exp.quant_type} &middot; {exp.format.toUpperCase()}
+                  </p>
+                  <p className="text-xs text-zinc-600">
+                    {exp.status === "completed" && exp.file_size_bytes
+                      ? `${(exp.file_size_bytes / 1024 / 1024 / 1024).toFixed(1)} GB \u00b7 `
+                      : ""}
+                    {exp.completed_at
+                      ? `Completed ${new Date(exp.completed_at).toLocaleDateString()}`
+                      : `Created ${new Date(exp.created_at).toLocaleDateString()}`}
+                    {exp.error && ` \u00b7 ${exp.error}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ExportStatusBadge status={exp.status} />
+                  {exp.status === "completed" && (
+                    <button
+                      onClick={async () => {
+                        const result = await downloadExport.mutateAsync(exp.id);
+                        window.open(result.download_url, "_blank");
+                      }}
+                      disabled={downloadExport.isPending}
+                      className="text-xs text-blue-400 hover:text-blue-300 transition"
+                    >
+                      Download
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

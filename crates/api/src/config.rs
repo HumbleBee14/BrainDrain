@@ -83,6 +83,15 @@ pub struct Config {
     #[serde(default = "default_vllm_api_url")]
     pub vllm_api_url: String,
 
+    // ── Circuit Breaker (vLLM) ──
+    /// Number of consecutive failures before the circuit breaker trips.
+    #[serde(default = "default_cb_failure_threshold")]
+    pub vllm_cb_failure_threshold: u32,
+
+    /// Seconds to wait before probing vLLM after the circuit breaker trips.
+    #[serde(default = "default_cb_recovery_timeout_secs")]
+    pub vllm_cb_recovery_timeout_secs: u64,
+
     // ── CORS ──
     /// Comma-separated list of allowed CORS origins.
     #[serde(default = "default_cors_origins")]
@@ -213,4 +222,10 @@ fn default_rate_limit_enabled() -> bool {
 }
 fn default_rate_limit_rpm() -> u32 {
     200
+}
+fn default_cb_failure_threshold() -> u32 {
+    5
+}
+fn default_cb_recovery_timeout_secs() -> u64 {
+    30
 }
