@@ -71,7 +71,9 @@ async fn get_inference_usage(
 
     // Try cache first
     if let Ok(Some(json_str)) = redis.get::<_, Option<String>>(&cache_key).await
-        && let Ok(data) = serde_json::from_str::<Vec<crate::repositories::billing_event_repo::InferenceUsageDay>>(&json_str)
+        && let Ok(data) = serde_json::from_str::<
+            Vec<crate::repositories::billing_event_repo::InferenceUsageDay>,
+        >(&json_str)
     {
         return Ok(Json(data));
     }

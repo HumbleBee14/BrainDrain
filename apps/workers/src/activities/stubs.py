@@ -168,9 +168,7 @@ class DeployModelActivity:
         api_url = self.infra.settings.platform_api_url
         token = self.infra.settings.platform_internal_token
 
-        activity.logger.info(
-            "Deploying model %s (adapter: %s)", input.model_id, input.adapter_path
-        )
+        activity.logger.info("Deploying model %s (adapter: %s)", input.model_id, input.adapter_path)
 
         headers = {"Content-Type": "application/json"}
         if token:
@@ -184,9 +182,7 @@ class DeployModelActivity:
             ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
-                    raise RuntimeError(
-                        f"Deploy failed ({resp.status}): {body}"
-                    )
+                    raise RuntimeError(f"Deploy failed ({resp.status}): {body}")
 
                 data = await resp.json()
 

@@ -50,7 +50,13 @@ impl BillingBatcher {
         let (sender, receiver) = mpsc::channel(channel_capacity);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-        let flush_handle = tokio::spawn(flush_loop(db, receiver, batch_size, flush_interval, shutdown_rx));
+        let flush_handle = tokio::spawn(flush_loop(
+            db,
+            receiver,
+            batch_size,
+            flush_interval,
+            shutdown_rx,
+        ));
 
         Self {
             sender,
@@ -164,7 +170,11 @@ const MAX_FLUSH_RETRIES: usize = 3;
 /// On failure, events are retained in the buffer for the next flush attempt.
 /// After MAX_FLUSH_RETRIES consecutive failures, events are dropped to prevent
 /// unbounded memory growth (better to lose billing data than OOM the process).
-async fn flush_batch(db: &PgPool, buffer: &mut Vec<BillingEvent>, consecutive_failures: &mut usize) {
+async fn flush_batch(
+    db: &PgPool,
+    buffer: &mut Vec<BillingEvent>,
+    consecutive_failures: &mut usize,
+) {
     let count = buffer.len();
 
     let mut builder = sqlx::QueryBuilder::new(

@@ -61,8 +61,7 @@ async fn list_exports(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<ExportResponse>>> {
-    let exports =
-        ExportService::list(state.export_repo(), user.tenant_id, model_id).await?;
+    let exports = ExportService::list(state.export_repo(), user.tenant_id, model_id).await?;
     Ok(Json(exports))
 }
 

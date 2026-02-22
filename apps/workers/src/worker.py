@@ -136,9 +136,9 @@ async def main() -> None:
     # Import and instantiate activity classes with injected infrastructure
     from src.activities.build_dataset import BuildDatasetActivity
     from src.activities.chunk_text import ChunkTextActivity
+    from src.activities.export_gguf import ExportGgufActivity
     from src.activities.generate_pairs import GeneratePairsActivity
     from src.activities.parse_document import ParseDocumentActivity
-    from src.activities.export_gguf import ExportGgufActivity
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
     from src.activities.train_model import (

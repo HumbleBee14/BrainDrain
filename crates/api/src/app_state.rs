@@ -5,8 +5,6 @@ use std::time::Duration;
 
 use crate::auth::{AuthProviderChain, ClerkAuthProvider};
 use crate::config::Config;
-use crate::services::billing_batcher::BillingBatcher;
-use crate::services::circuit_breaker::CircuitBreaker;
 use crate::repositories::api_key_repo::PgApiKeyRepo;
 use crate::repositories::audit_log_repo::PgAuditLogRepo;
 use crate::repositories::billing_event_repo::PgBillingEventRepo;
@@ -27,7 +25,9 @@ use crate::repositories::traits::{
     ModelRepository, NotificationRepository, ProjectRepository, TeamMemberRepository,
     TenantRepository, TrainingJobRepository,
 };
+use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
+use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 

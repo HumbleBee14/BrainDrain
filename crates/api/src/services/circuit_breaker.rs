@@ -88,7 +88,12 @@ impl CircuitBreaker {
             let mut state = self.state.lock().await;
             match result {
                 Ok(_) => {
-                    if !matches!(*state, CircuitState::Closed { consecutive_failures: 0 }) {
+                    if !matches!(
+                        *state,
+                        CircuitState::Closed {
+                            consecutive_failures: 0
+                        }
+                    ) {
                         tracing::info!("Circuit breaker reset to closed");
                     }
                     *state = CircuitState::Closed {
@@ -101,10 +106,7 @@ impl CircuitBreaker {
                     } => {
                         let new_count = consecutive_failures + 1;
                         if new_count >= self.failure_threshold {
-                            tracing::warn!(
-                                failures = new_count,
-                                "Circuit breaker tripped to open"
-                            );
+                            tracing::warn!(failures = new_count, "Circuit breaker tripped to open");
                             *state = CircuitState::Open {
                                 tripped_at: Instant::now(),
                             };
@@ -148,9 +150,7 @@ mod tests {
 
         for _ in 0..3 {
             let _ = cb
-                .execute(|| async {
-                    Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail")))
-                })
+                .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
                 .await;
         }
 
@@ -166,9 +166,7 @@ mod tests {
         // 2 failures (under threshold)
         for _ in 0..2 {
             let _ = cb
-                .execute(|| async {
-                    Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail")))
-                })
+                .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
                 .await;
         }
 
@@ -178,9 +176,7 @@ mod tests {
         // 2 more failures should not trip (count reset)
         for _ in 0..2 {
             let _ = cb
-                .execute(|| async {
-                    Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail")))
-                })
+                .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
                 .await;
         }
 
@@ -195,9 +191,7 @@ mod tests {
 
         // Trip it
         let _ = cb
-            .execute(|| async {
-                Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail")))
-            })
+            .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
             .await;
 
         // Should be open
@@ -218,9 +212,7 @@ mod tests {
 
         // Trip it
         let _ = cb
-            .execute(|| async {
-                Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail")))
-            })
+            .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
             .await;
 
         // Wait for recovery

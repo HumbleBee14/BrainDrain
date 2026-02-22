@@ -133,9 +133,7 @@ class ExportGgufActivity:
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
-    async def _download_adapter(
-        self, s3, bucket: str, adapter_path: str, local_dir: str
-    ) -> None:
+    async def _download_adapter(self, s3, bucket: str, adapter_path: str, local_dir: str) -> None:
         """Download all adapter files from S3 prefix."""
         paginator = s3.get_paginator("list_objects_v2")
         async_pages = paginator.paginate(Bucket=bucket, Prefix=adapter_path)
@@ -152,13 +150,12 @@ class ExportGgufActivity:
                 await asyncio.to_thread(s3.download_file, bucket, key, local_path)
                 activity.heartbeat(f"Downloaded {rel}")
 
-    async def _merge_lora(
-        self, adapter_dir: str, base_model: str, output_dir: str
-    ) -> None:
+    async def _merge_lora(self, adapter_dir: str, base_model: str, output_dir: str) -> None:
         """Merge LoRA adapter into base model using peft.
 
         Runs in a thread to avoid blocking the async event loop.
         """
+
         def _do_merge():
             import torch
             from peft import PeftModel
@@ -202,9 +199,7 @@ class ExportGgufActivity:
 
         logger.info("Converted to F16 GGUF: %s", output_path)
 
-    async def _quantize(
-        self, input_path: str, output_path: str, quant_type: str
-    ) -> None:
+    async def _quantize(self, input_path: str, output_path: str, quant_type: str) -> None:
         """Quantize F16 GGUF to target quantization type using llama-quantize."""
         quantize_bin = shutil.which("llama-quantize") or str(
             Path.home() / "llama.cpp" / "build" / "bin" / "llama-quantize"

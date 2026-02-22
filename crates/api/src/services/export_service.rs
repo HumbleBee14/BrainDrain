@@ -106,12 +106,13 @@ impl ExportService {
         tenant_id: Uuid,
         export_id: Uuid,
     ) -> AppResult<(String, Option<i64>, String)> {
-        let export = export_repo
-            .get_by_id(tenant_id, export_id)
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Export not found".to_string(),
-            })?;
+        let export =
+            export_repo
+                .get_by_id(tenant_id, export_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: "Export not found".to_string(),
+                })?;
 
         if export.status != "completed" {
             return Err(AppError::BadRequest {
@@ -119,14 +120,18 @@ impl ExportService {
             });
         }
 
-        let storage_path = export.storage_path.ok_or(AppError::Internal(
-            anyhow::anyhow!("Completed export has no storage path"),
-        ))?;
+        let storage_path = export
+            .storage_path
+            .ok_or(AppError::Internal(anyhow::anyhow!(
+                "Completed export has no storage path"
+            )))?;
 
         let url = storage
             .presigned_url(&storage_path, 3600)
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to generate download URL: {e}")))?;
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to generate download URL: {e}"))
+            })?;
 
         let filename = format!(
             "model-{}-{}.gguf",

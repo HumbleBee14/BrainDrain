@@ -123,9 +123,7 @@ async fn chat_completions(
                 .json(&vllm_request)
                 .send()
                 .await
-                .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}"))
-                })
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}")))
         })
         .await?;
 
@@ -158,14 +156,11 @@ async fn chat_completions(
                         let text = String::from_utf8_lossy(&bytes);
                         for line in text.lines() {
                             if let Some(data) = line.strip_prefix("data: ")
-                                && let Ok(parsed) =
-                                    serde_json::from_str::<serde_json::Value>(data)
+                                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
                                 && let Some(usage) = parsed.get("usage")
                             {
-                                let tokens_in =
-                                    usage["prompt_tokens"].as_i64().unwrap_or(0);
-                                let tokens_out =
-                                    usage["completion_tokens"].as_i64().unwrap_or(0);
+                                let tokens_in = usage["prompt_tokens"].as_i64().unwrap_or(0);
+                                let tokens_out = usage["completion_tokens"].as_i64().unwrap_or(0);
                                 if tokens_in > 0 || tokens_out > 0 {
                                     let _ = usage_tx.try_send((tokens_in, tokens_out));
                                 }
@@ -196,16 +191,18 @@ async fn chat_completions(
                 }
             };
 
-            batcher_state.billing_batcher().send(billing_batcher::BillingEvent {
-                tenant_id,
-                operation: "inference".to_string(),
-                resource_id: Some(model_id),
-                tokens_in,
-                tokens_out,
-                gpu_seconds: 0,
-                cost_usd: estimate_cost(tokens_in, tokens_out),
-                metadata: serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
-            });
+            batcher_state
+                .billing_batcher()
+                .send(billing_batcher::BillingEvent {
+                    tenant_id,
+                    operation: "inference".to_string(),
+                    resource_id: Some(model_id),
+                    tokens_in,
+                    tokens_out,
+                    gpu_seconds: 0,
+                    cost_usd: estimate_cost(tokens_in, tokens_out),
+                    metadata: serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
+                });
         });
 
         let body = Body::from_stream(forwarded_stream);

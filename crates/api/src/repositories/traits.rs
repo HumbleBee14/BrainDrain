@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::{
-    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Invitation, Model,
-    ModelExport, NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant,
-    TrainingJob,
+    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Invitation, Model, ModelExport,
+    NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant, TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
