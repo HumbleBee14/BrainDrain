@@ -144,6 +144,7 @@ export default function ProjectDetailPage() {
   const [docSearch, setDocSearch] = useState("");
   const [docStatusFilter, setDocStatusFilter] = useState<string>("all");
   const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
 
   const allDocuments = docsData?.data ?? [];
   const datasets = datasetsData?.data ?? [];
@@ -493,13 +494,27 @@ export default function ProjectDetailPage() {
             {allTrainingJobs.length > 0 &&
               `(${trainingJobs.length}${trainingJobs.length !== allTrainingJobs.length ? ` of ${allTrainingJobs.length}` : ""})`}
           </h2>
-          <button
-            onClick={() => setShowTrainForm(!showTrainForm)}
-            disabled={!hasApprovedDatasets}
-            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Start Training
-          </button>
+          <div className="flex items-center gap-2">
+            {compareIds.length >= 2 && (
+              <button
+                onClick={() =>
+                  router.push(
+                    `/projects/${params.id}/compare?jobs=${compareIds.slice(0, 2).join(",")}`,
+                  )
+                }
+                className="rounded-lg border border-blue-700 bg-blue-600/10 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition"
+              >
+                Compare ({compareIds.length})
+              </button>
+            )}
+            <button
+              onClick={() => setShowTrainForm(!showTrainForm)}
+              disabled={!hasApprovedDatasets}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Start Training
+            </button>
+          </div>
         </div>
 
         {/* Training jobs filter */}
@@ -756,38 +771,61 @@ export default function ProjectDetailPage() {
         {trainingJobs.length > 0 && (
           <div className="rounded-lg border border-zinc-800">
             {trainingJobs.map((job) => (
-              <Link
+              <div
                 key={job.id}
-                href={`/projects/${params.id}/training/${job.id}`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 hover:bg-zinc-900/50 transition"
+                className="flex items-center border-b border-zinc-800 last:border-b-0"
               >
-                <div>
-                  <p className="text-sm text-white">
-                    {job.base_model.split("/").pop()} &mdash; {job.mode}
-                  </p>
-                  <p className="text-xs text-zinc-600">
-                    {job.method.toUpperCase()}
-                    {job.cost_estimate != null &&
-                      ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
-                    {" \u00b7 "}
-                    {new Date(job.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {["pending", "cost_approval"].includes(job.status) && (
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        cancelTrainingJob.mutate(job.id);
-                      }}
-                      className="text-xs text-red-400 hover:text-red-300 transition"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                  <TrainingStatusBadge status={job.status} />
-                </div>
-              </Link>
+                {allTrainingJobs.length >= 2 && (
+                  <label
+                    className="flex items-center pl-4 cursor-pointer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={compareIds.includes(job.id)}
+                      onChange={() =>
+                        setCompareIds((prev) =>
+                          prev.includes(job.id)
+                            ? prev.filter((id) => id !== job.id)
+                            : [...prev, job.id].slice(-2),
+                        )
+                      }
+                      className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-900 text-violet-500 focus:ring-violet-500 focus:ring-offset-0"
+                    />
+                  </label>
+                )}
+                <Link
+                  href={`/projects/${params.id}/training/${job.id}`}
+                  className="flex-1 flex items-center justify-between py-3 px-4 hover:bg-zinc-900/50 transition"
+                >
+                  <div>
+                    <p className="text-sm text-white">
+                      {job.base_model.split("/").pop()} &mdash; {job.mode}
+                    </p>
+                    <p className="text-xs text-zinc-600">
+                      {job.method.toUpperCase()}
+                      {job.cost_estimate != null &&
+                        ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
+                      {" \u00b7 "}
+                      {new Date(job.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {["pending", "cost_approval"].includes(job.status) && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          cancelTrainingJob.mutate(job.id);
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 transition"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <TrainingStatusBadge status={job.status} />
+                  </div>
+                </Link>
+              </div>
             ))}
           </div>
         )}

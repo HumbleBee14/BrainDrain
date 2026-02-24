@@ -20,10 +20,21 @@ All Phase B tasks completed.
 - **Files**: Backend worker/service
 
 ### C3. Training Job Comparison UI
-- **Status**: Pending
+- **Status**: Done
 - **Why**: All metrics stored but no side-by-side comparison for iteration
-- **Scope**: New comparison page with metrics overlay
-- **Files**: Frontend page + possibly new API endpoint
+- **What was done**: Built side-by-side training job comparison page with selection UI:
+  - Created `/projects/[id]/compare` page accepting `?jobs=id1,id2` query params
+  - Side-by-side layout with `ComparisonRow` component supporting `lower`/`higher` highlight (green for better values)
+  - Job headers with color-coded cards (violet/emerald), status badges
+  - Final training loss visual overlay bar chart
+  - Configuration section: base model, method, mode, GPU class, status
+  - Hyperparameters section: learning rate, epochs, batch size, LoRA rank/alpha, max seq length, warmup steps, gradient accumulation, optimizer, LR scheduler
+  - Cost & Timing section: cost estimate, actual cost, duration, start time (with green highlights for lower cost/duration)
+  - Training Results section: final loss, total steps, runtime, samples/sec (with appropriate lower/higher highlights)
+  - Added checkbox selection on training job rows in project detail page (visible when 2+ jobs exist)
+  - Compare button appears when 2 jobs selected, navigates to comparison page
+  - Breadcrumb navigation back to project
+- **Files**: `apps/web/src/app/(dashboard)/projects/[id]/compare/page.tsx`, `apps/web/src/app/(dashboard)/projects/[id]/page.tsx`
 
 ### C4. Audit Log Viewer Page
 - **Status**: Done
