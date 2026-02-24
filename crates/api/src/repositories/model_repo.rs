@@ -204,4 +204,53 @@ impl ModelRepository for PgModelRepo {
             Ok(count)
         })
     }
+
+    fn list_versions(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let models = sqlx::query_as::<_, Model>(
+                r#"
+                SELECT * FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3
+                ORDER BY version DESC
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(&base_model)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(models)
+        })
+    }
+
+    fn get_max_version(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<i32>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let max_version = sqlx::query_scalar::<_, Option<i32>>(
+                r#"
+                SELECT MAX(version) FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(&base_model)
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(max_version.unwrap_or(0))
+        })
+    }
 }

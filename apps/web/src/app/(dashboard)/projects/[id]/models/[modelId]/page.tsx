@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { useModel } from "@/hooks/use-models";
+import { useModel, useModelVersions, useRollbackModel } from "@/hooks/use-models";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import {
   useDeploymentStatus,
@@ -87,12 +87,14 @@ export default function ModelDetailPage() {
   const { data: apiKeys } = useApiKeys(params.modelId);
   const { data: evalsData } = useEvaluations(params.modelId);
   const { data: exports } = useModelExports(params.modelId);
+  const { data: versions } = useModelVersions(params.modelId);
   const createExport = useCreateExport(params.modelId);
   const downloadExport = useExportDownload();
   const deployModel = useDeployModel(params.modelId);
   const undeployModel = useUndeployModel(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
   const revokeApiKey = useRevokeApiKey(params.modelId);
+  const rollbackModel = useRollbackModel(params.modelId);
 
   const { markStepComplete } = useOnboarding();
 
@@ -129,6 +131,13 @@ export default function ModelDetailPage() {
   useEffect(() => {
     if (createExport.isError) toast.error(createExport.error.message);
   }, [createExport.isError, createExport.error]);
+
+  useEffect(() => {
+    if (rollbackModel.isSuccess) toast.success("Model rolled back successfully");
+  }, [rollbackModel.isSuccess]);
+  useEffect(() => {
+    if (rollbackModel.isError) toast.error(rollbackModel.error.message);
+  }, [rollbackModel.isError, rollbackModel.error]);
 
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [keyName, setKeyName] = useState("");
@@ -227,6 +236,75 @@ export default function ModelDetailPage() {
           </p>
         </div>
       </div>
+
+      {/* Version History */}
+      {versions && versions.length > 1 && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-white mb-4">
+            Version History ({versions.length} versions)
+          </h2>
+          <div className="rounded-lg border border-zinc-800">
+            {versions.map((v) => {
+              const isCurrent = v.id === model.id;
+              const isActive = v.deployment_status === "active";
+              return (
+                <div
+                  key={v.id}
+                  className={`flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 ${
+                    isCurrent ? "bg-zinc-900/50" : ""
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm text-white font-medium">
+                        v{v.version}
+                      </p>
+                      {isCurrent && (
+                        <span className="text-xs text-zinc-500 bg-zinc-800 rounded px-1.5 py-0.5">
+                          current
+                        </span>
+                      )}
+                      {isActive && (
+                        <span className="text-xs text-emerald-400 bg-emerald-900/50 border border-emerald-800 rounded-full px-2 py-0.5">
+                          deployed
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-600 mt-0.5">
+                      {v.name} &middot;{" "}
+                      {new Date(v.created_at).toLocaleDateString()}
+                      {v.eval_scores &&
+                        typeof v.eval_scores === "object" &&
+                        typeof (v.eval_scores as Record<string, unknown>)
+                          .overall === "number" &&
+                        ` \u00b7 Score: ${(v.eval_scores as Record<string, unknown>).overall}/100`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <DeploymentBadge status={v.deployment_status} />
+                    {!isCurrent && (
+                      <button
+                        onClick={() => rollbackModel.mutate(v.id)}
+                        disabled={rollbackModel.isPending}
+                        className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-900/30 transition disabled:opacity-50"
+                      >
+                        {rollbackModel.isPending
+                          ? "Rolling back..."
+                          : "Rollback"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {rollbackModel.isError && (
+            <p className="text-sm text-red-400 mt-2">
+              {rollbackModel.error.message}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Eval scores summary (if available) */}
       {model.eval_scores &&

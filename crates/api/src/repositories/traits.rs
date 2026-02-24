@@ -312,6 +312,24 @@ pub trait ModelRepository: Send + Sync {
         tenant_id: Uuid,
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// List all versions of models sharing the same base_model within a project.
+    fn list_versions(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<Vec<Model>>>;
+
+    /// Get the highest version number for a given base_model within a project.
+    /// Used by the Python training worker to auto-increment on model creation.
+    #[allow(dead_code)]
+    fn get_max_version(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<i32>>;
 }
 
 /// Contract for evaluation database operations.

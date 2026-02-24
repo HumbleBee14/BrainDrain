@@ -95,10 +95,20 @@ All Phase B tasks completed.
 - **Files**: `apps/web/src/app/(dashboard)/projects/[id]/playground/page.tsx`, project detail page
 
 ### C7. Model Versioning & Rollback
-- **Status**: Pending
+- **Status**: Done
 - **Why**: `version` field exists (always 1); no version history or rollback
-- **Scope**: Version incrementing logic, version history API, rollback UI
-- **Files**: Backend service + routes + frontend
+- **What was done**: Implemented full model versioning with auto-increment and rollback:
+  - Added `list_versions()` and `get_max_version()` to `ModelRepository` trait + `PgModelRepo` — queries models by `base_model` within a project, ordered by version DESC
+  - Added `list_versions()` to `ModelService` — fetches model by ID, then lists all versions sharing the same `base_model`
+  - Added `rollback()` to `ModelService` — validates same project/base_model, undeploys current if active, deploys target version
+  - Added `GET /models/{id}/versions` route returning all versions as `Vec<ModelResponse>`
+  - Added `POST /models/{id}/rollback` route (Admin role, audit logged) with `RollbackModelRequest` DTO
+  - Auto-increment version in Python training worker: queries `MAX(version)` for the same `base_model` in the project before INSERT, sets `version = max + 1`
+  - Added `listVersions()` and `rollback()` API client methods
+  - Added `useModelVersions` and `useRollbackModel` React hooks with query invalidation
+  - Added Version History section on model detail page: shows all versions with deployment status badges, "current" indicator, eval scores, rollback button per non-current version
+  - Version History section only visible when more than 1 version exists
+- **Files**: `traits.rs`, `model_repo.rs`, `model_service.rs`, `training.rs` (routes), `model.rs` (DTO), `train_model.py`, `api-client.ts`, `use-models.ts`, model detail page
 
 ### C8. Batch Inference Endpoint
 - **Status**: Pending

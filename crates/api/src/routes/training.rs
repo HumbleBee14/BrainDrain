@@ -13,7 +13,7 @@ use platform_shared::enums::TeamRole;
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
-use crate::dto::model::ModelResponse;
+use crate::dto::model::{ModelResponse, RollbackModelRequest};
 use crate::dto::training_job::{
     CostEstimateResponse, CreateTrainingJobRequest, TrainingJobResponse,
 };
@@ -51,6 +51,8 @@ pub fn router() -> Router<AppState> {
         // Models
         .route("/projects/{project_id}/models", get(list_models))
         .route("/models/{id}", get(get_model))
+        .route("/models/{id}/versions", get(list_model_versions))
+        .route("/models/{id}/rollback", post(rollback_model))
 }
 
 /// POST /api/v1/projects/:project_id/training-jobs
@@ -441,6 +443,54 @@ pub async fn get_model(
 ) -> AppResult<Json<ModelResponse>> {
     let model = ModelService::get(state.model_repo(), user.tenant_id, id).await?;
     Ok(Json(model))
+}
+
+/// GET /api/v1/models/:id/versions
+///
+/// List all versions of a model (same base_model within a project).
+pub async fn list_model_versions(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Vec<ModelResponse>>> {
+    let versions = ModelService::list_versions(state.model_repo(), user.tenant_id, id).await?;
+    Ok(Json(versions))
+}
+
+/// POST /api/v1/models/:id/rollback
+///
+/// Deploy a previous version and undeploy the current one.
+pub async fn rollback_model(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RollbackModelRequest>,
+) -> AppResult<Json<ModelResponse>> {
+    require_role(&user, TeamRole::Admin)?;
+
+    let target_id: Uuid = body
+        .target_version_id
+        .parse()
+        .map_err(|_| crate::error::AppError::BadRequest {
+            message: "Invalid target_version_id".to_string(),
+        })?;
+
+    let result = ModelService::rollback(state.model_repo(), user.tenant_id, id, target_id).await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "rollback",
+        "model",
+        Some(id),
+        serde_json::json!({
+            "target_version_id": body.target_version_id,
+            "target_version": result.version,
+        }),
+    )
+    .await;
+
+    Ok(Json(result))
 }
 
 /// Convert Redis stream field/value pairs to a JSON object.

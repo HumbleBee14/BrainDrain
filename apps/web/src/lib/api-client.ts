@@ -494,6 +494,16 @@ export const api = {
 
     get: (token: string, id: string) =>
       request<ModelResponse>(`/api/v1/models/${id}`, { token }),
+
+    listVersions: (token: string, id: string) =>
+      request<ModelResponse[]>(`/api/v1/models/${id}/versions`, { token }),
+
+    rollback: (token: string, id: string, targetVersionId: string) =>
+      request<ModelResponse>(`/api/v1/models/${id}/rollback`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({ target_version_id: targetVersionId }),
+      }),
   },
 
   evaluations: {

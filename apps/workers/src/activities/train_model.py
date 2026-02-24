@@ -100,11 +100,21 @@ class StartTrainingActivity:
             model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
             project_id = await _get_project_id(db, job_id)
 
+            # Auto-increment version for the same base_model within this project
+            max_version = await db.fetchval(
+                """SELECT COALESCE(MAX(version), 0) FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
+                project_id,
+                input.tenant_id,
+                input.base_model,
+            )
+            next_version = (max_version or 0) + 1
+
             await db.execute(
                 """INSERT INTO models
                 (tenant_id, project_id, training_job_id, name, base_model,
-                 adapter_path, adapter_size_bytes)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                 adapter_path, adapter_size_bytes, version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
                 input.tenant_id,
                 project_id,
                 job_id,
@@ -112,6 +122,7 @@ class StartTrainingActivity:
                 input.base_model,
                 result.adapter_path,
                 result.adapter_size_bytes,
+                next_version,
             )
 
             logger.info("Training completed for job %s, model: %s", job_id, model_name)
