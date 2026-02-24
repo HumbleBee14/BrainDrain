@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -20,6 +20,7 @@ use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::pipeline_service::PipelineService;
+use crate::temporal::TraceContext;
 
 /// Pipeline trigger and status routes.
 pub fn router() -> Router<AppState> {
@@ -52,14 +53,17 @@ pub fn router() -> Router<AppState> {
 pub async fn trigger_parse(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
 ) -> AppResult<(StatusCode, Json<TriggerParseResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let result = PipelineService::trigger_parse(
         state.document_repo(),
         state.orchestrator(),
         user.tenant_id,
         project_id,
+        trace_ctx,
     )
     .await?;
 
@@ -92,10 +96,12 @@ pub async fn trigger_parse(
 pub async fn trigger_refine(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
     Json(body): Json<TriggerRefineRequest>,
 ) -> AppResult<(StatusCode, Json<TriggerRefineResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
     let result = PipelineService::trigger_refine(
@@ -105,6 +111,7 @@ pub async fn trigger_refine(
         project_id,
         task_type,
         body.config,
+        trace_ctx,
     )
     .await?;
 
@@ -137,10 +144,12 @@ pub async fn trigger_refine(
 pub async fn trigger_full_pipeline(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
     Json(body): Json<TriggerFullPipelineRequest>,
 ) -> AppResult<(StatusCode, Json<TriggerFullPipelineResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
     let result = PipelineService::trigger_full_pipeline(
@@ -151,6 +160,7 @@ pub async fn trigger_full_pipeline(
         task_type,
         &body.base_model,
         body.training_config,
+        trace_ctx,
     )
     .await?;
 

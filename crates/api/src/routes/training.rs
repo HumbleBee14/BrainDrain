@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -23,6 +23,7 @@ use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
 use crate::services::plan_service::PlanService;
 use crate::services::training_job_service::TrainingJobService;
+use crate::temporal::TraceContext;
 
 /// Training and model routes.
 pub fn router() -> Router<AppState> {
@@ -79,10 +80,12 @@ pub fn router() -> Router<AppState> {
 pub async fn create_training_job(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<(StatusCode, Json<TrainingJobResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
     let limits = PlanService::get_limits(state.tenant_repo(), user.tenant_id).await?;
     let base_model = body.base_model.clone();
@@ -95,6 +98,7 @@ pub async fn create_training_job(
         body,
         Some(limits.max_models),
         None, // use default cost approval threshold
+        trace_ctx,
     )
     .await?;
 
@@ -215,15 +219,18 @@ pub async fn get_training_job(
 pub async fn approve_training_cost(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
     require_role(&user, TeamRole::Admin)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let job = TrainingJobService::approve_cost(
         state.training_job_repo(),
         state.dataset_repo(),
         state.orchestrator(),
         user.tenant_id,
         id,
+        trace_ctx,
     )
     .await?;
 

@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -17,6 +17,7 @@ use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::export_service::ExportService;
+use crate::temporal::TraceContext;
 
 /// Export routes.
 pub fn router() -> Router<AppState> {
@@ -50,10 +51,12 @@ pub fn router() -> Router<AppState> {
 pub async fn create_export(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(model_id): Path<Uuid>,
     Json(body): Json<ExportRequest>,
 ) -> AppResult<(StatusCode, Json<ExportResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let result = ExportService::create(
         state.export_repo(),
         state.model_repo(),
@@ -61,6 +64,7 @@ pub async fn create_export(
         user.tenant_id,
         model_id,
         &body.quant_type,
+        trace_ctx,
     )
     .await?;
 

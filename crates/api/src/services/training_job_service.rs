@@ -6,7 +6,7 @@ use crate::dto::training_job::{
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{DatasetRepository, TrainingJobRepository};
-use crate::temporal::WorkflowOrchestrator;
+use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingMethod, TrainingMode};
 
 /// Default cost threshold (USD) above which jobs require approval.
@@ -30,6 +30,7 @@ impl TrainingJobService {
         req: CreateTrainingJobRequest,
         max_models: Option<i64>,
         cost_approval_threshold: Option<f64>,
+        trace_ctx: TraceContext,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Training workflows are not available (orchestrator not configured)"
@@ -171,6 +172,7 @@ impl TrainingJobService {
                 &mode_str,
                 hyperparams,
                 req.gpu_class.as_deref(),
+                trace_ctx,
             )
             .await
             .map_err(|e| {
@@ -296,6 +298,7 @@ impl TrainingJobService {
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         job_id: Uuid,
+        trace_ctx: TraceContext,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Training workflows are not available (orchestrator not configured)"
@@ -334,6 +337,7 @@ impl TrainingJobService {
                 &job.mode,
                 job.hyperparams.clone(),
                 job.gpu_class.as_deref(),
+                trace_ctx,
             )
             .await
             .map_err(|e| {

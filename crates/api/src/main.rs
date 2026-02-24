@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let delivery_worker = state.delivery_worker_handle();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
-    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → handler
+    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → handler
     let mut app = routes::router();
 
     // Mount Swagger UI docs in non-production environments
@@ -74,6 +74,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = app
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            error::inject_request_id_into_errors,
+        ))
         .layer(propagate_request_id)
         .layer(axum::middleware::from_fn_with_state(
             http_metrics,

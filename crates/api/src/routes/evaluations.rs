@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -18,6 +18,7 @@ use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::evaluation_service::EvaluationService;
+use crate::temporal::TraceContext;
 
 /// Evaluation routes.
 pub fn router() -> Router<AppState> {
@@ -51,10 +52,12 @@ pub fn router() -> Router<AppState> {
 pub async fn create_evaluation(
     State(state): State<AppState>,
     user: AuthenticatedUser,
+    headers: HeaderMap,
     Path(model_id): Path<Uuid>,
     Json(body): Json<CreateEvaluationRequest>,
 ) -> AppResult<(StatusCode, Json<EvaluationResponse>)> {
     require_role(&user, TeamRole::Member)?;
+    let trace_ctx = TraceContext::from_headers(&headers);
     let result = EvaluationService::create(
         state.evaluation_repo(),
         state.model_repo(),
@@ -64,6 +67,7 @@ pub async fn create_evaluation(
         user.tenant_id,
         model_id,
         body,
+        trace_ctx,
     )
     .await?;
 
