@@ -61,10 +61,21 @@ All Phase B tasks completed.
 - **Files**: `audit_log.rs` (DTO), `audit_log_repo.rs`, `traits.rs`, `audit_logs.rs` (route), `api-client.ts`, `use-audit-logs.ts`, `settings/audit-log/page.tsx`, `settings/layout.tsx`
 
 ### C5. Data Lineage / Provenance Graph
-- **Status**: Pending
+- **Status**: Done
 - **Why**: No visual showing documents → datasets → jobs → models → deployments
-- **Scope**: New visualization component tracing data provenance
-- **Files**: Frontend page + possibly new API endpoint
+- **What was done**: Built data lineage visualization page tracing provenance through FK relationships:
+  - Created `/projects/[id]/lineage` page using existing hooks (no new API endpoints needed)
+  - Traces entity relationships: `TrainingJob.dataset_id` → Dataset, `Model.training_job_id` → TrainingJob
+  - Visual flow: Documents → Datasets → Training Jobs → Models with connectors between stages
+  - Datasets show inline linked training jobs via horizontal connectors
+  - Models show provenance trail (training job base model + source dataset name)
+  - Orphan training jobs (deleted dataset) shown in separate dashed section
+  - Color-coded status dots and badges per entity (pending=gray, in-progress=blue, review=amber, completed=green, failed=red)
+  - All entities link to their detail pages
+  - Status legend at bottom
+  - "Data Lineage" entry button added to pipeline status header on project detail page
+  - Breadcrumb navigation
+- **Files**: `apps/web/src/app/(dashboard)/projects/[id]/lineage/page.tsx`, project detail page
 
 ### C6. Model A/B Playground
 - **Status**: Done

@@ -251,9 +251,17 @@ export default function ProjectDetailPage() {
       {/* Pipeline status overview */}
       {status && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Pipeline Status
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">
+              Pipeline Status
+            </h2>
+            <Link
+              href={`/projects/${params.id}/lineage`}
+              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 hover:text-white transition"
+            >
+              Data Lineage
+            </Link>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
             <PipelineStageCard
               label="Uploaded"
