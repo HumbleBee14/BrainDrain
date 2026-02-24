@@ -111,10 +111,18 @@ All Phase B tasks completed.
 - **Files**: `traits.rs`, `model_repo.rs`, `model_service.rs`, `training.rs` (routes), `model.rs` (DTO), `train_model.py`, `api-client.ts`, `use-models.ts`, model detail page
 
 ### C8. Batch Inference Endpoint
-- **Status**: Pending
+- **Status**: Done
 - **Why**: Only single-message completions; no bulk processing
-- **Scope**: New batch endpoint with job queue
-- **Files**: Backend route + service + worker
+- **What was done**: Added synchronous batch inference endpoint with concurrent processing:
+  - `POST /v1/chat/completions/batch` — accepts up to 50 requests per batch
+  - `BatchChatCompletionRequest` with array of `BatchRequestItem` (custom_id, messages, temperature, max_tokens, top_p)
+  - Bounded concurrency: 5 simultaneous vLLM requests via `futures::stream::buffer_unordered`
+  - Per-item error isolation: failed items return error string, successful items return full response
+  - Aggregated billing: single `BillingEvent` with total prompt/completion tokens for the batch
+  - `BatchChatCompletionResponse` with results array and `BatchUsageSummary` (totals, success/fail counts)
+  - Same API key auth, model deployment validation, circuit breaker, and max_tokens cap as single endpoint
+  - Batch metadata included in billing event for analytics
+- **Files**: `inference.rs` (routes)
 
 ### C9. Admin Config Panel
 - **Status**: Pending
