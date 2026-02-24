@@ -3,8 +3,4 @@
 /**
  * Status of a dataset through the refinement pipeline.
  */
-export type DatasetStatus =
-  | "generating"
-  | "review_pending"
-  | "approved"
-  | "archived";
+export type DatasetStatus = "generating" | "review_pending" | "approved" | "archived";

@@ -3,4 +3,4 @@
 /**
  * Checkout session URL returned after creation.
  */
-export type CheckoutSessionResponse = { url: string };
+export type CheckoutSessionResponse = { url: string, };

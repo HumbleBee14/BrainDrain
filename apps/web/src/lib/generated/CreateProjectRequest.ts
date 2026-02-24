@@ -3,8 +3,4 @@
 /**
  * Request body for creating a new project.
  */
-export type CreateProjectRequest = {
-  name: string;
-  description?: string;
-  task_type?: string;
-};
+export type CreateProjectRequest = { name: string, description?: string, task_type?: string, };

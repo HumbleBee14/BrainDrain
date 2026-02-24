@@ -3,9 +3,4 @@
 /**
  * Cost estimate breakdown returned by the estimate endpoint.
  */
-export type CostEstimateResponse = {
-  cost_estimate: number;
-  estimated_hours: number;
-  gpu_class: string;
-  gpu_rate_per_hour: number;
-};
+export type CostEstimateResponse = { cost_estimate: number, estimated_hours: number, gpu_class: string, gpu_rate_per_hour: number, };

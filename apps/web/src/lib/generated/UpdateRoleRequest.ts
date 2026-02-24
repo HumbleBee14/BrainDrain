@@ -4,4 +4,4 @@ import type { TeamRole } from "./TeamRole";
 /**
  * Request body for updating a team member's role.
  */
-export type UpdateRoleRequest = { role: TeamRole };
+export type UpdateRoleRequest = { role: TeamRole, };

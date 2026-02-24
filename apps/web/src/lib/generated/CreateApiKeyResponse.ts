@@ -4,12 +4,4 @@
  * Response returned when an API key is created.
  * Includes the full key — only shown once.
  */
-export type CreateApiKeyResponse = {
-  id: string;
-  name: string;
-  key: string;
-  key_prefix: string;
-  rate_limit: number;
-  expires_at: string | null;
-  created_at: string;
-};
+export type CreateApiKeyResponse = { id: string, name: string, key: string, key_prefix: string, rate_limit: number, expires_at: string | null, created_at: string, };

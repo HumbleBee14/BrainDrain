@@ -3,9 +3,4 @@
 /**
  * Pipeline stage identifier.
  */
-export type PipelineStage =
-  | "ingest"
-  | "refine"
-  | "train"
-  | "evaluate"
-  | "deploy";
+export type PipelineStage = "ingest" | "refine" | "train" | "evaluate" | "deploy";

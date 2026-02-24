@@ -3,4 +3,4 @@
 /**
  * Cost for a single day.
  */
-export type DailyCost = { date: string; cost_usd: number };
+export type DailyCost = { date: string, cost_usd: number, };

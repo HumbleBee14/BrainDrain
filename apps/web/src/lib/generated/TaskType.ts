@@ -3,8 +3,4 @@
 /**
  * Project task type — what the fine-tuned model should do.
  */
-export type TaskType =
-  | "question_answering"
-  | "instruction_following"
-  | "reasoning"
-  | "custom";
+export type TaskType = "question_answering" | "instruction_following" | "reasoning" | "custom";

@@ -3,8 +3,4 @@
 /**
  * Presigned download URL response.
  */
-export type ExportDownloadResponse = {
-  download_url: string;
-  file_size_bytes: number | null;
-  filename: string;
-};
+export type ExportDownloadResponse = { download_url: string, file_size_bytes: number | null, filename: string, };

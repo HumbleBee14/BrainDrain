@@ -4,10 +4,4 @@ import type { TeamRole } from "./TeamRole";
 /**
  * API response for a team member.
  */
-export type TeamMemberResponse = {
-  id: string;
-  user_id: string;
-  email: string;
-  role: TeamRole;
-  joined_at: string;
-};
+export type TeamMemberResponse = { id: string, user_id: string, email: string, role: TeamRole, joined_at: string, };

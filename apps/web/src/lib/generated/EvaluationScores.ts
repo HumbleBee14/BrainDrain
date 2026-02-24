@@ -7,10 +7,4 @@ import type { SafetyScores } from "./SafetyScores";
 /**
  * Evaluation scores (stored in models.eval_scores and evaluations.scores).
  */
-export type EvaluationScores = {
-  domain: DomainScores | null;
-  general: GeneralScores | null;
-  ab_comparison: ABComparisonScores | null;
-  safety: SafetyScores | null;
-  overall: number | null;
-};
+export type EvaluationScores = { domain: DomainScores | null, general: GeneralScores | null, ab_comparison: ABComparisonScores | null, safety: SafetyScores | null, overall: number | null, };

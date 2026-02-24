@@ -4,12 +4,4 @@ import type { ProjectStatus } from "./ProjectStatus";
 /**
  * API response for a project.
  */
-export type ProjectResponse = {
-  id: string;
-  name: string;
-  description: string | null;
-  task_type: string | null;
-  status: ProjectStatus;
-  created_at: string;
-  updated_at: string;
-};
+export type ProjectResponse = { id: string, name: string, description: string | null, task_type: string | null, status: ProjectStatus, created_at: string, updated_at: string, };

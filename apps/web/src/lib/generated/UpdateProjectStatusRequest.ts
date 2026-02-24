@@ -4,4 +4,4 @@ import type { ProjectStatus } from "./ProjectStatus";
 /**
  * Request body for updating a project's status.
  */
-export type UpdateProjectStatusRequest = { status: ProjectStatus };
+export type UpdateProjectStatusRequest = { status: ProjectStatus, };

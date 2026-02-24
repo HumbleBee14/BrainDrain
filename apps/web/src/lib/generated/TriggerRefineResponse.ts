@@ -3,7 +3,4 @@
 /**
  * Response from triggering data refinement.
  */
-export type TriggerRefineResponse = {
-  workflow_id: string;
-  document_count: number;
-};
+export type TriggerRefineResponse = { workflow_id: string, document_count: number, };

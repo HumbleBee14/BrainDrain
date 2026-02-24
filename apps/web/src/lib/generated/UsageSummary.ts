@@ -4,10 +4,4 @@ import type { DailyCost } from "./DailyCost";
 /**
  * Billing usage summary with daily cost breakdown.
  */
-export type UsageSummary = {
-  total_cost_usd: number;
-  total_tokens_in: number;
-  total_tokens_out: number;
-  total_events: number;
-  cost_by_day: Array<DailyCost>;
-};
+export type UsageSummary = { total_cost_usd: number, total_tokens_in: number, total_tokens_out: number, total_events: number, cost_by_day: Array<DailyCost>, };

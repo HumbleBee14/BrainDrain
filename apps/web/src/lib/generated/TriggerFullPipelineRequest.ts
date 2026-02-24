@@ -4,17 +4,16 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Request body for triggering the full pipeline (one-click fine-tune).
  */
-export type TriggerFullPipelineRequest = {
-  /**
-   * Task type for refinement (defaults to project's task_type or "question_answering")
-   */
-  task_type?: string;
-  /**
-   * Base model to fine-tune (e.g. "unsloth/Llama-3.2-1B-Instruct")
-   */
-  base_model: string;
-  /**
-   * Training configuration: method, mode, hyperparams, gpu_class, auto_deploy
-   */
-  training_config: JsonValue;
-};
+export type TriggerFullPipelineRequest = { 
+/**
+ * Task type for refinement (defaults to project's task_type or "question_answering")
+ */
+task_type?: string, 
+/**
+ * Base model to fine-tune (e.g. "unsloth/Llama-3.2-1B-Instruct")
+ */
+base_model: string, 
+/**
+ * Training configuration: method, mode, hyperparams, gpu_class, auto_deploy
+ */
+training_config: JsonValue, };

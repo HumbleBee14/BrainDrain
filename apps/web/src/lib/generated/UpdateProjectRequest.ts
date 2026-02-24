@@ -3,8 +3,4 @@
 /**
  * Request body for updating an existing project.
  */
-export type UpdateProjectRequest = {
-  name?: string;
-  description?: string;
-  task_type?: string;
-};
+export type UpdateProjectRequest = { name?: string, description?: string, task_type?: string, };

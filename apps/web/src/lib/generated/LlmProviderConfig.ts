@@ -7,9 +7,4 @@
  * API keys are stored in the DB JSONB but never returned via the API — see
  * `LlmSettingsResponse` in the dto layer for the masked version.
  */
-export type LlmProviderConfig = {
-  provider: string | null;
-  api_base_url: string | null;
-  model: string | null;
-  max_tokens: number | null;
-};
+export type LlmProviderConfig = { provider: string | null, api_base_url: string | null, model: string | null, max_tokens: number | null, };

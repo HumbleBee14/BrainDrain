@@ -4,16 +4,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Deployment configuration (stored in models.deployment_config).
  */
-export type DeploymentConfig = {
-  vllm_adapter_name: string | null;
-  vllm_base_model: string | null;
-  deployed_at: string | null;
-} & {
-  [key in string]:
-    | number
-    | string
-    | boolean
-    | Array<JsonValue>
-    | { [key in string]: JsonValue }
-    | null;
-};
+export type DeploymentConfig = { vllm_adapter_name: string | null, vllm_base_model: string | null, deployed_at: string | null, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });

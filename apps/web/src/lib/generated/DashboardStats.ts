@@ -3,12 +3,4 @@
 /**
  * High-level platform statistics across all projects for a tenant.
  */
-export type DashboardStats = {
-  total_projects: number;
-  total_documents: number;
-  total_training_jobs: number;
-  active_training_jobs: number;
-  total_models: number;
-  deployed_models: number;
-  total_evaluations: number;
-};
+export type DashboardStats = { total_projects: number, total_documents: number, total_training_jobs: number, active_training_jobs: number, total_models: number, deployed_models: number, total_evaluations: number, };

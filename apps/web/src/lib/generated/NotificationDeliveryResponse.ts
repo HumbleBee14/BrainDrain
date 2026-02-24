@@ -3,13 +3,4 @@
 /**
  * Notification delivery record returned by API.
  */
-export type NotificationDeliveryResponse = {
-  id: string;
-  event_type: string;
-  channel: string;
-  status: string;
-  attempts: number;
-  last_error: string | null;
-  created_at: string;
-  sent_at: string | null;
-};
+export type NotificationDeliveryResponse = { id: string, event_type: string, channel: string, status: string, attempts: number, last_error: string | null, created_at: string, sent_at: string | null, };

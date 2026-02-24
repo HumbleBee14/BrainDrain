@@ -3,11 +3,4 @@
 /**
  * Recent activity entry from the audit log.
  */
-export type ActivityEntry = {
-  id: string;
-  actor_id: string;
-  action: string;
-  resource_type: string;
-  resource_id: string | null;
-  created_at: string;
-};
+export type ActivityEntry = { id: string, actor_id: string, action: string, resource_type: string, resource_id: string | null, created_at: string, };

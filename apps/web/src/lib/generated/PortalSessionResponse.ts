@@ -3,4 +3,4 @@
 /**
  * Portal session URL returned after creation.
  */
-export type PortalSessionResponse = { url: string };
+export type PortalSessionResponse = { url: string, };

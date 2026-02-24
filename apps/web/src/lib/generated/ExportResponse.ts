@@ -3,18 +3,8 @@
 /**
  * Export response (returned from API).
  */
-export type ExportResponse = {
-  id: string;
-  model_id: string;
-  format: string;
-  quant_type: string;
-  status: string;
-  /**
-   * Whether a download is available (true when status is "completed").
-   */
-  has_download: boolean;
-  file_size_bytes: number | null;
-  error: string | null;
-  created_at: string;
-  completed_at: string | null;
-};
+export type ExportResponse = { id: string, model_id: string, format: string, quant_type: string, status: string, 
+/**
+ * Whether a download is available (true when status is "completed").
+ */
+has_download: boolean, file_size_bytes: number | null, error: string | null, created_at: string, completed_at: string | null, };

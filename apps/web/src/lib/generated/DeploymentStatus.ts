@@ -3,8 +3,4 @@
 /**
  * Deployment status for a trained model.
  */
-export type DeploymentStatus =
-  | "undeployed"
-  | "deploying"
-  | "active"
-  | "inactive";
+export type DeploymentStatus = "undeployed" | "deploying" | "active" | "inactive";

@@ -4,18 +4,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Training metrics (stored in training_jobs.metrics).
  */
-export type TrainingMetrics = {
-  train_loss: number | null;
-  train_steps: number | null;
-  train_runtime: number | null;
-  train_samples_per_second: number | null;
-  estimated_cost: number | null;
-} & {
-  [key in string]:
-    | number
-    | string
-    | boolean
-    | Array<JsonValue>
-    | { [key in string]: JsonValue }
-    | null;
-};
+export type TrainingMetrics = { train_loss: number | null, train_steps: number | null, train_runtime: number | null, train_samples_per_second: number | null, estimated_cost: number | null, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });

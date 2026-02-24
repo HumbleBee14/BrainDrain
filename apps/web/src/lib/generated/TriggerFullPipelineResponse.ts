@@ -3,7 +3,4 @@
 /**
  * Response from triggering the full pipeline.
  */
-export type TriggerFullPipelineResponse = {
-  workflow_id: string;
-  document_count: number;
-};
+export type TriggerFullPipelineResponse = { workflow_id: string, document_count: number, };
