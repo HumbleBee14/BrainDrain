@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useModels, useModel } from "@/hooks/use-models";
 import { useApiKeys, useCreateApiKey } from "@/hooks/use-api-keys";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -153,6 +153,14 @@ export default function ABPlaygroundPage() {
 
   const refA = useRef<HTMLDivElement>(null);
   const refB = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight streaming requests on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   // API key hooks — conditionally used based on selected models
   const keysA = useApiKeys(panelA.modelId);
@@ -195,6 +203,7 @@ export default function ABPlaygroundPage() {
       messages: ChatMessage[],
       setPanel: React.Dispatch<React.SetStateAction<PanelState>>,
       scrollRef: React.RefObject<HTMLDivElement | null>,
+      signal: AbortSignal,
     ) => {
       const fullMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
@@ -214,6 +223,7 @@ export default function ABPlaygroundPage() {
             max_tokens: maxTokens,
             stream: true,
           }),
+          signal,
         });
 
         if (!res.ok) {
@@ -268,6 +278,7 @@ export default function ABPlaygroundPage() {
           scrollRef.current?.scrollIntoView({ behavior: "smooth" });
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setPanel((prev) => ({
           ...prev,
           error: err instanceof Error ? err.message : "Request failed",
@@ -326,6 +337,11 @@ export default function ABPlaygroundPage() {
 
     if (panelsToSend.length === 0) return;
 
+    // Abort any in-flight requests from the previous send
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     // Fire both requests in parallel
     await Promise.allSettled(
       panelsToSend.map(async ({ panel, setPanel, createKey, scrollRef }) => {
@@ -335,7 +351,7 @@ export default function ABPlaygroundPage() {
           return;
         }
         const msgs = [...panel.messages, userMessage];
-        await streamToPanel(apiKey, msgs, setPanel, scrollRef);
+        await streamToPanel(apiKey, msgs, setPanel, scrollRef, controller.signal);
       }),
     );
   };

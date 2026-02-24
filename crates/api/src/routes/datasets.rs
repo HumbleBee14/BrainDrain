@@ -51,8 +51,8 @@ pub async fn list_datasets(
         state.dataset_repo(),
         user.tenant_id,
         project_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
 
@@ -111,12 +111,13 @@ pub async fn preview_dataset(
     Path(id): Path<Uuid>,
     Query(params): Query<PreviewParams>,
 ) -> AppResult<Json<Vec<serde_json::Value>>> {
+    let max_rows = params.max_rows.clamp(1, 200);
     let rows = DatasetService::preview(
         state.dataset_repo(),
         state.storage(),
         user.tenant_id,
         id,
-        params.max_rows,
+        max_rows,
     )
     .await?;
 
@@ -141,7 +142,7 @@ pub async fn approve_dataset(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<DatasetResponse>> {
-    require_role(&user, TeamRole::Member)?;
+    require_role(&user, TeamRole::Admin)?;
     let dataset = DatasetService::approve(state.dataset_repo(), user.tenant_id, id).await?;
 
     AuditLogger::log(
@@ -175,7 +176,7 @@ pub async fn reject_dataset(
     user: AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<DatasetResponse>> {
-    require_role(&user, TeamRole::Member)?;
+    require_role(&user, TeamRole::Admin)?;
     let dataset = DatasetService::reject(state.dataset_repo(), user.tenant_id, id).await?;
 
     AuditLogger::log(

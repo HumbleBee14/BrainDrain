@@ -160,8 +160,8 @@ pub async fn list_training_jobs(
         state.training_job_repo(),
         user.tenant_id,
         project_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
 
@@ -287,9 +287,12 @@ pub async fn cancel_training_job(
 )]
 pub async fn stream_training_metrics(
     State(state): State<AppState>,
-    _user: AuthenticatedUser,
+    user: AuthenticatedUser,
     Path(id): Path<Uuid>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
+    // Tenant ownership check — prevents cross-tenant IDOR on metrics stream
+    TrainingJobService::get(state.training_job_repo(), user.tenant_id, id).await?;
+
     let mut redis = state.redis();
     let stream_key = format!(
         "{}{}",
@@ -356,11 +359,11 @@ pub async fn stream_training_metrics(
         }
     };
 
-    Sse::new(stream).keep_alive(
+    Ok(Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
-    )
+    ))
 }
 
 /// GET /api/v1/training-jobs/:id/metrics
@@ -414,8 +417,8 @@ pub async fn list_models(
         state.model_repo(),
         user.tenant_id,
         project_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
 

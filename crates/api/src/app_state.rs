@@ -190,10 +190,18 @@ impl AppState {
             Duration::from_secs(5),
         ));
 
+        // Webhook HTTP client: redirects disabled to prevent SSRF bypass via redirect to internal IPs.
+        // Separate from the shared http_client since Stripe/Clerk/vLLM may need redirect support.
+        let webhook_http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+
         // Notification delivery worker (polls every 10s for pending webhook deliveries)
         let delivery_worker = Arc::new(DeliveryWorker::new(
             Arc::clone(&notification_repo),
-            http_client.clone(),
+            webhook_http_client,
             Duration::from_secs(10),
         ));
 

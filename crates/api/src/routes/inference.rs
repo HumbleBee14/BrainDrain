@@ -441,25 +441,32 @@ pub async fn batch_chat_completions(
                             response: Some(json),
                             error: None,
                         },
-                        Err(e) => BatchResponseItem {
-                            custom_id: item.custom_id,
-                            response: None,
-                            error: Some(format!("Failed to parse response: {e}")),
-                        },
+                        Err(e) => {
+                            tracing::warn!(custom_id = %item.custom_id, error = %e, "Batch item response parse failed");
+                            BatchResponseItem {
+                                custom_id: item.custom_id,
+                                response: None,
+                                error: Some("Inference service returned an invalid response".into()),
+                            }
+                        }
                     },
                     Ok(r) => {
                         let status = r.status();
+                        tracing::warn!(custom_id = %item.custom_id, status = %status, "Batch item inference failed");
                         BatchResponseItem {
                             custom_id: item.custom_id,
                             response: None,
-                            error: Some(format!("vLLM returned {status}")),
+                            error: Some(format!("Inference failed with status {status}")),
                         }
                     }
-                    Err(e) => BatchResponseItem {
-                        custom_id: item.custom_id,
-                        response: None,
-                        error: Some(e.to_string()),
-                    },
+                    Err(e) => {
+                        tracing::warn!(custom_id = %item.custom_id, error = %e, "Batch item request error");
+                        BatchResponseItem {
+                            custom_id: item.custom_id,
+                            response: None,
+                            error: Some("Inference service unavailable".into()),
+                        }
+                    }
                 }
             }
         })

@@ -1,12 +1,14 @@
 use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use platform_shared::enums::TeamRole;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::audit_log::{AuditLogFilterParams, AuditLogResponse};
 use crate::dto::common::PaginatedResponse;
 use crate::error::AppResult;
+use crate::rbac::require_role;
 
 /// Audit log routes.
 pub fn router() -> Router<AppState> {
@@ -35,8 +37,10 @@ pub async fn list_audit_logs(
     user: AuthenticatedUser,
     Query(params): Query<AuditLogFilterParams>,
 ) -> AppResult<Json<PaginatedResponse<AuditLogResponse>>> {
-    let limit = params.limit.min(100);
-    let offset = params.offset;
+    require_role(&user, TeamRole::Admin)?;
+
+    let limit = params.limit.clamp(1, 100);
+    let offset = params.offset.max(0);
     let repo = state.audit_log_repo();
 
     let (logs, total) = match (&params.resource_type, params.resource_id) {

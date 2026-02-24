@@ -1,4 +1,3 @@
-use platform_shared::enums::DeploymentStatus;
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
@@ -102,14 +101,9 @@ impl ModelService {
             });
         }
 
-        // Undeploy current if active, deploy target
-        if current.deployment_status == "active" {
-            repo.update_deployment_status(tenant_id, current.id, DeploymentStatus::Undeployed)
-                .await?;
-        }
-
+        // Atomic rollback: undeploy current + deploy target in a single transaction
         let updated = repo
-            .update_deployment_status(tenant_id, target.id, DeploymentStatus::Active)
+            .rollback_deployment(tenant_id, current.id, target.id)
             .await?
             .ok_or(AppError::NotFound {
                 message: "Failed to update target deployment status".to_string(),

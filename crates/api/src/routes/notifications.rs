@@ -99,8 +99,8 @@ pub async fn list_deliveries(
 ) -> AppResult<Json<PaginatedResponse<NotificationDeliveryResponse>>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let offset = pagination.offset;
-    let limit = pagination.limit.min(100);
+    let offset = pagination.offset();
+    let limit = pagination.limit();
     let repo = state.notification_repo();
 
     let (deliveries, total) = tokio::try_join!(

@@ -98,8 +98,8 @@ pub async fn list_evaluations(
         state.evaluation_repo(),
         user.tenant_id,
         model_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
 

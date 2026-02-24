@@ -68,6 +68,17 @@ export default function AuditLogPage() {
 
   const handleExportCsv = useCallback(() => {
     if (!data?.data?.length) return;
+
+    // Sanitize CSV cell values to prevent formula injection.
+    // Spreadsheet apps execute formulas starting with =, +, -, @, tab, or CR.
+    const sanitizeCsvCell = (val: string): string => {
+      const escaped = val.replace(/"/g, '""');
+      if (/^[=+\-@\t\r]/.test(escaped)) {
+        return `"'${escaped}"`;
+      }
+      return `"${escaped}"`;
+    };
+
     const rows = data.data.map((log) => ({
       timestamp: new Date(log.created_at).toISOString(),
       action: log.action,
@@ -83,8 +94,8 @@ export default function AuditLogPage() {
       ...rows.map((row) =>
         headers
           .map((h) => {
-            const val = row[h as keyof typeof row];
-            return `"${String(val).replace(/"/g, '""')}"`;
+            const val = String(row[h as keyof typeof row]);
+            return sanitizeCsvCell(val);
           })
           .join(","),
       ),

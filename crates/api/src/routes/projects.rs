@@ -90,8 +90,8 @@ pub async fn list_projects(
     let result = ProjectService::list(
         state.project_repo(),
         user.tenant_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
     Ok(Json(result))

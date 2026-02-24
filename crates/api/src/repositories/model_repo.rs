@@ -253,4 +253,45 @@ impl ModelRepository for PgModelRepo {
             Ok(max_version.unwrap_or(0))
         })
     }
+
+    fn rollback_deployment(
+        &self,
+        tenant_id: Uuid,
+        current_id: Uuid,
+        target_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<Model>>> {
+        Box::pin(async move {
+            let mut tx = self.db.begin().await?;
+
+            // Undeploy current
+            sqlx::query(
+                r#"
+                UPDATE models
+                SET deployment_status = 'undeployed', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND deployment_status = 'active'
+                "#,
+            )
+            .bind(current_id)
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Deploy target
+            let model = sqlx::query_as::<_, Model>(
+                r#"
+                UPDATE models
+                SET deployment_status = 'active', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                RETURNING *
+                "#,
+            )
+            .bind(target_id)
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(model)
+        })
+    }
 }

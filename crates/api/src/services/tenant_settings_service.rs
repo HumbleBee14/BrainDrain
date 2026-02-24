@@ -179,6 +179,8 @@ impl TenantSettingsService {
         tenant_id: Uuid,
         request: UpdateAdminConfigRequest,
     ) -> AppResult<AdminConfigResponse> {
+        Self::validate_admin_config(&request)?;
+
         let existing = tenant_repo.get_settings(tenant_id).await?;
         let existing_admin = existing
             .get("admin")
@@ -223,6 +225,71 @@ impl TenantSettingsService {
             .await?;
 
         Self::get_admin_config(tenant_repo, tenant_id).await
+    }
+
+    /// Validate admin config values are within safe bounds.
+    fn validate_admin_config(request: &UpdateAdminConfigRequest) -> AppResult<()> {
+        if let Some(ref gpu_rates) = request.gpu_rates {
+            for (gpu, rate) in gpu_rates {
+                if *rate <= 0.0 || *rate > 100.0 {
+                    return Err(AppError::BadRequest {
+                        message: format!(
+                            "GPU rate for '{gpu}' must be between 0 and $100/hr (got ${rate:.2})"
+                        ),
+                    });
+                }
+            }
+        }
+        if let Some(v) = request.cost_approval_threshold
+            && !(0.0..=10_000.0).contains(&v)
+        {
+            return Err(AppError::BadRequest {
+                message: "cost_approval_threshold must be between $0 and $10,000".into(),
+            });
+        }
+        if let Some(v) = request.inference_input_cost_per_million
+            && (v <= 0.0 || v > 100.0)
+        {
+            return Err(AppError::BadRequest {
+                message: "inference_input_cost_per_million must be between 0 and $100".into(),
+            });
+        }
+        if let Some(v) = request.inference_output_cost_per_million
+            && (v <= 0.0 || v > 100.0)
+        {
+            return Err(AppError::BadRequest {
+                message: "inference_output_cost_per_million must be between 0 and $100".into(),
+            });
+        }
+        if let Some(v) = request.default_max_tokens
+            && !(1..=32_768).contains(&v)
+        {
+            return Err(AppError::BadRequest {
+                message: "default_max_tokens must be between 1 and 32,768".into(),
+            });
+        }
+        if let Some(v) = request.default_rate_limit_rpm
+            && !(1..=10_000).contains(&v)
+        {
+            return Err(AppError::BadRequest {
+                message: "default_rate_limit_rpm must be between 1 and 10,000".into(),
+            });
+        }
+        if let Some(v) = request.max_batch_size
+            && !(1..=500).contains(&v)
+        {
+            return Err(AppError::BadRequest {
+                message: "max_batch_size must be between 1 and 500".into(),
+            });
+        }
+        if let Some(v) = request.chunk_size_tokens
+            && !(100..=32_000).contains(&v)
+        {
+            return Err(AppError::BadRequest {
+                message: "chunk_size_tokens must be between 100 and 32,000".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Reset admin configuration to platform defaults.

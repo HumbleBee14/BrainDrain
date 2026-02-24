@@ -1,13 +1,23 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Pagination query parameters.
+/// Pagination query parameters with enforced bounds.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PaginationParams {
     #[serde(default = "default_offset")]
-    pub offset: i64,
+    offset: i64,
     #[serde(default = "default_limit")]
-    pub limit: i64,
+    limit: i64,
+}
+
+impl PaginationParams {
+    pub fn offset(&self) -> i64 {
+        self.offset.max(0)
+    }
+
+    pub fn limit(&self) -> i64 {
+        self.limit.clamp(1, 100)
+    }
 }
 
 fn default_offset() -> i64 {
