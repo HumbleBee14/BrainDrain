@@ -22,20 +22,22 @@ export default function SettingsLayout({
 
   return (
     <div>
-      <div className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800 mb-6">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={`px-4 py-2 text-sm font-medium transition ${
-              pathname === tab.href
-                ? "text-zinc-900 dark:text-white border-b-2 border-emerald-500"
-                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
-            }`}
-          >
-            {tab.label}
-          </Link>
-        ))}
+      <div className="overflow-x-auto border-b border-zinc-200 dark:border-zinc-800 mb-6">
+        <div className="flex gap-1 whitespace-nowrap">
+          {tabs.map((tab) => (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              className={`shrink-0 px-3 md:px-4 py-2 text-xs md:text-sm font-medium transition ${
+                pathname === tab.href
+                  ? "text-zinc-900 dark:text-white border-b-2 border-emerald-500"
+                  : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+              }`}
+            >
+              {tab.label}
+            </Link>
+          ))}
+        </div>
       </div>
       {children}
     </div>

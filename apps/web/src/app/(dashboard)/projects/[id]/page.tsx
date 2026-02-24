@@ -240,7 +240,7 @@ export default function ProjectDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">{project.name}</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white truncate">{project.name}</h1>
           <StatusBadge status={project.status} />
         </div>
         {project.description && (
@@ -262,7 +262,7 @@ export default function ProjectDetailPage() {
               Data Lineage
             </Link>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+          <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 md:gap-3 mb-4">
             <PipelineStageCard
               label="Uploaded"
               count={status.documents.uploaded}
@@ -296,7 +296,7 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Action buttons */}
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-2 md:gap-3">
             <button
               onClick={() => triggerParse.mutate()}
               disabled={!hasUploaded || triggerParse.isPending || isParsing}
@@ -382,7 +382,7 @@ export default function ProjectDetailPage() {
         </div>
         {/* Document search & filter */}
         {allDocuments.length > 3 && (
-          <div className="flex gap-2 mb-3">
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
             <input
               value={docSearch}
               onChange={(e) => setDocSearch(e.target.value)}
@@ -403,7 +403,7 @@ export default function ProjectDetailPage() {
           </div>
         )}
         <div
-          className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
+          className={`rounded-lg border-2 border-dashed p-4 md:p-8 text-center transition ${
             isDragging
               ? "border-blue-500 bg-blue-50 dark:bg-blue-900/10"
               : "border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-600"
@@ -496,13 +496,13 @@ export default function ProjectDetailPage() {
 
       {/* Training Jobs section */}
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Training Jobs{" "}
             {allTrainingJobs.length > 0 &&
               `(${trainingJobs.length}${trainingJobs.length !== allTrainingJobs.length ? ` of ${allTrainingJobs.length}` : ""})`}
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {compareIds.length >= 2 && (
               <button
                 onClick={() =>
@@ -551,7 +551,7 @@ export default function ProjectDetailPage() {
               <label className="block text-xs text-zinc-500 mb-2">
                 Quick Presets
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {[
                   {
                     label: "Quick Experiment",
@@ -604,7 +604,7 @@ export default function ProjectDetailPage() {
                 ))}
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
                   Dataset
@@ -888,7 +888,7 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Info grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Task Type
@@ -916,7 +916,7 @@ export default function ProjectDetailPage() {
       {/* Danger zone */}
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
         <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">Danger Zone</h3>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <p className="text-sm text-zinc-900 dark:text-white">Delete this project</p>
             <p className="text-xs text-zinc-400 dark:text-zinc-600">

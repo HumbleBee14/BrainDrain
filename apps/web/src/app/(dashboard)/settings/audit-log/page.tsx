@@ -128,9 +128,9 @@ export default function AuditLogPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Audit Log</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">Audit Log</h1>
           <p className="text-sm text-zinc-500 mt-1">
             {data
               ? `${data.total.toLocaleString()} total events`

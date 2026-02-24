@@ -9,7 +9,7 @@ export interface BreadcrumbItem {
 
 export function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
   return (
-    <nav className="flex items-center gap-1.5 text-sm text-zinc-500 mb-4">
+    <nav className="flex flex-wrap items-center gap-1.5 text-xs md:text-sm text-zinc-500 mb-3 md:mb-4">
       {items.map((item, i) => {
         const isLast = i === items.length - 1;
         return (
@@ -20,7 +20,7 @@ export function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
                 {item.label}
               </span>
             ) : (
-              <Link href={item.href} className="hover:text-zinc-700 dark:hover:text-zinc-300 transition">
+              <Link href={item.href} className="truncate max-w-[150px] md:max-w-none inline-block hover:text-zinc-700 dark:hover:text-zinc-300 transition">
                 {item.label}
               </Link>
             )}

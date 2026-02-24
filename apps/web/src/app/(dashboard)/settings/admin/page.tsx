@@ -134,9 +134,9 @@ export default function AdminConfigPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
+          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">
             Admin Configuration
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
@@ -172,7 +172,7 @@ export default function AdminConfigPage() {
         <p className="text-xs text-zinc-500 mb-4">
           Cost per hour for each GPU class, used in training cost estimation.
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 md:gap-3">
           {Object.entries(form.gpu_rates).map(([gpuClass, rate]) => (
             <div
               key={gpuClass}
@@ -206,7 +206,7 @@ export default function AdminConfigPage() {
         <p className="text-xs text-zinc-500 mb-4">
           Controls for training cost approval and document processing.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <NumberField
             label="Cost Approval Threshold"
             description="Training jobs above this cost (USD) require admin approval before starting."
@@ -233,7 +233,7 @@ export default function AdminConfigPage() {
         <p className="text-xs text-zinc-500 mb-4">
           Pricing and limits for the inference API.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <NumberField
             label="Input Token Cost"
             description="Cost per million input (prompt) tokens."
@@ -280,7 +280,7 @@ export default function AdminConfigPage() {
         <p className="text-xs text-zinc-500 mb-4">
           Default rate limits applied to newly created API keys.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
           <NumberField
             label="Default API Key Rate Limit"
             description="Requests per minute for new API keys."

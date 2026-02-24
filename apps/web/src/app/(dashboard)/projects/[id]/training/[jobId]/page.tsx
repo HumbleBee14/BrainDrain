@@ -164,7 +164,7 @@ export default function TrainingJobDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
+          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white truncate">
             {job.base_model.split("/").pop()}
           </h1>
           <StatusBadge status={job.status} />
@@ -185,7 +185,7 @@ export default function TrainingJobDetailPage() {
       {/* Cost approval banner */}
       {job.status === "cost_approval" && (
         <div className="mb-6 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
                 Cost Approval Required
@@ -196,7 +196,7 @@ export default function TrainingJobDetailPage() {
                 cancel.
               </p>
             </div>
-            <div className="flex gap-2 ml-4">
+            <div className="flex gap-2 sm:ml-4">
               <button
                 onClick={() => approveCost.mutate(params.jobId)}
                 disabled={approveCost.isPending}
@@ -318,7 +318,7 @@ export default function TrainingJobDetailPage() {
       )}
 
       {/* Job details grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
             Configuration

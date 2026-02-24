@@ -122,12 +122,12 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
         <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
           Overall Score
         </p>
-        <p className="text-5xl font-bold text-zinc-900 dark:text-white">{scores.overall}</p>
+        <p className="text-3xl md:text-5xl font-bold text-zinc-900 dark:text-white">{scores.overall}</p>
         <p className="text-zinc-500 text-sm mt-1">out of 100</p>
       </div>
 
       {/* Suite scores grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         {/* Domain Evaluation */}
         {scores.domain && (
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5">
@@ -162,7 +162,7 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-4">
               General Capability
             </h3>
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <ScoreCard
                 label="Base Model"
                 value={`${(scores.general.base_score * 100).toFixed(1)}%`}
@@ -258,7 +258,7 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-4">
               Safety Check
             </h3>
-            <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <ScoreCard
                 label="Refusal Rate"
                 value={`${(scores.safety.refusal_rate * 100).toFixed(0)}%`}
@@ -370,9 +370,9 @@ export default function EvaluationPage() {
             { label: "Evaluation" },
           ]}
         />
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Evaluation</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">Evaluation</h1>
             {latestEval && <StatusBadge status={latestEval.status} />}
           </div>
           <div className="flex gap-2">

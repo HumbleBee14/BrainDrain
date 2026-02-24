@@ -83,7 +83,7 @@ export default function BillingSettingsPage() {
   if (subLoading) {
     return (
       <div className="max-w-4xl">
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Billing</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white mb-2">Billing</h1>
         <p className="text-zinc-500">Loading...</p>
       </div>
     );
@@ -91,14 +91,14 @@ export default function BillingSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Billing</h1>
+      <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white mb-2">Billing</h1>
       <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Manage your subscription and plan limits.
       </p>
 
       {/* Current Subscription Card */}
       <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6 mb-8">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Current Plan</h2>
             <p className="text-zinc-600 dark:text-zinc-400 text-sm mt-1">
@@ -138,7 +138,7 @@ export default function BillingSettingsPage() {
       </div>
 
       {/* Plan Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-8">
         {PLANS.map((plan) => {
           const isCurrent = plan.id === currentPlan;
           return (

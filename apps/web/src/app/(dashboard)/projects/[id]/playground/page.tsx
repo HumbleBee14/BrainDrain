@@ -380,7 +380,7 @@ export default function ABPlaygroundPage() {
     !panelB.isLoading;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)]">
+    <div className="flex flex-col h-[calc(100vh-160px)] md:h-[calc(100vh-120px)]">
       {/* Header */}
       <div className="mb-4 shrink-0">
         <Breadcrumbs
@@ -392,7 +392,7 @@ export default function ABPlaygroundPage() {
         />
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">A/B Playground</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">A/B Playground</h1>
             <p className="text-sm text-zinc-500 mt-0.5">
               Compare two models side-by-side with the same prompt
             </p>
@@ -441,7 +441,7 @@ export default function ABPlaygroundPage() {
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white resize-none"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-zinc-500 mb-1">
                 Temperature: {temperature}
@@ -475,7 +475,7 @@ export default function ABPlaygroundPage() {
       )}
 
       {/* Split-screen chat panels */}
-      <div className="flex-1 min-h-0 grid grid-cols-2 gap-4 mb-4">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4 mb-4">
         <ChatPanel
           label="Model A"
           color="violet"

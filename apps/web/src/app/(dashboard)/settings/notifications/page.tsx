@@ -155,7 +155,7 @@ export default function NotificationsSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Notifications</h1>
+      <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white mb-2">Notifications</h1>
       <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Choose which events trigger notifications and how they are delivered.
       </p>
@@ -171,7 +171,7 @@ export default function NotificationsSettingsPage() {
         ) : (
           <>
             {/* Table Header */}
-            <div className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+            <div className="grid grid-cols-[1fr,repeat(2,80px)] sm:grid-cols-[1fr,repeat(2,100px)] gap-2 px-3 sm:px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
               <span className="text-xs text-zinc-500 uppercase tracking-wide">
                 Event
               </span>
@@ -189,7 +189,7 @@ export default function NotificationsSettingsPage() {
             {EVENT_TYPES.map((et) => (
               <div
                 key={et.id}
-                className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
+                className="grid grid-cols-[1fr,repeat(2,80px)] sm:grid-cols-[1fr,repeat(2,100px)] gap-2 px-3 sm:px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
               >
                 <span className="text-sm text-zinc-900 dark:text-white">{et.label}</span>
                 {CHANNELS.map((ch) => (

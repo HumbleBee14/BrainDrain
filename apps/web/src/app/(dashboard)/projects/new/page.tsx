@@ -64,7 +64,7 @@ export default function NewProjectPage() {
             { label: "New Project" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Create Project</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">Create Project</h1>
         <p className="text-zinc-500 mt-1">
           A project groups your documents, datasets, and fine-tuned models.
         </p>

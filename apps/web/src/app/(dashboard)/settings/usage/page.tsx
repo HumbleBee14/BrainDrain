@@ -89,7 +89,7 @@ export default function UsagePage() {
       ) : (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
               <p className="text-xs text-zinc-500 uppercase tracking-wider">
                 Total Requests
@@ -134,7 +134,7 @@ export default function UsagePage() {
               <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
                 Billing Period Totals
               </h2>
-              <div className="grid grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6">
                 <div>
                   <p className="text-xs text-zinc-500">Total Cost</p>
                   <p className="text-lg font-semibold text-zinc-900 dark:text-white">
@@ -220,7 +220,7 @@ export default function UsagePage() {
               <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3">
                 Daily Breakdown
               </h2>
-              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-zinc-200 dark:border-zinc-800">

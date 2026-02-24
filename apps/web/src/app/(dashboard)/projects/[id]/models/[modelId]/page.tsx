@@ -220,7 +220,7 @@ export default function ModelDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">{model.name}</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white truncate">{model.name}</h1>
           <DeploymentBadge status={model.deployment_status} />
         </div>
         <p className="text-zinc-500 mt-1">
@@ -229,7 +229,7 @@ export default function ModelDetailPage() {
       </div>
 
       {/* Model info grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Base Model
@@ -339,7 +339,7 @@ export default function ModelDetailPage() {
                 View Details &rarr;
               </Link>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 md:gap-3">
               {typeof model.eval_scores.overall === "number" && (
                 <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-center">
                   <p className="text-2xl font-bold text-zinc-900 dark:text-white">
@@ -356,7 +356,7 @@ export default function ModelDetailPage() {
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Deployment</h2>
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <p className="text-sm text-zinc-900 dark:text-white">
                 {isActive
@@ -568,7 +568,7 @@ export default function ModelDetailPage() {
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">GGUF Export</h2>
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 mb-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
             <select
               value={exportQuantType}
               onChange={(e) => setExportQuantType(e.target.value)}
@@ -660,7 +660,7 @@ export default function ModelDetailPage() {
           <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
             Quick Links
           </h3>
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
             <Link
               href={`/projects/${params.id}/models/${params.modelId}/playground`}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition"

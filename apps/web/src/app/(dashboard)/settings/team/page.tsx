@@ -54,7 +54,7 @@ export default function TeamSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Team Settings</h1>
+      <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white mb-2">Team Settings</h1>
       <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Manage your team members and invitations.
       </p>
@@ -64,7 +64,7 @@ export default function TeamSettingsPage() {
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
           Invite Team Member
         </h2>
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="email"
             placeholder="Email address"
@@ -122,10 +122,10 @@ export default function TeamSettingsPage() {
             {members?.map((member) => (
               <div
                 key={member.id}
-                className="flex items-center justify-between p-4"
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4"
               >
-                <div>
-                  <p className="text-zinc-900 dark:text-white text-sm">{member.email}</p>
+                <div className="min-w-0">
+                  <p className="text-zinc-900 dark:text-white text-sm truncate">{member.email}</p>
                   <p className="text-zinc-500 text-xs">
                     Joined {new Date(member.joined_at).toLocaleDateString()}
                   </p>
@@ -197,10 +197,10 @@ export default function TeamSettingsPage() {
               .map((invitation) => (
                 <div
                   key={invitation.id}
-                  className="flex items-center justify-between p-4"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4"
                 >
-                  <div>
-                    <p className="text-zinc-900 dark:text-white text-sm">{invitation.email}</p>
+                  <div className="min-w-0">
+                    <p className="text-zinc-900 dark:text-white text-sm truncate">{invitation.email}</p>
                     <p className="text-zinc-500 text-xs">
                       Role: {invitation.role} &middot; Expires{" "}
                       {new Date(invitation.expires_at).toLocaleDateString()}

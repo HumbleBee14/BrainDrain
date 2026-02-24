@@ -176,7 +176,7 @@ export default function LineagePage() {
             { label: "Data Lineage" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Data Lineage</h1>
+        <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">Data Lineage</h1>
         <p className="text-sm text-zinc-500 mt-1">
           Trace data flow from documents through training to deployed models
         </p>

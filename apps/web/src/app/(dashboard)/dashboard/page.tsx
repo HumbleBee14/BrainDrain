@@ -21,8 +21,8 @@ export default function DashboardPage() {
     <div>
       <OnboardingBanner />
 
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Dashboard</h1>
+      <div className="flex items-center justify-between mb-6 md:mb-8">
+        <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">Dashboard</h1>
         <Link
           href="/projects/new"
           className="rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 px-4 py-2 text-sm font-semibold transition"
@@ -32,7 +32,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-6 md:mb-8">
         <StatCard
           label="Projects"
           value={stats?.total_projects}
@@ -56,7 +56,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Usage Summary + Cost Chart */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
           <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
             Usage
@@ -132,7 +132,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Additional Stats Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6 md:mb-8">
         <StatCard
           label="Documents"
           value={stats?.total_documents}
@@ -208,9 +208,9 @@ function StatCard({
   loading: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 md:p-6">
       <p className="text-sm text-zinc-500">{label}</p>
-      <p className="text-3xl font-bold text-zinc-900 dark:text-white mt-1">
+      <p className="text-xl md:text-3xl font-bold text-zinc-900 dark:text-white mt-1">
         {loading ? (
           <span className="text-zinc-300 dark:text-zinc-700">--</span>
         ) : (

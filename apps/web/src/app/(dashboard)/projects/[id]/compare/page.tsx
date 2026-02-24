@@ -19,7 +19,7 @@ function ComparisonRow({
   const allNumeric = numericValues.every((n) => !isNaN(n));
 
   return (
-    <div className="grid grid-cols-[200px,1fr,1fr] gap-4 py-2 border-b border-zinc-200/50 dark:border-zinc-800/50 last:border-b-0">
+    <div className="grid grid-cols-1 md:grid-cols-[200px,1fr,1fr] gap-1 md:gap-4 py-2 border-b border-zinc-200/50 dark:border-zinc-800/50 last:border-b-0">
       <span className="text-sm text-zinc-500">{label}</span>
       {values.map((val, i) => {
         let cls = "text-sm text-zinc-900 dark:text-white font-mono";
@@ -191,7 +191,7 @@ export default function TrainingComparisonPage() {
             { label: "Compare Training Jobs" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
+        <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white">
           Training Job Comparison
         </h1>
         <p className="text-zinc-500 mt-1">
@@ -200,7 +200,7 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Job Headers */}
-      <div className="grid grid-cols-[200px,1fr,1fr] gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-[200px,1fr,1fr] gap-3 md:gap-4 mb-6">
         <div />
         {jobs.map((job, i) => (
           <div

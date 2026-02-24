@@ -148,7 +148,7 @@ export default function LlmSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">LLM Provider</h1>
+      <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white mb-2">LLM Provider</h1>
       <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Configure which LLM provider is used for synthetic data generation,
         evaluation judging, and training reward scoring. If not configured, the
@@ -347,7 +347,7 @@ export default function LlmSettingsPage() {
             </div>
 
             {/* Actions */}
-            <div className="px-6 py-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
+            <div className="px-6 py-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center gap-3">
               <button
                 onClick={handleSave}
                 disabled={!hasChanges || updateSettings.isPending}
