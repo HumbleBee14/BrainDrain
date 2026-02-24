@@ -3,4 +3,7 @@
 /**
  * Response from triggering training.
  */
-export type TriggerTrainResponse = { workflow_id: string, training_job_id: string, };
+export type TriggerTrainResponse = {
+  workflow_id: string;
+  training_job_id: string;
+};

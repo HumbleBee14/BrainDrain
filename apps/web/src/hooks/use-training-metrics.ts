@@ -30,7 +30,7 @@ interface UseTrainingMetricsStreamResult {
  */
 export function useTrainingMetricsStream(
   jobId: string,
-  enabled = true
+  enabled = true,
 ): UseTrainingMetricsStreamResult {
   const { getToken } = useAuth();
   const [metrics, setMetrics] = useState<TrainingMetricsEntry[]>([]);
@@ -137,16 +137,12 @@ export function useTrainingMetricsStream(
       }
 
       setConnected(false);
-      const message =
-        err instanceof Error ? err.message : "Connection lost";
+      const message = err instanceof Error ? err.message : "Connection lost";
       setError(`${message}. Reconnecting...`);
 
       // Schedule reconnection with exponential backoff
       const delay = reconnectDelayRef.current;
-      reconnectDelayRef.current = Math.min(
-        delay * 2,
-        MAX_RECONNECT_DELAY_MS
-      );
+      reconnectDelayRef.current = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
 
       reconnectTimerRef.current = setTimeout(() => {
         if (!abortRef.current?.signal.aborted) {

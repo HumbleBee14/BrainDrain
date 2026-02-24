@@ -4,4 +4,9 @@ import type { DocumentStatus } from "./DocumentStatus";
 /**
  * Response after successful document upload.
  */
-export type UploadResponse = { id: string, filename: string, file_size: number, status: DocumentStatus, };
+export type UploadResponse = {
+  id: string;
+  filename: string;
+  file_size: number;
+  status: DocumentStatus;
+};

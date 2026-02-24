@@ -3,4 +3,8 @@
 /**
  * Request to create a new API key.
  */
-export type CreateApiKeyRequest = { name: string, rate_limit?: number, expires_in_days?: number, };
+export type CreateApiKeyRequest = {
+  name: string;
+  rate_limit?: number;
+  expires_in_days?: number;
+};

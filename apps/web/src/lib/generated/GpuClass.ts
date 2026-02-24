@@ -3,4 +3,10 @@
 /**
  * GPU class for training provisioning.
  */
-export type GpuClass = "t4" | "a10g" | "l40s" | "a10040gb" | "a10080gb" | "h100";
+export type GpuClass =
+  | "t4"
+  | "a10g"
+  | "l40s"
+  | "a10040gb"
+  | "a10080gb"
+  | "h100";

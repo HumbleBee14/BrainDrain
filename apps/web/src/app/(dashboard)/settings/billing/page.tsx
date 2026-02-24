@@ -1,6 +1,11 @@
 "use client";
 
-import { useSubscription, usePlanLimits, useCreateCheckout, useCreatePortal } from "@/hooks/use-billing";
+import {
+  useSubscription,
+  usePlanLimits,
+  useCreateCheckout,
+  useCreatePortal,
+} from "@/hooks/use-billing";
 
 const PLANS = [
   {
@@ -51,12 +56,16 @@ export default function BillingSettingsPage() {
 
   const handleUpgrade = (plan: string) => {
     createCheckout.mutate(
-      { plan, success_url: window.location.href, cancel_url: window.location.href },
+      {
+        plan,
+        success_url: window.location.href,
+        cancel_url: window.location.href,
+      },
       {
         onSuccess: (data) => {
           if (data.url) window.location.href = data.url;
         },
-      }
+      },
     );
   };
 
@@ -67,7 +76,7 @@ export default function BillingSettingsPage() {
         onSuccess: (data) => {
           if (data.url) window.location.href = data.url;
         },
-      }
+      },
     );
   };
 
@@ -83,7 +92,9 @@ export default function BillingSettingsPage() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-2xl font-bold text-white mb-2">Billing</h1>
-      <p className="text-zinc-400 mb-8">Manage your subscription and plan limits.</p>
+      <p className="text-zinc-400 mb-8">
+        Manage your subscription and plan limits.
+      </p>
 
       {/* Current Subscription Card */}
       <div className="border border-zinc-800 rounded-lg p-6 mb-8">
@@ -92,7 +103,10 @@ export default function BillingSettingsPage() {
             <h2 className="text-lg font-semibold text-white">Current Plan</h2>
             <p className="text-zinc-400 text-sm mt-1">
               You are on the{" "}
-              <span className="text-emerald-400 font-medium capitalize">{currentPlan}</span> plan.
+              <span className="text-emerald-400 font-medium capitalize">
+                {currentPlan}
+              </span>{" "}
+              plan.
               {subscription?.status && (
                 <span className="ml-2 text-xs text-zinc-500">
                   Status: {subscription.status}
@@ -101,7 +115,8 @@ export default function BillingSettingsPage() {
             </p>
             {subscription?.current_period_end && (
               <p className="text-zinc-500 text-xs mt-1">
-                Current period ends {new Date(subscription.current_period_end).toLocaleDateString()}
+                Current period ends{" "}
+                {new Date(subscription.current_period_end).toLocaleDateString()}
               </p>
             )}
           </div>
@@ -116,7 +131,9 @@ export default function BillingSettingsPage() {
           )}
         </div>
         {createPortal.isError && (
-          <p className="text-red-400 text-sm mt-2">{createPortal.error.message}</p>
+          <p className="text-red-400 text-sm mt-2">
+            {createPortal.error.message}
+          </p>
         )}
       </div>
 
@@ -137,7 +154,10 @@ export default function BillingSettingsPage() {
               <p className="text-2xl font-bold text-white mt-2">{plan.price}</p>
               <ul className="mt-4 space-y-2">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="text-sm text-zinc-400 flex items-start gap-2">
+                  <li
+                    key={feature}
+                    className="text-sm text-zinc-400 flex items-start gap-2"
+                  >
                     <span className="text-emerald-400 mt-0.5">&#10003;</span>
                     {feature}
                   </li>
@@ -154,7 +174,11 @@ export default function BillingSettingsPage() {
                     disabled={createCheckout.isPending}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-md text-sm font-medium transition"
                   >
-                    {createCheckout.isPending ? "Processing..." : plan.id === "starter" ? "Downgrade" : "Upgrade"}
+                    {createCheckout.isPending
+                      ? "Processing..."
+                      : plan.id === "starter"
+                        ? "Downgrade"
+                        : "Upgrade"}
                   </button>
                 )}
               </div>
@@ -163,7 +187,9 @@ export default function BillingSettingsPage() {
         })}
       </div>
       {createCheckout.isError && (
-        <p className="text-red-400 text-sm mb-4">{createCheckout.error.message}</p>
+        <p className="text-red-400 text-sm mb-4">
+          {createCheckout.error.message}
+        </p>
       )}
 
       {/* Plan Usage */}
@@ -183,14 +209,22 @@ export default function BillingSettingsPage() {
   );
 }
 
-function LimitCard({ label, max, unit }: { label: string; max: number; unit?: string }) {
-  const display = unit ? `${max.toLocaleString()} ${unit}` : max.toLocaleString();
+function LimitCard({
+  label,
+  max,
+  unit,
+}: {
+  label: string;
+  max: number;
+  unit?: string;
+}) {
+  const display = unit
+    ? `${max.toLocaleString()} ${unit}`
+    : max.toLocaleString();
   return (
     <div className="bg-zinc-900 rounded-md p-4">
       <p className="text-xs text-zinc-500 uppercase tracking-wide">{label}</p>
-      <p className="text-lg font-semibold text-white mt-1">
-        Up to {display}
-      </p>
+      <p className="text-lg font-semibold text-white mt-1">Up to {display}</p>
     </div>
   );
 }

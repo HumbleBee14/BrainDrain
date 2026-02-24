@@ -3,12 +3,17 @@
 /**
  * Response showing tenant LLM provider settings (API key masked).
  */
-export type LlmSettingsResponse = { provider: string | null, api_base_url: string | null, 
-/**
- * Masked key (e.g., "sk-p...wxyz") or null if not set
- */
-api_key_masked: string | null, model: string | null, max_tokens: number | null, 
-/**
- * Whether the tenant has custom LLM configuration
- */
-is_configured: boolean, };
+export type LlmSettingsResponse = {
+  provider: string | null;
+  api_base_url: string | null;
+  /**
+   * Masked key (e.g., "sk-p...wxyz") or null if not set
+   */
+  api_key_masked: string | null;
+  model: string | null;
+  max_tokens: number | null;
+  /**
+   * Whether the tenant has custom LLM configuration
+   */
+  is_configured: boolean;
+};

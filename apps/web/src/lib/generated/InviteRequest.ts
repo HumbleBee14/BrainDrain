@@ -4,4 +4,4 @@ import type { TeamRole } from "./TeamRole";
 /**
  * Request body for inviting a team member.
  */
-export type InviteRequest = { email: string, role?: TeamRole, };
+export type InviteRequest = { email: string; role?: TeamRole };

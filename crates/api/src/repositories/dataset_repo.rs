@@ -98,4 +98,28 @@ impl DatasetRepository for PgDatasetRepo {
             Ok(count)
         })
     }
+
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+        status: DatasetStatus,
+    ) -> BoxFuture<'_, AppResult<Option<Dataset>>> {
+        Box::pin(async move {
+            let dataset = sqlx::query_as::<_, Dataset>(
+                r#"
+                UPDATE datasets SET status = $3, updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                RETURNING *
+                "#,
+            )
+            .bind(dataset_id)
+            .bind(tenant_id)
+            .bind(status.to_string())
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(dataset)
+        })
+    }
 }

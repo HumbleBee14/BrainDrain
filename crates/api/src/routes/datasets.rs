@@ -1,6 +1,7 @@
 use axum::extract::{Path, Query, State};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use platform_shared::enums::TeamRole;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -10,6 +11,8 @@ use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::dataset::DatasetResponse;
 use crate::error::AppResult;
+use crate::rbac::require_role;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::dataset_service::DatasetService;
 
 /// Dataset routes.
@@ -18,6 +21,8 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{project_id}/datasets", get(list_datasets))
         .route("/datasets/{id}", get(get_dataset))
         .route("/datasets/{id}/preview", get(preview_dataset))
+        .route("/datasets/{id}/approve", post(approve_dataset))
+        .route("/datasets/{id}/reject", post(reject_dataset))
         .route("/documents/{id}/parsed", get(get_parsed_content))
 }
 
@@ -116,6 +121,74 @@ pub async fn preview_dataset(
     .await?;
 
     Ok(Json(rows))
+}
+
+/// Approve a dataset for training.
+#[utoipa::path(
+    post,
+    path = "/api/v1/datasets/{id}/approve",
+    tag = "Datasets",
+    params(("id" = Uuid, Path, description = "Dataset ID")),
+    responses(
+        (status = 200, description = "Dataset approved", body = DatasetResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn approve_dataset(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<DatasetResponse>> {
+    require_role(&user, TeamRole::Member)?;
+    let dataset = DatasetService::approve(state.dataset_repo(), user.tenant_id, id).await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "approve",
+        "dataset",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
+
+    Ok(Json(dataset))
+}
+
+/// Reject a dataset (archives it).
+#[utoipa::path(
+    post,
+    path = "/api/v1/datasets/{id}/reject",
+    tag = "Datasets",
+    params(("id" = Uuid, Path, description = "Dataset ID")),
+    responses(
+        (status = 200, description = "Dataset rejected", body = DatasetResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn reject_dataset(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<DatasetResponse>> {
+    require_role(&user, TeamRole::Member)?;
+    let dataset = DatasetService::reject(state.dataset_repo(), user.tenant_id, id).await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "reject",
+        "dataset",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
+
+    Ok(Json(dataset))
 }
 
 /// Get presigned URL for parsed document content.

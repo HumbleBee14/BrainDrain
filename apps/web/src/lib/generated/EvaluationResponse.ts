@@ -6,4 +6,14 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Evaluation information returned by API.
  */
-export type EvaluationResponse = { id: string, model_id: string, status: EvaluationStatus, scores: EvaluationScores | null, report: JsonValue, started_at: string | null, completed_at: string | null, created_at: string, updated_at: string, };
+export type EvaluationResponse = {
+  id: string;
+  model_id: string;
+  status: EvaluationStatus;
+  scores: EvaluationScores | null;
+  report: JsonValue;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};

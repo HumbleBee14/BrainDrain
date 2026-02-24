@@ -87,7 +87,9 @@ export function useOnboarding() {
   }, []);
 
   const currentStep = STEPS.find((s) => !state.completedSteps.includes(s));
-  const currentStepIndex = currentStep ? STEPS.indexOf(currentStep) : STEPS.length;
+  const currentStepIndex = currentStep
+    ? STEPS.indexOf(currentStep)
+    : STEPS.length;
   const isComplete = state.completedSteps.length >= STEPS.length;
   const progress = state.completedSteps.length / STEPS.length;
 

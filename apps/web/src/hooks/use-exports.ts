@@ -2,7 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type ExportResponse, type ExportDownloadResponse } from "@/lib/api-client";
+import {
+  api,
+  type ExportResponse,
+  type ExportDownloadResponse,
+} from "@/lib/api-client";
 
 export function useModelExports(modelId: string) {
   const { getToken } = useAuth();
@@ -20,7 +24,7 @@ export function useModelExports(modelId: string) {
       if (!data) return false;
       // Poll while any export is in progress
       const hasActive = data.some(
-        (e) => e.status === "pending" || e.status === "processing"
+        (e) => e.status === "pending" || e.status === "processing",
       );
       return hasActive ? 5000 : false;
     },

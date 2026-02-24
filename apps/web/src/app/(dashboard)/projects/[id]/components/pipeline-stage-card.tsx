@@ -10,9 +10,7 @@ export function PipelineStageCard({
   return (
     <div
       className={`rounded-lg border p-4 text-center ${
-        active
-          ? "border-emerald-800 bg-emerald-900/20"
-          : "border-zinc-800"
+        active ? "border-emerald-800 bg-emerald-900/20" : "border-zinc-800"
       }`}
     >
       <p className="text-2xl font-bold text-white">{count}</p>

@@ -4,4 +4,14 @@
  * API key information returned by list/get endpoints.
  * Does NOT include the full key (it's hashed in DB).
  */
-export type ApiKeyResponse = { id: string, model_id: string, name: string, key_prefix: string, rate_limit: number, is_active: boolean, last_used_at: string | null, expires_at: string | null, created_at: string, };
+export type ApiKeyResponse = {
+  id: string;
+  model_id: string;
+  name: string;
+  key_prefix: string;
+  rate_limit: number;
+  is_active: boolean;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};

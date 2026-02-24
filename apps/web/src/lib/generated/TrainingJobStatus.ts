@@ -3,4 +3,11 @@
 /**
  * Status of a training job through its lifecycle.
  */
-export type TrainingJobStatus = "pending" | "cost_approval" | "provisioning" | "training" | "completed" | "failed" | "cancelled";
+export type TrainingJobStatus =
+  | "pending"
+  | "cost_approval"
+  | "provisioning"
+  | "training"
+  | "completed"
+  | "failed"
+  | "cancelled";

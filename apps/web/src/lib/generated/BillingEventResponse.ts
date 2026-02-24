@@ -4,4 +4,14 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Billing event returned by API.
  */
-export type BillingEventResponse = { id: string, operation: string, resource_id: string | null, tokens_in: number | null, tokens_out: number | null, gpu_seconds: number | null, cost_usd: number, metadata: JsonValue, created_at: string, };
+export type BillingEventResponse = {
+  id: string;
+  operation: string;
+  resource_id: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  gpu_seconds: number | null;
+  cost_usd: number;
+  metadata: JsonValue;
+  created_at: string;
+};

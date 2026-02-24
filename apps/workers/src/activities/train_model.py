@@ -398,6 +398,16 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             llm_config=llm_config,
         )
 
+        # Calculate actual cost from runtime
+        gpu_rates = {"t4": 0.80, "a10g": 1.20, "l40s": 1.80, "a10040gb": 2.00, "a10080gb": 3.00, "h100": 4.50}
+        gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
+        total_runtime = sum(
+            v for k, v in metrics.items()
+            if k.endswith("train_runtime") and isinstance(v, (int, float))
+        )
+        runtime_hours = total_runtime / 3600.0
+        metrics["estimated_cost"] = round(runtime_hours * gpu_rate, 2)
+
         # Save adapter via engine protocol
         adapter_dir = tmpdir_path / "adapter"
         engine.save_adapter(model, tokenizer, adapter_dir)

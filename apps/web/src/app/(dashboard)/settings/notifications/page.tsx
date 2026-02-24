@@ -28,9 +28,11 @@ function buildKey(channel: string, eventType: string) {
 }
 
 export default function NotificationsSettingsPage() {
-  const { data: preferences, isLoading: prefsLoading } = useNotificationPreferences();
+  const { data: preferences, isLoading: prefsLoading } =
+    useNotificationPreferences();
   const updatePreferences = useUpdatePreferences();
-  const { data: deliveries, isLoading: deliveriesLoading } = useDeliveryHistory();
+  const { data: deliveries, isLoading: deliveriesLoading } =
+    useDeliveryHistory();
 
   const [localPrefs, setLocalPrefs] = useState<PreferenceState>({});
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -50,7 +52,7 @@ export default function NotificationsSettingsPage() {
 
     // Extract webhook URL from any webhook preference config
     const webhookPref = preferences.find(
-      (p) => p.channel === "webhook" && p.config?.url
+      (p) => p.channel === "webhook" && p.config?.url,
     );
     if (webhookPref?.config?.url) {
       setWebhookUrl(webhookPref.config.url as string);
@@ -61,7 +63,7 @@ export default function NotificationsSettingsPage() {
     (channel: string, eventType: string) => {
       return localPrefs[buildKey(channel, eventType)]?.enabled ?? false;
     },
-    [localPrefs]
+    [localPrefs],
   );
 
   const togglePref = (channel: string, eventType: string) => {
@@ -76,7 +78,9 @@ export default function NotificationsSettingsPage() {
     setHasChanges(true);
   };
 
-  const hasWebhookEnabled = EVENT_TYPES.some((et) => isEnabled("webhook", et.id));
+  const hasWebhookEnabled = EVENT_TYPES.some((et) =>
+    isEnabled("webhook", et.id),
+  );
 
   const handleSave = () => {
     const prefs: Array<{
@@ -91,9 +95,7 @@ export default function NotificationsSettingsPage() {
         const key = buildKey(channel.id, eventType.id);
         const entry = localPrefs[key];
         const config: Record<string, unknown> =
-          channel.id === "webhook" && webhookUrl
-            ? { url: webhookUrl }
-            : {};
+          channel.id === "webhook" && webhookUrl ? { url: webhookUrl } : {};
 
         prefs.push({
           channel: channel.id,
@@ -106,7 +108,7 @@ export default function NotificationsSettingsPage() {
 
     updatePreferences.mutate(
       { preferences: prefs },
-      { onSuccess: () => setHasChanges(false) }
+      { onSuccess: () => setHasChanges(false) },
     );
   };
 
@@ -129,9 +131,14 @@ export default function NotificationsSettingsPage() {
           <>
             {/* Table Header */}
             <div className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-800">
-              <span className="text-xs text-zinc-500 uppercase tracking-wide">Event</span>
+              <span className="text-xs text-zinc-500 uppercase tracking-wide">
+                Event
+              </span>
               {CHANNELS.map((ch) => (
-                <span key={ch.id} className="text-xs text-zinc-500 uppercase tracking-wide text-center">
+                <span
+                  key={ch.id}
+                  className="text-xs text-zinc-500 uppercase tracking-wide text-center"
+                >
                   {ch.label}
                 </span>
               ))}
@@ -152,12 +159,16 @@ export default function NotificationsSettingsPage() {
                       aria-checked={isEnabled(ch.id, et.id)}
                       onClick={() => togglePref(ch.id, et.id)}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                        isEnabled(ch.id, et.id) ? "bg-emerald-600" : "bg-zinc-700"
+                        isEnabled(ch.id, et.id)
+                          ? "bg-emerald-600"
+                          : "bg-zinc-700"
                       }`}
                     >
                       <span
                         className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                          isEnabled(ch.id, et.id) ? "translate-x-4" : "translate-x-0.5"
+                          isEnabled(ch.id, et.id)
+                            ? "translate-x-4"
+                            : "translate-x-0.5"
                         }`}
                       />
                     </button>
@@ -195,7 +206,9 @@ export default function NotificationsSettingsPage() {
                 {updatePreferences.isPending ? "Saving..." : "Save Preferences"}
               </button>
               {updatePreferences.isError && (
-                <p className="text-red-400 text-sm">{updatePreferences.error.message}</p>
+                <p className="text-red-400 text-sm">
+                  {updatePreferences.error.message}
+                </p>
               )}
               {updatePreferences.isSuccess && !hasChanges && (
                 <p className="text-emerald-400 text-sm">Saved.</p>
@@ -214,7 +227,9 @@ export default function NotificationsSettingsPage() {
         {deliveriesLoading ? (
           <div className="p-8 text-center text-zinc-500">Loading...</div>
         ) : !deliveries?.data?.length ? (
-          <div className="p-8 text-center text-zinc-500">No deliveries yet.</div>
+          <div className="p-8 text-center text-zinc-500">
+            No deliveries yet.
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -238,27 +253,38 @@ export default function NotificationsSettingsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800">
-                {deliveries.data.map((d: { id: string; event_type: string; channel: string; status: string; attempts: number; last_error: string | null; created_at: string; sent_at: string | null }) => (
-                  <tr key={d.id}>
-                    <td className="px-4 py-3 text-white whitespace-nowrap">
-                      {formatEventType(d.event_type)}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-400 capitalize whitespace-nowrap">
-                      {d.channel}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <StatusBadge status={d.status} />
-                    </td>
-                    <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">
-                      {d.attempts}
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500 whitespace-nowrap text-xs">
-                      {d.sent_at
-                        ? new Date(d.sent_at).toLocaleString()
-                        : new Date(d.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {deliveries.data.map(
+                  (d: {
+                    id: string;
+                    event_type: string;
+                    channel: string;
+                    status: string;
+                    attempts: number;
+                    last_error: string | null;
+                    created_at: string;
+                    sent_at: string | null;
+                  }) => (
+                    <tr key={d.id}>
+                      <td className="px-4 py-3 text-white whitespace-nowrap">
+                        {formatEventType(d.event_type)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-400 capitalize whitespace-nowrap">
+                        {d.channel}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <StatusBadge status={d.status} />
+                      </td>
+                      <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">
+                        {d.attempts}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-500 whitespace-nowrap text-xs">
+                        {d.sent_at
+                          ? new Date(d.sent_at).toLocaleString()
+                          : new Date(d.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  ),
+                )}
               </tbody>
             </table>
           </div>

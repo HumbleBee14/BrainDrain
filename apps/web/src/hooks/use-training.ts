@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type TrainingJob,
+  type CostEstimateResponse,
   type PaginatedResponse,
   type CreateTrainingJobInput,
 } from "@/lib/api-client";
@@ -26,7 +27,10 @@ export function useTrainingJob(id: string, enabled = true) {
       const data = query.state.data;
       if (!data) return false;
       // Poll every 5s while job is actively training
-      const isActive: boolean = data.status === "pending" || data.status === "provisioning" || data.status === "training";
+      const isActive: boolean =
+        data.status === "pending" ||
+        data.status === "provisioning" ||
+        data.status === "training";
       return isActive ? 5000 : false;
     },
   });
@@ -36,7 +40,8 @@ export function useCreateTrainingJob(projectId: string) {
   const queryClient = useQueryClient();
 
   return useAuthedMutation<TrainingJob, Error, CreateTrainingJobInput>({
-    mutationFn: (token, data) => api.trainingJobs.create(token, projectId, data),
+    mutationFn: (token, data) =>
+      api.trainingJobs.create(token, projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["training-jobs", projectId],
@@ -61,5 +66,23 @@ export function useCancelTrainingJob(projectId: string) {
         queryKey: ["pipeline-status", projectId],
       });
     },
+  });
+}
+
+export function useEstimateTrainingCost(
+  projectId: string,
+  data: CreateTrainingJobInput,
+) {
+  return useAuthedQuery<CostEstimateResponse>({
+    queryKey: [
+      "training-cost-estimate",
+      projectId,
+      data.dataset_id,
+      data.base_model,
+      data.mode,
+      data.gpu_class,
+    ],
+    queryFn: (token) => api.trainingJobs.estimate(token, projectId, data),
+    enabled: !!projectId && !!data.dataset_id,
   });
 }

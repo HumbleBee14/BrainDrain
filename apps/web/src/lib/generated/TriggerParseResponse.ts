@@ -3,4 +3,7 @@
 /**
  * Response from triggering document parsing.
  */
-export type TriggerParseResponse = { workflow_id: string, document_count: number, };
+export type TriggerParseResponse = {
+  workflow_id: string;
+  document_count: number;
+};

@@ -11,6 +11,7 @@ import type {
   CreateApiKeyRequest,
   CreateApiKeyResponse,
   ApiKeyResponse,
+  CostEstimateResponse,
   DeploymentStatusResponse,
   UploadResponse,
   ProjectPipelineStatus,
@@ -41,6 +42,7 @@ export type {
   TrainingMetrics,
   // Response types (pass-through)
   ApiKeyResponse,
+  CostEstimateResponse,
   CreateApiKeyResponse,
   DeploymentStatusResponse,
   UploadResponse,
@@ -65,7 +67,10 @@ export type { CreateEvaluationRequest as CreateEvaluationInput } from "./generat
 export type { CreateApiKeyRequest as CreateApiKeyInput } from "./generated";
 
 // Settings types
-export type { LlmSettingsResponse, UpdateLlmSettingsRequest } from "./generated";
+export type {
+  LlmSettingsResponse,
+  UpdateLlmSettingsRequest,
+} from "./generated";
 
 // Backward-compatible alias
 export type { DeploymentStatus as ModelDeploymentStatus } from "./generated";
@@ -200,7 +205,10 @@ async function fetchWithRetry(
 
       if (res.status >= 500 && attempt < MAX_RETRIES) {
         lastError = new ApiClientError(res.status, {
-          error: { code: "server_error", message: `Server returned ${res.status}` },
+          error: {
+            code: "server_error",
+            message: `Server returned ${res.status}`,
+          },
         });
         await sleep(BASE_BACKOFF_MS * 2 ** attempt);
         continue;
@@ -231,7 +239,7 @@ async function fetchWithRetry(
  */
 async function request<T>(
   path: string,
-  options?: RequestInit & { token?: string }
+  options?: RequestInit & { token?: string },
 ): Promise<T> {
   const { token, ...fetchOptions } = options || {};
 
@@ -290,7 +298,7 @@ export const api = {
     list: (token: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<ProjectResponse>>(
         `/api/v1/projects?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
@@ -311,7 +319,7 @@ export const api = {
     list: (token: string, projectId: string, offset = 0, limit = 50) =>
       request<PaginatedResponse<DocumentResponse>>(
         `/api/v1/projects/${projectId}/documents?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
@@ -330,7 +338,9 @@ export const api = {
     },
 
     getParsed: (token: string, id: string) =>
-      request<ParsedContentResponse>(`/api/v1/documents/${id}/parsed`, { token }),
+      request<ParsedContentResponse>(`/api/v1/documents/${id}/parsed`, {
+        token,
+      }),
   },
 
   pipeline: {
@@ -354,17 +364,16 @@ export const api = {
       }),
 
     getStatus: (token: string, projectId: string) =>
-      request<ProjectPipelineStatus>(
-        `/api/v1/projects/${projectId}/status`,
-        { token }
-      ),
+      request<ProjectPipelineStatus>(`/api/v1/projects/${projectId}/status`, {
+        token,
+      }),
   },
 
   datasets: {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<DatasetResponse>>(
         `/api/v1/projects/${projectId}/datasets?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
@@ -373,26 +382,47 @@ export const api = {
     preview: (token: string, id: string, maxRows = 20) =>
       request<Record<string, unknown>[]>(
         `/api/v1/datasets/${id}/preview?max_rows=${maxRows}`,
-        { token }
+        { token },
       ),
+
+    approve: (token: string, id: string) =>
+      request<DatasetResponse>(`/api/v1/datasets/${id}/approve`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+
+    reject: (token: string, id: string) =>
+      request<DatasetResponse>(`/api/v1/datasets/${id}/reject`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
   },
 
   trainingJobs: {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<TrainingJobResponse>>(
         `/api/v1/projects/${projectId}/training-jobs?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
       request<TrainingJobResponse>(`/api/v1/training-jobs/${id}`, { token }),
 
-    create: (token: string, projectId: string, data: CreateTrainingJobRequest) =>
-      request<TrainingJobResponse>(`/api/v1/projects/${projectId}/training-jobs`, {
-        token,
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
+    create: (
+      token: string,
+      projectId: string,
+      data: CreateTrainingJobRequest,
+    ) =>
+      request<TrainingJobResponse>(
+        `/api/v1/projects/${projectId}/training-jobs`,
+        {
+          token,
+          method: "POST",
+          body: JSON.stringify(data),
+        },
+      ),
 
     cancel: (token: string, id: string) =>
       request<TrainingJobResponse>(`/api/v1/training-jobs/${id}/cancel`, {
@@ -400,6 +430,20 @@ export const api = {
         method: "POST",
         body: JSON.stringify({}),
       }),
+
+    estimate: (
+      token: string,
+      projectId: string,
+      data: CreateTrainingJobRequest,
+    ) =>
+      request<CostEstimateResponse>(
+        `/api/v1/projects/${projectId}/training-jobs/estimate`,
+        {
+          token,
+          method: "POST",
+          body: JSON.stringify(data),
+        },
+      ),
 
     getMetrics: (token: string, id: string) =>
       request<Record<string, unknown>>(`/api/v1/training-jobs/${id}/metrics`, {
@@ -411,7 +455,7 @@ export const api = {
     list: (token: string, projectId: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<ModelResponse>>(
         `/api/v1/projects/${projectId}/models?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
@@ -422,7 +466,7 @@ export const api = {
     list: (token: string, modelId: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<EvaluationResponse>>(
         `/api/v1/models/${modelId}/evaluations?offset=${offset}&limit=${limit}`,
-        { token }
+        { token },
       ),
 
     get: (token: string, id: string) =>
@@ -438,10 +482,9 @@ export const api = {
 
   apiKeys: {
     list: (token: string, modelId: string) =>
-      request<ApiKeyResponse[]>(
-        `/api/v1/models/${modelId}/api-keys`,
-        { token }
-      ),
+      request<ApiKeyResponse[]>(`/api/v1/models/${modelId}/api-keys`, {
+        token,
+      }),
 
     create: (token: string, modelId: string, data: CreateApiKeyRequest) =>
       request<CreateApiKeyResponse>(`/api/v1/models/${modelId}/api-keys`, {
@@ -460,10 +503,7 @@ export const api = {
 
   exports: {
     list: (token: string, modelId: string) =>
-      request<ExportResponse[]>(
-        `/api/v1/models/${modelId}/exports`,
-        { token }
-      ),
+      request<ExportResponse[]>(`/api/v1/models/${modelId}/exports`, { token }),
 
     create: (token: string, modelId: string, data: { quant_type?: string }) =>
       request<ExportResponse>(`/api/v1/models/${modelId}/exports`, {
@@ -496,7 +536,7 @@ export const api = {
     status: (token: string, modelId: string) =>
       request<DeploymentStatusResponse>(
         `/api/v1/models/${modelId}/deployment`,
-        { token }
+        { token },
       ),
   },
 
@@ -543,7 +583,10 @@ export const api = {
   },
 
   billing: {
-    createCheckout: (token: string, data: { plan: string; success_url: string; cancel_url: string }) =>
+    createCheckout: (
+      token: string,
+      data: { plan: string; success_url: string; cancel_url: string },
+    ) =>
       request<{ url: string }>("/api/v1/billing/checkout", {
         token,
         method: "POST",
@@ -558,62 +601,114 @@ export const api = {
       }),
 
     getSubscription: (token: string) =>
-      request<{ id: string; status: string; plan: string; current_period_end: string }>(
-        "/api/v1/billing/subscription",
-        { token }
-      ),
+      request<{
+        id: string;
+        status: string;
+        plan: string;
+        current_period_end: string;
+      }>("/api/v1/billing/subscription", { token }),
 
     getLimits: (token: string) =>
-      request<{ max_projects: number; max_models: number; max_team_members: number; max_training_pairs: number; max_storage_gb: number }>(
-        "/api/v1/billing/limits",
-        { token }
-      ),
+      request<{
+        max_projects: number;
+        max_models: number;
+        max_team_members: number;
+        max_training_pairs: number;
+        max_storage_gb: number;
+      }>("/api/v1/billing/limits", { token }),
   },
 
   dashboard: {
     getStats: (token: string) =>
-      request<{ total_projects: number; total_documents: number; total_training_jobs: number; active_training_jobs: number; total_models: number; deployed_models: number; total_evaluations: number }>(
-        "/api/v1/dashboard/stats",
-        { token }
-      ),
+      request<{
+        total_projects: number;
+        total_documents: number;
+        total_training_jobs: number;
+        active_training_jobs: number;
+        total_models: number;
+        deployed_models: number;
+        total_evaluations: number;
+      }>("/api/v1/dashboard/stats", { token }),
 
     getUsage: (token: string) =>
-      request<{ total_cost_usd: number; total_tokens_in: number; total_tokens_out: number; total_events: number; cost_by_day: Array<{ date: string; cost_usd: number }> }>(
-        "/api/v1/dashboard/usage",
-        { token }
-      ),
+      request<{
+        total_cost_usd: number;
+        total_tokens_in: number;
+        total_tokens_out: number;
+        total_events: number;
+        cost_by_day: Array<{ date: string; cost_usd: number }>;
+      }>("/api/v1/dashboard/usage", { token }),
 
     getActivity: (token: string) =>
-      request<Array<{ id: string; actor_id: string; action: string; resource_type: string; resource_id: string | null; created_at: string }>>(
-        "/api/v1/dashboard/activity",
-        { token }
-      ),
+      request<
+        Array<{
+          id: string;
+          actor_id: string;
+          action: string;
+          resource_type: string;
+          resource_id: string | null;
+          created_at: string;
+        }>
+      >("/api/v1/dashboard/activity", { token }),
 
     getInferenceUsage: (token: string) =>
-      request<InferenceUsageDay[]>(
-        "/api/v1/dashboard/inference-usage",
-        { token }
-      ),
+      request<InferenceUsageDay[]>("/api/v1/dashboard/inference-usage", {
+        token,
+      }),
   },
 
   notifications: {
     getPreferences: (token: string) =>
-      request<Array<{ id: string; channel: string; event_type: string; enabled: boolean; config: Record<string, unknown> }>>(
-        "/api/v1/notifications/preferences",
-        { token }
-      ),
+      request<
+        Array<{
+          id: string;
+          channel: string;
+          event_type: string;
+          enabled: boolean;
+          config: Record<string, unknown>;
+        }>
+      >("/api/v1/notifications/preferences", { token }),
 
-    updatePreferences: (token: string, data: { preferences: Array<{ channel: string; event_type: string; enabled: boolean; config?: Record<string, unknown> }> }) =>
-      request<Array<{ id: string; channel: string; event_type: string; enabled: boolean; config: Record<string, unknown> }>>(
-        "/api/v1/notifications/preferences",
-        { token, method: "PUT", body: JSON.stringify(data) }
-      ),
+    updatePreferences: (
+      token: string,
+      data: {
+        preferences: Array<{
+          channel: string;
+          event_type: string;
+          enabled: boolean;
+          config?: Record<string, unknown>;
+        }>;
+      },
+    ) =>
+      request<
+        Array<{
+          id: string;
+          channel: string;
+          event_type: string;
+          enabled: boolean;
+          config: Record<string, unknown>;
+        }>
+      >("/api/v1/notifications/preferences", {
+        token,
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
 
     getDeliveries: (token: string, offset = 0, limit = 20) =>
-      request<PaginatedResponse<{ id: string; event_type: string; channel: string; status: string; attempts: number; last_error: string | null; created_at: string; sent_at: string | null }>>(
-        `/api/v1/notifications/deliveries?offset=${offset}&limit=${limit}`,
-        { token }
-      ),
+      request<
+        PaginatedResponse<{
+          id: string;
+          event_type: string;
+          channel: string;
+          status: string;
+          attempts: number;
+          last_error: string | null;
+          created_at: string;
+          sent_at: string | null;
+        }>
+      >(`/api/v1/notifications/deliveries?offset=${offset}&limit=${limit}`, {
+        token,
+      }),
   },
 
   settings: {

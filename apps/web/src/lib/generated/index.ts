@@ -30,6 +30,7 @@ export type { TrainingMetrics } from "./TrainingMetrics";
 // API responses (from crates/api/src/dto/)
 export type { ApiKeyResponse } from "./ApiKeyResponse";
 export type { BillingEventResponse } from "./BillingEventResponse";
+export type { CostEstimateResponse } from "./CostEstimateResponse";
 export type { CreateApiKeyRequest } from "./CreateApiKeyRequest";
 export type { CreateApiKeyResponse } from "./CreateApiKeyResponse";
 export type { CreateEvaluationRequest } from "./CreateEvaluationRequest";

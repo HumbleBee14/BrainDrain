@@ -45,6 +45,16 @@ pub struct TrainingJobResponse {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Cost estimate breakdown returned by the estimate endpoint.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct CostEstimateResponse {
+    pub cost_estimate: f64,
+    pub estimated_hours: f64,
+    pub gpu_class: String,
+    pub gpu_rate_per_hour: f64,
+}
+
 impl From<TrainingJob> for TrainingJobResponse {
     fn from(j: TrainingJob) -> Self {
         Self {

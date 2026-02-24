@@ -3,4 +3,9 @@
 /**
  * Current subscription details returned to the frontend.
  */
-export type SubscriptionResponse = { id: string, status: string, plan: string, current_period_end: string, };
+export type SubscriptionResponse = {
+  id: string;
+  status: string;
+  plan: string;
+  current_period_end: string;
+};

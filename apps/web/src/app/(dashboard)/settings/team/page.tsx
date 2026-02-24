@@ -12,7 +12,8 @@ import {
 
 export default function TeamSettingsPage() {
   const { data: members, isLoading: membersLoading } = useTeamMembers();
-  const { data: invitations, isLoading: invitationsLoading } = useTeamInvitations();
+  const { data: invitations, isLoading: invitationsLoading } =
+    useTeamInvitations();
   const inviteMember = useInviteMember();
   const updateRole = useUpdateRole();
   const removeMember = useRemoveMember();
@@ -23,22 +24,29 @@ export default function TeamSettingsPage() {
 
   const handleInvite = () => {
     if (!email.trim()) return;
-    inviteMember.mutate({ email: email.trim(), role }, {
-      onSuccess: () => {
-        setEmail("");
-        setRole("member");
+    inviteMember.mutate(
+      { email: email.trim(), role },
+      {
+        onSuccess: () => {
+          setEmail("");
+          setRole("member");
+        },
       },
-    });
+    );
   };
 
   return (
     <div className="max-w-4xl">
       <h1 className="text-2xl font-bold text-white mb-2">Team Settings</h1>
-      <p className="text-zinc-400 mb-8">Manage your team members and invitations.</p>
+      <p className="text-zinc-400 mb-8">
+        Manage your team members and invitations.
+      </p>
 
       {/* Invite Form */}
       <div className="border border-zinc-800 rounded-lg p-6 mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">Invite Team Member</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">
+          Invite Team Member
+        </h2>
         <div className="flex gap-3">
           <input
             type="email"
@@ -66,7 +74,9 @@ export default function TeamSettingsPage() {
           </button>
         </div>
         {inviteMember.isError && (
-          <p className="text-red-400 text-sm mt-2">{inviteMember.error.message}</p>
+          <p className="text-red-400 text-sm mt-2">
+            {inviteMember.error.message}
+          </p>
         )}
       </div>
 
@@ -74,17 +84,29 @@ export default function TeamSettingsPage() {
       <div className="border border-zinc-800 rounded-lg mb-8">
         <div className="p-4 border-b border-zinc-800">
           <h2 className="text-lg font-semibold text-white">
-            Team Members {members && <span className="text-zinc-500 font-normal">({members.length})</span>}
+            Team Members{" "}
+            {members && (
+              <span className="text-zinc-500 font-normal">
+                ({members.length})
+              </span>
+            )}
           </h2>
         </div>
         {membersLoading ? (
-          <div className="p-8 text-center text-zinc-500">Loading members...</div>
+          <div className="p-8 text-center text-zinc-500">
+            Loading members...
+          </div>
         ) : members?.length === 0 ? (
-          <div className="p-8 text-center text-zinc-500">No team members yet.</div>
+          <div className="p-8 text-center text-zinc-500">
+            No team members yet.
+          </div>
         ) : (
           <div className="divide-y divide-zinc-800">
             {members?.map((member) => (
-              <div key={member.id} className="flex items-center justify-between p-4">
+              <div
+                key={member.id}
+                className="flex items-center justify-between p-4"
+              >
                 <div>
                   <p className="text-white text-sm">{member.email}</p>
                   <p className="text-zinc-500 text-xs">
@@ -100,7 +122,10 @@ export default function TeamSettingsPage() {
                     <select
                       value={member.role}
                       onChange={(e) =>
-                        updateRole.mutate({ userId: member.user_id, role: e.target.value })
+                        updateRole.mutate({
+                          userId: member.user_id,
+                          role: e.target.value,
+                        })
                       }
                       className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
                     >
@@ -141,15 +166,22 @@ export default function TeamSettingsPage() {
           </h2>
         </div>
         {invitationsLoading ? (
-          <div className="p-8 text-center text-zinc-500">Loading invitations...</div>
+          <div className="p-8 text-center text-zinc-500">
+            Loading invitations...
+          </div>
         ) : !invitations?.some((i) => i.status === "pending") ? (
-          <div className="p-8 text-center text-zinc-500">No pending invitations.</div>
+          <div className="p-8 text-center text-zinc-500">
+            No pending invitations.
+          </div>
         ) : (
           <div className="divide-y divide-zinc-800">
             {invitations
               ?.filter((i) => i.status === "pending")
               .map((invitation) => (
-                <div key={invitation.id} className="flex items-center justify-between p-4">
+                <div
+                  key={invitation.id}
+                  className="flex items-center justify-between p-4"
+                >
                   <div>
                     <p className="text-white text-sm">{invitation.email}</p>
                     <p className="text-zinc-500 text-xs">

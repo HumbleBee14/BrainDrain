@@ -8,4 +8,11 @@ import type { TrainingJobStatusCounts } from "./TrainingJobStatusCounts";
 /**
  * Aggregate pipeline status for a project.
  */
-export type ProjectPipelineStatus = { project_id: string, documents: DocumentStatusCounts, datasets: DatasetStatusCounts, training_jobs: TrainingJobStatusCounts, models: ModelStatusCounts, evaluations: EvaluationStatusCounts, };
+export type ProjectPipelineStatus = {
+  project_id: string;
+  documents: DocumentStatusCounts;
+  datasets: DatasetStatusCounts;
+  training_jobs: TrainingJobStatusCounts;
+  models: ModelStatusCounts;
+  evaluations: EvaluationStatusCounts;
+};

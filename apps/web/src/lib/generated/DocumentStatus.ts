@@ -3,4 +3,9 @@
 /**
  * Status of a document through the ingestion pipeline.
  */
-export type DocumentStatus = "uploaded" | "scanning" | "parsing" | "parsed" | "failed";
+export type DocumentStatus =
+  | "uploaded"
+  | "scanning"
+  | "parsing"
+  | "parsed"
+  | "failed";

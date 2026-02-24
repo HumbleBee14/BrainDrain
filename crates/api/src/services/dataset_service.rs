@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use platform_shared::enums::DatasetStatus;
 use platform_shared::s3_paths;
 use platform_storage::ObjectStorage;
 
@@ -81,6 +82,78 @@ impl DatasetService {
             .collect();
 
         Ok(rows)
+    }
+
+    /// Approve a dataset for training.
+    /// Only datasets in `ReviewPending` status can be approved.
+    pub async fn approve(
+        repo: &dyn DatasetRepository,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+    ) -> AppResult<DatasetResponse> {
+        let dataset = repo
+            .get_by_id(tenant_id, dataset_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Dataset not found".to_string(),
+            })?;
+
+        let current_status: DatasetStatus =
+            dataset.status.parse().unwrap_or(DatasetStatus::Generating);
+
+        if current_status != DatasetStatus::ReviewPending {
+            return Err(AppError::BadRequest {
+                message: format!(
+                    "Only datasets in 'review_pending' status can be approved. Current status: {}",
+                    dataset.status
+                ),
+            });
+        }
+
+        let updated = repo
+            .update_status(tenant_id, dataset_id, DatasetStatus::Approved)
+            .await?
+            .ok_or(AppError::Internal(anyhow::anyhow!(
+                "Failed to update dataset status"
+            )))?;
+
+        Ok(updated.into())
+    }
+
+    /// Reject a dataset, archiving it so it cannot be used for training.
+    /// Only datasets in `ReviewPending` status can be rejected.
+    pub async fn reject(
+        repo: &dyn DatasetRepository,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+    ) -> AppResult<DatasetResponse> {
+        let dataset = repo
+            .get_by_id(tenant_id, dataset_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Dataset not found".to_string(),
+            })?;
+
+        let current_status: DatasetStatus =
+            dataset.status.parse().unwrap_or(DatasetStatus::Generating);
+
+        if current_status != DatasetStatus::ReviewPending {
+            return Err(AppError::BadRequest {
+                message: format!(
+                    "Only datasets in 'review_pending' status can be rejected. Current status: {}",
+                    dataset.status
+                ),
+            });
+        }
+
+        let updated = repo
+            .update_status(tenant_id, dataset_id, DatasetStatus::Archived)
+            .await?
+            .ok_or(AppError::Internal(anyhow::anyhow!(
+                "Failed to update dataset status"
+            )))?;
+
+        Ok(updated.into())
     }
 
     /// Get a presigned URL for the parsed content of a document.

@@ -4,4 +4,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Request body for triggering data refinement.
  */
-export type TriggerRefineRequest = { task_type?: string, config: JsonValue, };
+export type TriggerRefineRequest = { task_type?: string; config: JsonValue };

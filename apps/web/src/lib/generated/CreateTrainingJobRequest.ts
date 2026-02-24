@@ -6,4 +6,11 @@ import type { TrainingMode } from "./TrainingMode";
 /**
  * Request to create a new training job.
  */
-export type CreateTrainingJobRequest = { dataset_id: string, base_model: string, method?: TrainingMethod, mode?: TrainingMode, hyperparams?: Hyperparams, gpu_class?: string, };
+export type CreateTrainingJobRequest = {
+  dataset_id: string;
+  base_model: string;
+  method?: TrainingMethod;
+  mode?: TrainingMode;
+  hyperparams?: Hyperparams;
+  gpu_class?: string;
+};

@@ -5,4 +5,10 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Deployment status response.
  */
-export type DeploymentStatusResponse = { model_id: string, deployment_status: DeploymentStatus, deployment_config: JsonValue, base_model: string, adapter_path: string | null, };
+export type DeploymentStatusResponse = {
+  model_id: string;
+  deployment_status: DeploymentStatus;
+  deployment_config: JsonValue;
+  base_model: string;
+  adapter_path: string | null;
+};

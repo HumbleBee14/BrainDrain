@@ -5,4 +5,12 @@ import type { TeamRole } from "./TeamRole";
 /**
  * API response for an invitation.
  */
-export type InvitationResponse = { id: string, email: string, role: TeamRole, status: InvitationStatus, invited_by: string, expires_at: string, created_at: string, };
+export type InvitationResponse = {
+  id: string;
+  email: string;
+  role: TeamRole;
+  status: InvitationStatus;
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+};

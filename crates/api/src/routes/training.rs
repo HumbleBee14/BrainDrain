@@ -14,7 +14,9 @@ use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::model::ModelResponse;
-use crate::dto::training_job::{CreateTrainingJobRequest, TrainingJobResponse};
+use crate::dto::training_job::{
+    CostEstimateResponse, CreateTrainingJobRequest, TrainingJobResponse,
+};
 use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
@@ -32,6 +34,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/training-jobs/{id}", get(get_training_job))
         .route("/training-jobs/{id}/cancel", post(cancel_training_job))
+        .route(
+            "/projects/{project_id}/training-jobs/estimate",
+            post(estimate_training_cost),
+        )
         // Training metrics
         .route(
             "/training-jobs/{id}/metrics/stream",
@@ -92,6 +98,33 @@ pub async fn create_training_job(
     .await;
 
     Ok((StatusCode::CREATED, Json(result)))
+}
+
+/// POST /api/v1/projects/:project_id/training-jobs/estimate
+///
+/// Estimate training cost without creating a job.
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/training-jobs/estimate",
+    tag = "Training",
+    params(
+        ("project_id" = Uuid, Path, description = "Project ID")
+    ),
+    request_body = CreateTrainingJobRequest,
+    responses(
+        (status = 200, description = "Cost estimate", body = CostEstimateResponse),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn estimate_training_cost(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(_project_id): Path<Uuid>,
+    Json(body): Json<CreateTrainingJobRequest>,
+) -> AppResult<Json<CostEstimateResponse>> {
+    let result = TrainingJobService::estimate(state.dataset_repo(), user.tenant_id, &body).await?;
+    Ok(Json(result))
 }
 
 /// GET /api/v1/projects/:project_id/training-jobs

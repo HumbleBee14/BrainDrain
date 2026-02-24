@@ -3,4 +3,7 @@
 /**
  * Request to create a new evaluation.
  */
-export type CreateEvaluationRequest = { judge_model?: string, judge_api_base?: string, };
+export type CreateEvaluationRequest = {
+  judge_model?: string;
+  judge_api_base?: string;
+};

@@ -148,6 +148,13 @@ pub trait DatasetRepository: Send + Sync {
         project_id: Uuid,
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+        status: DatasetStatus,
+    ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
 }
 
 /// Contract for training job database operations.

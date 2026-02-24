@@ -10,7 +10,9 @@ export default function AcceptInvitePage() {
   const { getToken } = useAuth();
   const { user } = useUser();
   const router = useRouter();
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
   const [error, setError] = useState("");
 
   const handleAccept = async () => {

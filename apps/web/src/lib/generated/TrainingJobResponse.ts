@@ -8,4 +8,22 @@ import type { TrainingMode } from "./TrainingMode";
 /**
  * Training job information returned by API.
  */
-export type TrainingJobResponse = { id: string, project_id: string, dataset_id: string, base_model: string, method: TrainingMethod, mode: TrainingMode, hyperparams: Hyperparams, gpu_class: string | null, status: TrainingJobStatus, cost_estimate: number | null, actual_cost: number | null, metrics: TrainingMetrics, started_at: string | null, completed_at: string | null, error_message: string | null, created_at: string, updated_at: string, };
+export type TrainingJobResponse = {
+  id: string;
+  project_id: string;
+  dataset_id: string;
+  base_model: string;
+  method: TrainingMethod;
+  mode: TrainingMode;
+  hyperparams: Hyperparams;
+  gpu_class: string | null;
+  status: TrainingJobStatus;
+  cost_estimate: number | null;
+  actual_cost: number | null;
+  metrics: TrainingMetrics;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};

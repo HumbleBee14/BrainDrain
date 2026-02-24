@@ -70,7 +70,8 @@ export function OnboardingBanner() {
                     : "bg-zinc-800/50 text-zinc-500"
               }`}
             >
-              {completed && "✓ "}{stepLabels[step]}
+              {completed && "✓ "}
+              {stepLabels[step]}
             </div>
           );
         })}

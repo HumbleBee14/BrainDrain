@@ -11,7 +11,8 @@ function StatusBadge({ status }: { status: string }) {
     pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
     cost_approval: "bg-amber-900/50 text-amber-400 border-amber-800",
     provisioning: "bg-blue-900/50 text-blue-400 border-blue-800",
-    training: "bg-violet-900/50 text-violet-400 border-violet-800 animate-pulse",
+    training:
+      "bg-violet-900/50 text-violet-400 border-violet-800 animate-pulse",
     completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
     failed: "bg-red-900/50 text-red-400 border-red-800",
     cancelled: "bg-zinc-800 text-zinc-500 border-zinc-700",
@@ -20,17 +21,23 @@ function StatusBadge({ status }: { status: string }) {
   const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-sm font-medium ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-sm font-medium ${cls}`}
+    >
       {status.replace("_", " ")}
     </span>
   );
 }
 
-function MetricsChart({ metrics }: { metrics: { step: number; loss: number }[] }) {
+function MetricsChart({
+  metrics,
+}: {
+  metrics: { step: number; loss: number }[];
+}) {
   // Simple ASCII-style chart using CSS bars
   const maxLoss = useMemo(
     () => Math.max(...metrics.map((m) => m.loss), 0.001),
-    [metrics]
+    [metrics],
   );
 
   if (metrics.length === 0) {
@@ -61,7 +68,10 @@ function MetricsChart({ metrics }: { metrics: { step: number; loss: number }[] }
       </div>
       <div className="flex justify-between text-xs text-zinc-600">
         <span>Step {displayMetrics[0]?.step ?? 0}</span>
-        <span>Loss: {displayMetrics[displayMetrics.length - 1]?.loss.toFixed(4) ?? "-"}</span>
+        <span>
+          Loss:{" "}
+          {displayMetrics[displayMetrics.length - 1]?.loss.toFixed(4) ?? "-"}
+        </span>
         <span>Step {displayMetrics[displayMetrics.length - 1]?.step ?? 0}</span>
       </div>
     </div>
@@ -72,10 +82,11 @@ export default function TrainingJobDetailPage() {
   const params = useParams<{ id: string; jobId: string }>();
   const { data: job, isLoading, error } = useTrainingJob(params.jobId);
 
-  const isActiveTraining = job?.status === "training" || job?.status === "provisioning";
+  const isActiveTraining =
+    job?.status === "training" || job?.status === "provisioning";
   const { metrics: streamedMetrics, connected } = useTrainingMetricsStream(
     params.jobId,
-    isActiveTraining
+    isActiveTraining,
   );
 
   const chartMetrics = useMemo(
@@ -83,7 +94,7 @@ export default function TrainingJobDetailPage() {
       streamedMetrics
         .filter((m) => m.loss > 0)
         .map((m) => ({ step: Number(m.step), loss: Number(m.loss) })),
-    [streamedMetrics]
+    [streamedMetrics],
   );
 
   if (isLoading) {
@@ -98,7 +109,10 @@ export default function TrainingJobDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <p className="text-zinc-500">Training job not found</p>
-        <Link href={`/projects/${params.id}`} className="text-sm text-white underline hover:no-underline">
+        <Link
+          href={`/projects/${params.id}`}
+          className="text-sm text-white underline hover:no-underline"
+        >
           Back to Project
         </Link>
       </div>
@@ -129,7 +143,8 @@ export default function TrainingJobDetailPage() {
         </div>
         <p className="text-zinc-500 mt-1">
           {job.method.toUpperCase()} &middot; {job.mode} mode
-          {job.cost_estimate != null && ` \u00b7 Est. $${job.cost_estimate.toFixed(2)}`}
+          {job.cost_estimate != null &&
+            ` \u00b7 Est. $${job.cost_estimate.toFixed(2)}`}
         </p>
       </div>
 
@@ -150,25 +165,53 @@ export default function TrainingJobDetailPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-900/50">
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">Step</th>
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">Epoch</th>
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">Loss</th>
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">LR</th>
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">Grad Norm</th>
-                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">Phase</th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      Step
+                    </th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      Epoch
+                    </th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      Loss
+                    </th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      LR
+                    </th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      Grad Norm
+                    </th>
+                    <th className="text-left text-zinc-500 px-4 py-2 font-medium">
+                      Phase
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {streamedMetrics.slice(-20).reverse().map((m, i) => (
-                    <tr key={i} className="border-b border-zinc-800/50 last:border-b-0">
-                      <td className="px-4 py-1.5 text-white font-mono">{m.step}</td>
-                      <td className="px-4 py-1.5 text-zinc-400 font-mono">{Number(m.epoch).toFixed(2)}</td>
-                      <td className="px-4 py-1.5 text-zinc-400 font-mono">{Number(m.loss).toFixed(4)}</td>
-                      <td className="px-4 py-1.5 text-zinc-400 font-mono">{Number(m.learning_rate).toExponential(2)}</td>
-                      <td className="px-4 py-1.5 text-zinc-400 font-mono">{Number(m.grad_norm).toFixed(2)}</td>
-                      <td className="px-4 py-1.5 text-zinc-500">{m.phase}</td>
-                    </tr>
-                  ))}
+                  {streamedMetrics
+                    .slice(-20)
+                    .reverse()
+                    .map((m, i) => (
+                      <tr
+                        key={i}
+                        className="border-b border-zinc-800/50 last:border-b-0"
+                      >
+                        <td className="px-4 py-1.5 text-white font-mono">
+                          {m.step}
+                        </td>
+                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                          {Number(m.epoch).toFixed(2)}
+                        </td>
+                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                          {Number(m.loss).toFixed(4)}
+                        </td>
+                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                          {Number(m.learning_rate).toExponential(2)}
+                        </td>
+                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                          {Number(m.grad_norm).toFixed(2)}
+                        </td>
+                        <td className="px-4 py-1.5 text-zinc-500">{m.phase}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -179,7 +222,9 @@ export default function TrainingJobDetailPage() {
       {/* Job details grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Configuration</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+            Configuration
+          </p>
           <div className="space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-zinc-500">Base Model</span>
@@ -196,37 +241,49 @@ export default function TrainingJobDetailPage() {
             {job.gpu_class && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">GPU Class</span>
-                <span className="text-white">{job.gpu_class.toUpperCase()}</span>
+                <span className="text-white">
+                  {job.gpu_class.toUpperCase()}
+                </span>
               </div>
             )}
           </div>
         </div>
 
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Timing & Cost</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+            Timing & Cost
+          </p>
           <div className="space-y-1">
             {job.started_at && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Started</span>
-                <span className="text-white">{new Date(job.started_at).toLocaleString()}</span>
+                <span className="text-white">
+                  {new Date(job.started_at).toLocaleString()}
+                </span>
               </div>
             )}
             {job.completed_at && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Completed</span>
-                <span className="text-white">{new Date(job.completed_at).toLocaleString()}</span>
+                <span className="text-white">
+                  {new Date(job.completed_at).toLocaleString()}
+                </span>
               </div>
             )}
             {job.cost_estimate != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Estimated Cost</span>
-                <span className="text-white">${job.cost_estimate.toFixed(2)}</span>
+                <span className="text-white">
+                  ${job.cost_estimate.toFixed(2)}
+                </span>
               </div>
             )}
             {job.actual_cost != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Actual Cost</span>
-                <span className="text-white">${job.actual_cost.toFixed(2)}</span>
+                <span className="text-white">
+                  ${job.actual_cost.toFixed(2)}
+                </span>
               </div>
             )}
           </div>
@@ -235,7 +292,9 @@ export default function TrainingJobDetailPage() {
 
       {/* Hyperparameters */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">Hyperparameters</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">
+          Hyperparameters
+        </h2>
         <div className="rounded-lg border border-zinc-800 p-4">
           <pre className="text-sm text-zinc-400 font-mono overflow-x-auto">
             {JSON.stringify(job.hyperparams, null, 2)}
@@ -247,7 +306,9 @@ export default function TrainingJobDetailPage() {
       {job.error_message && (
         <div className="mb-8 rounded-lg border border-red-900/50 bg-red-900/10 p-4">
           <p className="text-sm font-medium text-red-400 mb-1">Error</p>
-          <p className="text-sm text-red-300/80 font-mono">{job.error_message}</p>
+          <p className="text-sm text-red-300/80 font-mono">
+            {job.error_message}
+          </p>
         </div>
       )}
     </div>

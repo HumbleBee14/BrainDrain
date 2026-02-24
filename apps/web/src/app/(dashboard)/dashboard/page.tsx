@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { OnboardingBanner } from "@/components/onboarding-banner";
-import { useDashboardStats, useUsageSummary, useRecentActivity } from "@/hooks/use-dashboard";
+import {
+  useDashboardStats,
+  useUsageSummary,
+  useRecentActivity,
+} from "@/hooks/use-dashboard";
 
 export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useDashboardStats();
   const { data: usage, isLoading: usageLoading } = useUsageSummary();
   const { data: activity, isLoading: activityLoading } = useRecentActivity();
 
-  const maxCost =
-    usage?.cost_by_day?.length
-      ? Math.max(...usage.cost_by_day.map((d) => d.cost_usd), 0.01)
-      : 0;
+  const maxCost = usage?.cost_by_day?.length
+    ? Math.max(...usage.cost_by_day.map((d) => d.cost_usd), 0.01)
+    : 0;
 
   return (
     <div>
@@ -55,7 +58,9 @@ export default function DashboardPage() {
       {/* Usage Summary + Cost Chart */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         <div className="border border-zinc-800 rounded-lg p-6">
-          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">Usage</h2>
+          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
+            Usage
+          </h2>
           {usageLoading ? (
             <p className="text-zinc-500">Loading...</p>
           ) : (
@@ -90,7 +95,9 @@ export default function DashboardPage() {
 
         {/* Cost Chart */}
         <div className="border border-zinc-800 rounded-lg p-6">
-          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">Daily Cost</h2>
+          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
+            Daily Cost
+          </h2>
           {usageLoading ? (
             <p className="text-zinc-500">Loading...</p>
           ) : !usage?.cost_by_day?.length ? (
@@ -98,7 +105,8 @@ export default function DashboardPage() {
           ) : (
             <div className="flex items-end gap-1 h-32">
               {usage.cost_by_day.map((day) => {
-                const heightPct = maxCost > 0 ? (day.cost_usd / maxCost) * 100 : 0;
+                const heightPct =
+                  maxCost > 0 ? (day.cost_usd / maxCost) * 100 : 0;
                 return (
                   <div
                     key={day.date}
@@ -156,17 +164,25 @@ export default function DashboardPage() {
         ) : (
           <div className="divide-y divide-zinc-800">
             {activity.slice(0, 10).map((entry) => (
-              <div key={entry.id} className="flex items-center justify-between px-4 py-3">
+              <div
+                key={entry.id}
+                className="flex items-center justify-between px-4 py-3"
+              >
                 <div className="flex items-center gap-3 min-w-0">
                   <ActivityIcon action={entry.action} />
                   <div className="min-w-0">
                     <p className="text-sm text-white truncate">
-                      <span className="font-medium">{formatAction(entry.action)}</span>
-                      {" "}
-                      <span className="text-zinc-400">{entry.resource_type}</span>
+                      <span className="font-medium">
+                        {formatAction(entry.action)}
+                      </span>{" "}
+                      <span className="text-zinc-400">
+                        {entry.resource_type}
+                      </span>
                     </p>
                     {entry.resource_id && (
-                      <p className="text-xs text-zinc-600 truncate">{entry.resource_id}</p>
+                      <p className="text-xs text-zinc-600 truncate">
+                        {entry.resource_id}
+                      </p>
                     )}
                   </div>
                 </div>

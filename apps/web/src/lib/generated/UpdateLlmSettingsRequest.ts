@@ -5,24 +5,25 @@
  *
  * All fields are optional — only provided fields are updated (merge semantics).
  */
-export type UpdateLlmSettingsRequest = { 
-/**
- * Provider identifier (e.g., "openai", "anthropic", "groq", "custom")
- */
-provider?: string, 
-/**
- * OpenAI-compatible API base URL
- */
-api_base_url?: string, 
-/**
- * API key — stored encrypted, never returned in full
- */
-api_key?: string, 
-/**
- * Model identifier (e.g., "gpt-4o-mini", "llama-3.1-70b-versatile")
- */
-model?: string, 
-/**
- * Max tokens per LLM call
- */
-max_tokens?: number, };
+export type UpdateLlmSettingsRequest = {
+  /**
+   * Provider identifier (e.g., "openai", "anthropic", "groq", "custom")
+   */
+  provider?: string;
+  /**
+   * OpenAI-compatible API base URL
+   */
+  api_base_url?: string;
+  /**
+   * API key — stored encrypted, never returned in full
+   */
+  api_key?: string;
+  /**
+   * Model identifier (e.g., "gpt-4o-mini", "llama-3.1-70b-versatile")
+   */
+  model?: string;
+  /**
+   * Max tokens per LLM call
+   */
+  max_tokens?: number;
+};

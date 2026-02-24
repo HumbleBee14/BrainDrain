@@ -5,10 +5,22 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useModel } from "@/hooks/use-models";
 import { useOnboarding } from "@/hooks/use-onboarding";
-import { useDeploymentStatus, useDeployModel, useUndeployModel } from "@/hooks/use-deployments";
-import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "@/hooks/use-api-keys";
+import {
+  useDeploymentStatus,
+  useDeployModel,
+  useUndeployModel,
+} from "@/hooks/use-deployments";
+import {
+  useApiKeys,
+  useCreateApiKey,
+  useRevokeApiKey,
+} from "@/hooks/use-api-keys";
 import { useEvaluations } from "@/hooks/use-evaluations";
-import { useModelExports, useCreateExport, useExportDownload } from "@/hooks/use-exports";
+import {
+  useModelExports,
+  useCreateExport,
+  useExportDownload,
+} from "@/hooks/use-exports";
 
 function DeploymentBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -21,7 +33,9 @@ function DeploymentBadge({ status }: { status: string }) {
   const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}
+    >
       {status}
     </span>
   );
@@ -38,7 +52,9 @@ function ExportStatusBadge({ status }: { status: string }) {
   const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
+    >
       {status}
     </span>
   );
@@ -54,7 +70,9 @@ function EvalStatusBadge({ status }: { status: string }) {
   const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
+    >
       {status}
     </span>
   );
@@ -105,7 +123,10 @@ export default function ModelDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <p className="text-zinc-500">Model not found</p>
-        <Link href={`/projects/${params.id}`} className="text-sm text-white underline hover:no-underline">
+        <Link
+          href={`/projects/${params.id}`}
+          className="text-sm text-white underline hover:no-underline"
+        >
           Back to Project
         </Link>
       </div>
@@ -152,41 +173,57 @@ export default function ModelDetailPage() {
       {/* Model info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Base Model</p>
-          <p className="text-white mt-1 text-sm">{model.base_model.split("/").pop()}</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Base Model
+          </p>
+          <p className="text-white mt-1 text-sm">
+            {model.base_model.split("/").pop()}
+          </p>
         </div>
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Version</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Version
+          </p>
           <p className="text-white mt-1 text-sm">v{model.version}</p>
         </div>
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Created</p>
-          <p className="text-white mt-1 text-sm">{new Date(model.created_at).toLocaleDateString()}</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Created
+          </p>
+          <p className="text-white mt-1 text-sm">
+            {new Date(model.created_at).toLocaleDateString()}
+          </p>
         </div>
       </div>
 
       {/* Eval scores summary (if available) */}
-      {model.eval_scores && typeof model.eval_scores === "object" && Object.keys(model.eval_scores).length > 0 && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Evaluation Scores</h2>
-            <Link
-              href={`/projects/${params.id}/models/${params.modelId}/evaluation`}
-              className="text-sm text-blue-400 hover:text-blue-300 transition"
-            >
-              View Details &rarr;
-            </Link>
+      {model.eval_scores &&
+        typeof model.eval_scores === "object" &&
+        Object.keys(model.eval_scores).length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">
+                Evaluation Scores
+              </h2>
+              <Link
+                href={`/projects/${params.id}/models/${params.modelId}/evaluation`}
+                className="text-sm text-blue-400 hover:text-blue-300 transition"
+              >
+                View Details &rarr;
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {typeof model.eval_scores.overall === "number" && (
+                <div className="rounded-lg border border-zinc-800 p-4 text-center">
+                  <p className="text-2xl font-bold text-white">
+                    {model.eval_scores.overall as number}/100
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-1">Overall</p>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {typeof model.eval_scores.overall === "number" && (
-              <div className="rounded-lg border border-zinc-800 p-4 text-center">
-                <p className="text-2xl font-bold text-white">{model.eval_scores.overall as number}/100</p>
-                <p className="text-xs text-zinc-500 mt-1">Overall</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        )}
 
       {/* Deployment section */}
       <div className="mb-8">
@@ -222,16 +259,22 @@ export default function ModelDetailPage() {
                   disabled={deployModel.isPending || isDeploying}
                   className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
                 >
-                  {deployModel.isPending || isDeploying ? "Deploying..." : "Deploy Model"}
+                  {deployModel.isPending || isDeploying
+                    ? "Deploying..."
+                    : "Deploy Model"}
                 </button>
               )}
             </div>
           </div>
           {deployModel.isError && (
-            <p className="text-sm text-red-400 mt-3">{deployModel.error.message}</p>
+            <p className="text-sm text-red-400 mt-3">
+              {deployModel.error.message}
+            </p>
           )}
           {undeployModel.isError && (
-            <p className="text-sm text-red-400 mt-3">{undeployModel.error.message}</p>
+            <p className="text-sm text-red-400 mt-3">
+              {undeployModel.error.message}
+            </p>
           )}
         </div>
       </div>
@@ -299,7 +342,9 @@ export default function ModelDetailPage() {
               </button>
             </div>
             {createApiKey.isError && (
-              <p className="text-sm text-red-400 mt-2">{createApiKey.error.message}</p>
+              <p className="text-sm text-red-400 mt-2">
+                {createApiKey.error.message}
+              </p>
             )}
           </div>
         )}
@@ -318,8 +363,10 @@ export default function ModelDetailPage() {
                     <code className="text-zinc-500">{k.key_prefix}...</code>
                     {" \u00b7 "}
                     {k.rate_limit} req/min
-                    {k.last_used_at && ` \u00b7 Last used ${new Date(k.last_used_at).toLocaleDateString()}`}
-                    {k.expires_at && ` \u00b7 Expires ${new Date(k.expires_at).toLocaleDateString()}`}
+                    {k.last_used_at &&
+                      ` \u00b7 Last used ${new Date(k.last_used_at).toLocaleDateString()}`}
+                    {k.expires_at &&
+                      ` \u00b7 Expires ${new Date(k.expires_at).toLocaleDateString()}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -347,7 +394,9 @@ export default function ModelDetailPage() {
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">
-            Evaluations {evaluations.length > 0 && `(${evalsData?.total ?? evaluations.length})`}
+            Evaluations{" "}
+            {evaluations.length > 0 &&
+              `(${evalsData?.total ?? evaluations.length})`}
           </h2>
           <Link
             href={`/projects/${params.id}/models/${params.modelId}/evaluation`}
@@ -370,8 +419,11 @@ export default function ModelDetailPage() {
                     Evaluation {new Date(ev.created_at).toLocaleString()}
                   </p>
                   <p className="text-xs text-zinc-600">
-                    {ev.scores?.overall != null && `Score: ${ev.scores.overall}/100 \u00b7 `}
-                    {ev.completed_at ? `Completed ${new Date(ev.completed_at).toLocaleDateString()}` : "In progress..."}
+                    {ev.scores?.overall != null &&
+                      `Score: ${ev.scores.overall}/100 \u00b7 `}
+                    {ev.completed_at
+                      ? `Completed ${new Date(ev.completed_at).toLocaleDateString()}`
+                      : "In progress..."}
                   </p>
                 </div>
                 <EvalStatusBadge status={ev.status} />
@@ -379,7 +431,9 @@ export default function ModelDetailPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-zinc-600">No evaluations yet. Run one to measure model quality.</p>
+          <p className="text-sm text-zinc-600">
+            No evaluations yet. Run one to measure model quality.
+          </p>
         )}
       </div>
 
@@ -399,7 +453,9 @@ export default function ModelDetailPage() {
               <option value="Q8_0">Q8_0 (highest quality)</option>
             </select>
             <button
-              onClick={() => createExport.mutate({ quant_type: exportQuantType })}
+              onClick={() =>
+                createExport.mutate({ quant_type: exportQuantType })
+              }
               disabled={createExport.isPending}
               className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition disabled:opacity-50"
             >
@@ -407,10 +463,13 @@ export default function ModelDetailPage() {
             </button>
           </div>
           <p className="text-xs text-zinc-600 mt-2">
-            Merge LoRA adapter into base model and export as quantized GGUF for local inference (llama.cpp, Ollama, LM Studio).
+            Merge LoRA adapter into base model and export as quantized GGUF for
+            local inference (llama.cpp, Ollama, LM Studio).
           </p>
           {createExport.isError && (
-            <p className="text-sm text-red-400 mt-2">{createExport.error.message}</p>
+            <p className="text-sm text-red-400 mt-2">
+              {createExport.error.message}
+            </p>
           )}
           {downloadError && (
             <p className="text-sm text-red-400 mt-2">{downloadError}</p>
@@ -445,10 +504,14 @@ export default function ModelDetailPage() {
                       onClick={async () => {
                         try {
                           setDownloadError(null);
-                          const result = await downloadExport.mutateAsync(exp.id);
+                          const result = await downloadExport.mutateAsync(
+                            exp.id,
+                          );
                           window.open(result.download_url, "_blank");
                         } catch (e) {
-                          setDownloadError(e instanceof Error ? e.message : "Download failed");
+                          setDownloadError(
+                            e instanceof Error ? e.message : "Download failed",
+                          );
                         }
                       }}
                       disabled={downloadExport.isPending}
@@ -467,7 +530,9 @@ export default function ModelDetailPage() {
       {/* Quick links */}
       {isActive && (
         <div className="rounded-lg border border-zinc-800 p-6">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4">Quick Links</h3>
+          <h3 className="text-sm font-medium text-zinc-400 mb-4">
+            Quick Links
+          </h3>
           <div className="flex gap-3">
             <Link
               href={`/projects/${params.id}/models/${params.modelId}/playground`}

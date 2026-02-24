@@ -4,9 +4,18 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useProject, useDeleteProject } from "@/hooks/use-projects";
 import { useDocuments, useUploadDocuments } from "@/hooks/use-documents";
-import { usePipelineStatus, useTriggerParse, useTriggerRefine } from "@/hooks/use-pipeline";
+import {
+  usePipelineStatus,
+  useTriggerParse,
+  useTriggerRefine,
+} from "@/hooks/use-pipeline";
 import { useDatasets } from "@/hooks/use-datasets";
-import { useTrainingJobs, useCreateTrainingJob, useCancelTrainingJob } from "@/hooks/use-training";
+import {
+  useTrainingJobs,
+  useCreateTrainingJob,
+  useCancelTrainingJob,
+  useEstimateTrainingCost,
+} from "@/hooks/use-training";
 import type { CreateTrainingJobInput } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,7 +29,6 @@ import {
   PipelineStageCard,
 } from "./components";
 
-
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -31,7 +39,12 @@ export default function ProjectDetailPage() {
     (pipelineStatus?.documents.parsing ?? 0) > 0 ||
     (pipelineStatus?.datasets.generating ?? 0) > 0 ||
     (pipelineStatus?.training_jobs?.training ?? 0) > 0;
-  const { data: docsData } = useDocuments(params.id, 0, 50, isActive ? 3000 : false);
+  const { data: docsData } = useDocuments(
+    params.id,
+    0,
+    50,
+    isActive ? 3000 : false,
+  );
   const { data: datasetsData } = useDatasets(params.id);
   const { data: trainingJobsData } = useTrainingJobs(params.id);
   const { data: modelsData } = useModels(params.id);
@@ -69,6 +82,7 @@ export default function ProjectDetailPage() {
     mode: "quick",
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { data: costEstimate } = useEstimateTrainingCost(params.id, trainForm);
 
   const documents = docsData?.data ?? [];
   const datasets = datasetsData?.data ?? [];
@@ -121,7 +135,10 @@ export default function ProjectDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <p className="text-zinc-500">Project not found</p>
-        <Link href="/projects" className="text-sm text-white underline hover:no-underline">
+        <Link
+          href="/projects"
+          className="text-sm text-white underline hover:no-underline"
+        >
           Back to Projects
         </Link>
       </div>
@@ -157,7 +174,9 @@ export default function ProjectDetailPage() {
       {/* Pipeline status overview */}
       {status && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">Pipeline Status</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">
+            Pipeline Status
+          </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
             <PipelineStageCard
               label="Uploaded"
@@ -205,7 +224,11 @@ export default function ProjectDetailPage() {
                   : "Parse Documents"}
             </button>
             <button
-              onClick={() => triggerRefine.mutate({ taskType: project.task_type || "question_answering" })}
+              onClick={() =>
+                triggerRefine.mutate({
+                  taskType: project.task_type || "question_answering",
+                })
+              }
               disabled={!hasParsed || triggerRefine.isPending || isGenerating}
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -218,19 +241,25 @@ export default function ProjectDetailPage() {
           </div>
 
           {triggerParse.isError && (
-            <p className="text-sm text-red-400 mt-2">{triggerParse.error.message}</p>
+            <p className="text-sm text-red-400 mt-2">
+              {triggerParse.error.message}
+            </p>
           )}
           {triggerRefine.isError && (
-            <p className="text-sm text-red-400 mt-2">{triggerRefine.error.message}</p>
+            <p className="text-sm text-red-400 mt-2">
+              {triggerRefine.error.message}
+            </p>
           )}
           {triggerParse.isSuccess && (
             <p className="text-sm text-emerald-400 mt-2">
-              Parse workflow started for {triggerParse.data.document_count} documents
+              Parse workflow started for {triggerParse.data.document_count}{" "}
+              documents
             </p>
           )}
           {triggerRefine.isSuccess && (
             <p className="text-sm text-emerald-400 mt-2">
-              Refine workflow started for {triggerRefine.data.document_count} documents
+              Refine workflow started for {triggerRefine.data.document_count}{" "}
+              documents
             </p>
           )}
         </div>
@@ -240,14 +269,16 @@ export default function ProjectDetailPage() {
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">
-            Documents {documents.length > 0 && `(${docsData?.total ?? documents.length})`}
+            Documents{" "}
+            {documents.length > 0 && `(${docsData?.total ?? documents.length})`}
           </h2>
         </div>
         <div
-          className={`rounded-lg border-2 border-dashed p-8 text-center transition ${isDragging
-            ? "border-blue-500 bg-blue-900/10"
-            : "border-zinc-700 hover:border-zinc-600"
-            }`}
+          className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
+            isDragging
+              ? "border-blue-500 bg-blue-900/10"
+              : "border-zinc-700 hover:border-zinc-600"
+          }`}
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragging(true);
@@ -260,7 +291,9 @@ export default function ProjectDetailPage() {
           ) : (
             <>
               <p className="text-zinc-500 mb-2">
-                {isDragging ? "Drop files here" : "Drag and drop files here or click to upload"}
+                {isDragging
+                  ? "Drop files here"
+                  : "Drag and drop files here or click to upload"}
               </p>
               <p className="text-xs text-zinc-600">
                 Supports PDF, DOCX, TXT, CSV, JSON, JSONL, MD (max 500 MB)
@@ -281,7 +314,9 @@ export default function ProjectDetailPage() {
             </>
           )}
           {uploadDocs.isError && (
-            <p className="text-sm text-red-400 mt-2">{uploadDocs.error.message}</p>
+            <p className="text-sm text-red-400 mt-2">
+              {uploadDocs.error.message}
+            </p>
           )}
           {uploadDocs.isSuccess && (
             <p className="text-sm text-emerald-400 mt-2">
@@ -316,7 +351,9 @@ export default function ProjectDetailPage() {
                 <div>
                   <p className="text-sm text-white">{ds.name}</p>
                   <p className="text-xs text-zinc-600">
-                    {ds.pair_count != null ? `${ds.pair_count} pairs` : "Generating..."}
+                    {ds.pair_count != null
+                      ? `${ds.pair_count} pairs`
+                      : "Generating..."}
                     {" \u00b7 "}
                     {ds.format}
                   </p>
@@ -332,7 +369,9 @@ export default function ProjectDetailPage() {
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">
-            Training Jobs {trainingJobs.length > 0 && `(${trainingJobsData?.total ?? trainingJobs.length})`}
+            Training Jobs{" "}
+            {trainingJobs.length > 0 &&
+              `(${trainingJobsData?.total ?? trainingJobs.length})`}
           </h2>
           <button
             onClick={() => setShowTrainForm(!showTrainForm)}
@@ -348,10 +387,14 @@ export default function ProjectDetailPage() {
           <div className="rounded-lg border border-zinc-800 p-4 mb-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               <div>
-                <label className="block text-xs text-zinc-500 mb-1">Dataset</label>
+                <label className="block text-xs text-zinc-500 mb-1">
+                  Dataset
+                </label>
                 <select
                   value={trainForm.dataset_id}
-                  onChange={(e) => setTrainForm({ ...trainForm, dataset_id: e.target.value })}
+                  onChange={(e) =>
+                    setTrainForm({ ...trainForm, dataset_id: e.target.value })
+                  }
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="">Select dataset...</option>
@@ -363,25 +406,47 @@ export default function ProjectDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 mb-1">Base Model</label>
+                <label className="block text-xs text-zinc-500 mb-1">
+                  Base Model
+                </label>
                 <select
                   value={trainForm.base_model}
-                  onChange={(e) => setTrainForm({ ...trainForm, base_model: e.target.value })}
+                  onChange={(e) =>
+                    setTrainForm({ ...trainForm, base_model: e.target.value })
+                  }
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
-                  <option value="unsloth/Llama-3.2-1B-Instruct">Llama 3.2 1B Instruct</option>
-                  <option value="unsloth/Llama-3.2-3B-Instruct">Llama 3.2 3B Instruct</option>
-                  <option value="unsloth/Meta-Llama-3.1-8B-Instruct">Llama 3.1 8B Instruct</option>
-                  <option value="unsloth/Qwen2.5-7B-Instruct">Qwen 2.5 7B Instruct</option>
-                  <option value="unsloth/Mistral-7B-Instruct-v0.3">Mistral 7B Instruct v0.3</option>
+                  <option value="unsloth/Llama-3.2-1B-Instruct">
+                    Llama 3.2 1B Instruct
+                  </option>
+                  <option value="unsloth/Llama-3.2-3B-Instruct">
+                    Llama 3.2 3B Instruct
+                  </option>
+                  <option value="unsloth/Meta-Llama-3.1-8B-Instruct">
+                    Llama 3.1 8B Instruct
+                  </option>
+                  <option value="unsloth/Qwen2.5-7B-Instruct">
+                    Qwen 2.5 7B Instruct
+                  </option>
+                  <option value="unsloth/Mistral-7B-Instruct-v0.3">
+                    Mistral 7B Instruct v0.3
+                  </option>
                   <option value="unsloth/gemma-2-2b-it">Gemma 2 2B IT</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 mb-1">Method</label>
+                <label className="block text-xs text-zinc-500 mb-1">
+                  Method
+                </label>
                 <select
                   value={trainForm.method}
-                  onChange={(e) => setTrainForm({ ...trainForm, method: e.target.value as CreateTrainingJobInput["method"] })}
+                  onChange={(e) =>
+                    setTrainForm({
+                      ...trainForm,
+                      method: e.target
+                        .value as CreateTrainingJobInput["method"],
+                    })
+                  }
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="qlora">QLoRA (4-bit, fastest)</option>
@@ -393,7 +458,12 @@ export default function ProjectDetailPage() {
                 <label className="block text-xs text-zinc-500 mb-1">Mode</label>
                 <select
                   value={trainForm.mode}
-                  onChange={(e) => setTrainForm({ ...trainForm, mode: e.target.value as CreateTrainingJobInput["mode"] })}
+                  onChange={(e) =>
+                    setTrainForm({
+                      ...trainForm,
+                      mode: e.target.value as CreateTrainingJobInput["mode"],
+                    })
+                  }
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="quick">Quick (SFT only)</option>
@@ -403,10 +473,17 @@ export default function ProjectDetailPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 mb-1">GPU Class</label>
+                <label className="block text-xs text-zinc-500 mb-1">
+                  GPU Class
+                </label>
                 <select
                   value={trainForm.gpu_class ?? ""}
-                  onChange={(e) => setTrainForm({ ...trainForm, gpu_class: e.target.value || undefined })}
+                  onChange={(e) =>
+                    setTrainForm({
+                      ...trainForm,
+                      gpu_class: e.target.value || undefined,
+                    })
+                  }
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
                 >
                   <option value="">Auto (default)</option>
@@ -419,6 +496,35 @@ export default function ProjectDetailPage() {
                 </select>
               </div>
             </div>
+            {/* Cost estimate breakdown */}
+            {costEstimate && (
+              <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
+                <p className="text-zinc-400 font-medium mb-1">Estimated Cost</p>
+                <p className="text-white text-lg font-semibold">
+                  ${costEstimate.cost_estimate.toFixed(2)}
+                </p>
+                <div className="mt-1 text-xs text-zinc-500 space-y-0.5">
+                  <p>
+                    GPU: {costEstimate.gpu_class.toUpperCase()} ($
+                    {costEstimate.gpu_rate_per_hour.toFixed(2)}/hr)
+                  </p>
+                  <p>
+                    Duration: ~{costEstimate.estimated_hours.toFixed(1)} hours
+                  </p>
+                  <p>
+                    Mode: {trainForm.mode}{" "}
+                    {trainForm.mode === "aligned"
+                      ? "(SFT + DPO)"
+                      : trainForm.mode === "reasoning"
+                        ? "(SFT + GRPO)"
+                        : trainForm.mode === "iterative"
+                          ? "(multi-round)"
+                          : "(SFT only)"}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => {
@@ -429,7 +535,11 @@ export default function ProjectDetailPage() {
                 disabled={!trainForm.dataset_id || createTrainingJob.isPending}
                 className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50"
               >
-                {createTrainingJob.isPending ? "Starting..." : "Start Training Job"}
+                {createTrainingJob.isPending
+                  ? "Starting..."
+                  : costEstimate
+                    ? `Start Training (~$${costEstimate.cost_estimate.toFixed(2)})`
+                    : "Start Training Job"}
               </button>
               <button
                 onClick={() => setShowTrainForm(false)}
@@ -439,7 +549,9 @@ export default function ProjectDetailPage() {
               </button>
             </div>
             {createTrainingJob.isError && (
-              <p className="text-sm text-red-400">{createTrainingJob.error.message}</p>
+              <p className="text-sm text-red-400">
+                {createTrainingJob.error.message}
+              </p>
             )}
           </div>
         )}
@@ -459,7 +571,8 @@ export default function ProjectDetailPage() {
                   </p>
                   <p className="text-xs text-zinc-600">
                     {job.method.toUpperCase()}
-                    {job.cost_estimate != null && ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
+                    {job.cost_estimate != null &&
+                      ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
                     {" \u00b7 "}
                     {new Date(job.created_at).toLocaleDateString()}
                   </p>
@@ -486,7 +599,7 @@ export default function ProjectDetailPage() {
         {trainingJobs.length === 0 && !showTrainForm && (
           <p className="text-sm text-zinc-600">
             {hasApprovedDatasets
-              ? "No training jobs yet. Click \"Start Training\" to begin."
+              ? 'No training jobs yet. Click "Start Training" to begin.'
               : "Approve a dataset first to start training."}
           </p>
         )}
@@ -508,7 +621,8 @@ export default function ProjectDetailPage() {
                 <div>
                   <p className="text-sm text-white">{model.name}</p>
                   <p className="text-xs text-zinc-600">
-                    v{model.version} &middot; {model.base_model.split("/").pop()}
+                    v{model.version} &middot;{" "}
+                    {model.base_model.split("/").pop()}
                   </p>
                 </div>
                 <DeploymentStatusBadge status={model.deployment_status} />
@@ -521,17 +635,23 @@ export default function ProjectDetailPage() {
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Task Type</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Task Type
+          </p>
           <p className="text-white mt-1">{project.task_type || "Not set"}</p>
         </div>
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Created</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Created
+          </p>
           <p className="text-white mt-1">
             {new Date(project.created_at).toLocaleDateString()}
           </p>
         </div>
         <div className="rounded-lg border border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">Updated</p>
+          <p className="text-xs text-zinc-500 uppercase tracking-wider">
+            Updated
+          </p>
           <p className="text-white mt-1">
             {new Date(project.updated_at).toLocaleDateString()}
           </p>
@@ -544,15 +664,18 @@ export default function ProjectDetailPage() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-white">Delete this project</p>
-            <p className="text-xs text-zinc-600">This action cannot be undone.</p>
+            <p className="text-xs text-zinc-600">
+              This action cannot be undone.
+            </p>
           </div>
           <button
             onClick={handleDelete}
             disabled={deleteProject.isPending}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${confirmDelete
-              ? "bg-red-600 text-white hover:bg-red-500"
-              : "border border-red-800 text-red-400 hover:bg-red-900/30"
-              } disabled:opacity-50`}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+              confirmDelete
+                ? "bg-red-600 text-white hover:bg-red-500"
+                : "border border-red-800 text-red-400 hover:bg-red-900/30"
+            } disabled:opacity-50`}
           >
             {deleteProject.isPending
               ? "Deleting..."

@@ -7,4 +7,4 @@ import type { LlmProviderConfig } from "./LlmProviderConfig";
  * Extensible — new config namespaces are added as optional fields.
  * No migration needed: the `settings` column already exists.
  */
-export type TenantSettings = { llm: LlmProviderConfig | null, };
+export type TenantSettings = { llm: LlmProviderConfig | null };

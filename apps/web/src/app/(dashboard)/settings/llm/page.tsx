@@ -18,13 +18,20 @@ const PROVIDERS = [
     id: "groq",
     label: "Groq",
     defaultUrl: "https://api.groq.com/openai/v1",
-    models: ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+    models: [
+      "llama-3.1-70b-versatile",
+      "llama-3.1-8b-instant",
+      "mixtral-8x7b-32768",
+    ],
   },
   {
     id: "together",
     label: "Together AI",
     defaultUrl: "https://api.together.xyz/v1",
-    models: ["meta-llama/Llama-3.1-70B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"],
+    models: [
+      "meta-llama/Llama-3.1-70B-Instruct",
+      "meta-llama/Llama-3.1-8B-Instruct",
+    ],
   },
   {
     id: "ollama",
@@ -131,8 +138,9 @@ export default function LlmSettingsPage() {
     <div className="max-w-4xl">
       <h1 className="text-2xl font-bold text-white mb-2">LLM Provider</h1>
       <p className="text-zinc-400 mb-8">
-        Configure which LLM provider is used for synthetic data generation, evaluation judging,
-        and training reward scoring. If not configured, the platform&apos;s default provider is used.
+        Configure which LLM provider is used for synthetic data generation,
+        evaluation judging, and training reward scoring. If not configured, the
+        platform&apos;s default provider is used.
       </p>
 
       {isLoading ? (
@@ -155,7 +163,10 @@ export default function LlmSettingsPage() {
                     Custom provider configured
                     {settings.provider && (
                       <span className="text-zinc-400">
-                        {" "}&mdash; {PROVIDERS.find((p) => p.id === settings.provider)?.label ?? settings.provider}
+                        {" "}
+                        &mdash;{" "}
+                        {PROVIDERS.find((p) => p.id === settings.provider)
+                          ?.label ?? settings.provider}
                       </span>
                     )}
                     {settings.api_key_masked && (
@@ -166,7 +177,8 @@ export default function LlmSettingsPage() {
                   </>
                 ) : (
                   <span className="text-zinc-400">
-                    Using platform defaults &mdash; configure your own provider below
+                    Using platform defaults &mdash; configure your own provider
+                    below
                   </span>
                 )}
               </span>
@@ -176,13 +188,17 @@ export default function LlmSettingsPage() {
           {/* Configuration Form */}
           <div className="border border-zinc-800 rounded-lg">
             <div className="p-4 border-b border-zinc-800">
-              <h2 className="text-lg font-semibold text-white">Configuration</h2>
+              <h2 className="text-lg font-semibold text-white">
+                Configuration
+              </h2>
             </div>
 
             <div className="p-6 space-y-6">
               {/* Provider */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">Provider</label>
+                <label className="block text-sm text-zinc-400 mb-2">
+                  Provider
+                </label>
                 <select
                   value={form.provider}
                   onChange={(e) => handleProviderChange(e.target.value)}
@@ -198,7 +214,9 @@ export default function LlmSettingsPage() {
 
               {/* API Base URL */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">API Base URL</label>
+                <label className="block text-sm text-zinc-400 mb-2">
+                  API Base URL
+                </label>
                 <input
                   type="url"
                   value={form.api_base_url}
@@ -213,7 +231,9 @@ export default function LlmSettingsPage() {
 
               {/* API Key */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">API Key</label>
+                <label className="block text-sm text-zinc-400 mb-2">
+                  API Key
+                </label>
                 <div className="relative">
                   <input
                     type={showApiKey ? "text" : "password"}
@@ -235,18 +255,23 @@ export default function LlmSettingsPage() {
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Your API key is stored securely and never returned in full. Only a masked version is displayed.
+                  Your API key is stored securely and never returned in full.
+                  Only a masked version is displayed.
                 </p>
               </div>
 
               {/* Model */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">Model</label>
+                <label className="block text-sm text-zinc-400 mb-2">
+                  Model
+                </label>
                 {selectedProvider && selectedProvider.models.length > 0 ? (
                   <div className="flex gap-2">
                     <select
                       value={
-                        selectedProvider.models.includes(form.model) ? form.model : "__custom__"
+                        selectedProvider.models.includes(form.model)
+                          ? form.model
+                          : "__custom__"
                       }
                       onChange={(e) => {
                         if (e.target.value !== "__custom__") {
@@ -289,17 +314,22 @@ export default function LlmSettingsPage() {
 
               {/* Max Tokens */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">Max Tokens</label>
+                <label className="block text-sm text-zinc-400 mb-2">
+                  Max Tokens
+                </label>
                 <input
                   type="number"
                   value={form.max_tokens}
-                  onChange={(e) => updateField("max_tokens", parseInt(e.target.value) || 0)}
+                  onChange={(e) =>
+                    updateField("max_tokens", parseInt(e.target.value) || 0)
+                  }
                   min={100}
                   max={128000}
                   className="w-48 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 />
                 <p className="text-xs text-zinc-500 mt-1">
-                  Maximum tokens per LLM call for data generation and evaluation judging.
+                  Maximum tokens per LLM call for data generation and evaluation
+                  judging.
                 </p>
               </div>
             </div>
@@ -318,7 +348,9 @@ export default function LlmSettingsPage() {
                 <>
                   {showDeleteConfirm ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-zinc-400">Reset to platform defaults?</span>
+                      <span className="text-sm text-zinc-400">
+                        Reset to platform defaults?
+                      </span>
                       <button
                         onClick={handleDelete}
                         disabled={deleteSettings.isPending}
@@ -345,10 +377,14 @@ export default function LlmSettingsPage() {
               )}
 
               {updateSettings.isError && (
-                <p className="text-red-400 text-sm">{updateSettings.error.message}</p>
+                <p className="text-red-400 text-sm">
+                  {updateSettings.error.message}
+                </p>
               )}
               {deleteSettings.isError && (
-                <p className="text-red-400 text-sm">{deleteSettings.error.message}</p>
+                <p className="text-red-400 text-sm">
+                  {deleteSettings.error.message}
+                </p>
               )}
               {updateSettings.isSuccess && !hasChanges && (
                 <p className="text-emerald-400 text-sm">Saved.</p>
@@ -358,26 +394,29 @@ export default function LlmSettingsPage() {
 
           {/* How It Works */}
           <div className="border border-zinc-800 rounded-lg mt-6 p-6">
-            <h3 className="text-sm font-semibold text-white mb-3">How it works</h3>
+            <h3 className="text-sm font-semibold text-white mb-3">
+              How it works
+            </h3>
             <ul className="space-y-2 text-sm text-zinc-400">
               <li className="flex items-start gap-2">
                 <span className="text-zinc-600 mt-0.5">1.</span>
-                When configured, your LLM provider is used for synthetic data generation,
-                evaluation judging, and training reward scoring.
+                When configured, your LLM provider is used for synthetic data
+                generation, evaluation judging, and training reward scoring.
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-zinc-600 mt-0.5">2.</span>
-                API calls are made directly from the workers to your provider &mdash;
-                the platform never proxies or stores your LLM traffic.
+                API calls are made directly from the workers to your provider
+                &mdash; the platform never proxies or stores your LLM traffic.
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-zinc-600 mt-0.5">3.</span>
-                If no custom provider is configured, the platform&apos;s default LLM
-                provider is used (usage may be subject to platform billing).
+                If no custom provider is configured, the platform&apos;s default
+                LLM provider is used (usage may be subject to platform billing).
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-zinc-600 mt-0.5">4.</span>
-                Any OpenAI-compatible API works (OpenAI, Groq, Together AI, Ollama, vLLM, etc.).
+                Any OpenAI-compatible API works (OpenAI, Groq, Together AI,
+                Ollama, vLLM, etc.).
               </li>
             </ul>
           </div>

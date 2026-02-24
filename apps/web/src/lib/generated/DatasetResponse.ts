@@ -5,4 +5,14 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Dataset information returned by API.
  */
-export type DatasetResponse = { id: string, project_id: string, name: string, format: string, status: DatasetStatus, pair_count: number | null, stats: JsonValue, created_at: string, updated_at: string, };
+export type DatasetResponse = {
+  id: string;
+  project_id: string;
+  name: string;
+  format: string;
+  status: DatasetStatus;
+  pair_count: number | null;
+  stats: JsonValue;
+  created_at: string;
+  updated_at: string;
+};

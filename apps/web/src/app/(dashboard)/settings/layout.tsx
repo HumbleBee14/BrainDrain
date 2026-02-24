@@ -11,7 +11,11 @@ const tabs = [
   { label: "Notifications", href: "/settings/notifications" },
 ];
 
-export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+export default function SettingsLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
 
   return (

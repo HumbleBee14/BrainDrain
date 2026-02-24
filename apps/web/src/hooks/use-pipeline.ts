@@ -46,7 +46,9 @@ export function useTriggerParse(projectId: string) {
       return api.pipeline.triggerParse(token, projectId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pipeline-status", projectId] });
+      queryClient.invalidateQueries({
+        queryKey: ["pipeline-status", projectId],
+      });
       queryClient.invalidateQueries({ queryKey: ["documents", projectId] });
     },
   });
@@ -67,7 +69,9 @@ export function useTriggerRefine(projectId: string) {
       return api.pipeline.triggerRefine(token, projectId, taskType, config);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pipeline-status", projectId] });
+      queryClient.invalidateQueries({
+        queryKey: ["pipeline-status", projectId],
+      });
       queryClient.invalidateQueries({ queryKey: ["datasets", projectId] });
     },
   });

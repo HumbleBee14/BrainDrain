@@ -4,4 +4,12 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Audit log entry returned by API.
  */
-export type AuditLogResponse = { id: string, actor_id: string, action: string, resource_type: string, resource_id: string | null, metadata: JsonValue, created_at: string, };
+export type AuditLogResponse = {
+  id: string;
+  actor_id: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: JsonValue;
+  created_at: string;
+};

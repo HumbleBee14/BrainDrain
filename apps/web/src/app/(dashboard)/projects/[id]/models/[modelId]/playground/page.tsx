@@ -23,7 +23,9 @@ export default function PlaygroundPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("You are a helpful assistant.");
+  const [systemPrompt, setSystemPrompt] = useState(
+    "You are a helpful assistant.",
+  );
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(512);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,7 +94,9 @@ export default function PlaygroundPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: { message: "Request failed" } }));
+        const body = await res
+          .json()
+          .catch(() => ({ error: { message: "Request failed" } }));
         throw new Error(body.error?.message || `HTTP ${res.status}`);
       }
 
@@ -115,7 +119,8 @@ export default function PlaygroundPage() {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]") continue;
+          if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]")
+            continue;
 
           try {
             const chunk = JSON.parse(trimmed.slice(6));
@@ -124,7 +129,10 @@ export default function PlaygroundPage() {
               setMessages((prev) => {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
-                updated[updated.length - 1] = { ...last, content: last.content + token };
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: last.content + token,
+                };
                 return updated;
               });
             }
@@ -163,7 +171,9 @@ export default function PlaygroundPage() {
         </div>
         <div className="rounded-lg border border-zinc-800 p-8 text-center">
           <p className="text-zinc-500 mb-2">Model is not deployed.</p>
-          <p className="text-xs text-zinc-600 mb-4">Deploy the model first to use the playground.</p>
+          <p className="text-xs text-zinc-600 mb-4">
+            Deploy the model first to use the playground.
+          </p>
           <Link
             href={`/projects/${params.id}/models/${params.modelId}`}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition"
@@ -200,7 +210,9 @@ export default function PlaygroundPage() {
       {showSettings && (
         <div className="rounded-lg border border-zinc-800 p-4 mb-4 shrink-0 space-y-3">
           <div>
-            <label className="block text-xs text-zinc-500 mb-1">System Prompt</label>
+            <label className="block text-xs text-zinc-500 mb-1">
+              System Prompt
+            </label>
             <textarea
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
@@ -210,7 +222,9 @@ export default function PlaygroundPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Temperature: {temperature}</label>
+              <label className="block text-xs text-zinc-500 mb-1">
+                Temperature: {temperature}
+              </label>
               <input
                 type="range"
                 min={0}
@@ -222,7 +236,9 @@ export default function PlaygroundPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-zinc-500 mb-1">Max Tokens: {maxTokens}</label>
+              <label className="block text-xs text-zinc-500 mb-1">
+                Max Tokens: {maxTokens}
+              </label>
               <input
                 type="range"
                 min={64}
@@ -266,22 +282,21 @@ export default function PlaygroundPage() {
                 </div>
               </div>
             ))}
-            {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
-              <div className="flex justify-start">
-                <div className="bg-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400 animate-pulse">
-                  Generating...
+            {isLoading &&
+              messages[messages.length - 1]?.role !== "assistant" && (
+                <div className="flex justify-start">
+                  <div className="bg-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400 animate-pulse">
+                    Generating...
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
             <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
       {/* Error display */}
-      {error && (
-        <p className="text-sm text-red-400 mb-2 shrink-0">{error}</p>
-      )}
+      {error && <p className="text-sm text-red-400 mb-2 shrink-0">{error}</p>}
 
       {/* Input area */}
       <div className="flex gap-2 shrink-0">

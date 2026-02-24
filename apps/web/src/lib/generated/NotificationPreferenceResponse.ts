@@ -4,4 +4,10 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Notification preference returned by API.
  */
-export type NotificationPreferenceResponse = { id: string, channel: string, event_type: string, enabled: boolean, config: JsonValue, };
+export type NotificationPreferenceResponse = {
+  id: string;
+  channel: string;
+  event_type: string;
+  enabled: boolean;
+  config: JsonValue;
+};

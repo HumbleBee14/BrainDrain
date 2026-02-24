@@ -3,4 +3,11 @@
 /**
  * Project status.
  */
-export type ProjectStatus = "created" | "ingesting" | "refining" | "training" | "evaluating" | "deployed" | "archived";
+export type ProjectStatus =
+  | "created"
+  | "ingesting"
+  | "refining"
+  | "training"
+  | "evaluating"
+  | "deployed"
+  | "archived";

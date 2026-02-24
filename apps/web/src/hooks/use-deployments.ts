@@ -2,7 +2,11 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type Model, type DeploymentStatusResponse } from "@/lib/api-client";
+import {
+  api,
+  type Model,
+  type DeploymentStatusResponse,
+} from "@/lib/api-client";
 
 export function useDeploymentStatus(modelId: string, enabled = true) {
   const { getToken } = useAuth();
@@ -37,7 +41,9 @@ export function useDeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
+      queryClient.invalidateQueries({
+        queryKey: ["models", "detail", modelId],
+      });
     },
   });
 }
@@ -56,7 +62,9 @@ export function useUndeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
+      queryClient.invalidateQueries({
+        queryKey: ["models", "detail", modelId],
+      });
     },
   });
 }

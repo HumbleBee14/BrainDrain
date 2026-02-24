@@ -23,7 +23,7 @@ export function useUpdatePreferences() {
           enabled: boolean;
           config?: Record<string, unknown>;
         }>;
-      }
+      },
     ) => api.notifications.updatePreferences(token, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });

@@ -4,4 +4,25 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Training hyperparameters (stored in training_jobs.hyperparams).
  */
-export type Hyperparams = { r: number, lora_alpha: number, lora_dropout: number, target_modules: Array<string>, learning_rate: number, per_device_train_batch_size: number, gradient_accumulation_steps: number, num_train_epochs: number, warmup_steps: number, optim: string, lr_scheduler_type: string, max_seq_length: number, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });
+export type Hyperparams = {
+  r: number;
+  lora_alpha: number;
+  lora_dropout: number;
+  target_modules: Array<string>;
+  learning_rate: number;
+  per_device_train_batch_size: number;
+  gradient_accumulation_steps: number;
+  num_train_epochs: number;
+  warmup_steps: number;
+  optim: string;
+  lr_scheduler_type: string;
+  max_seq_length: number;
+} & {
+  [key in string]:
+    | number
+    | string
+    | boolean
+    | Array<JsonValue>
+    | { [key in string]: JsonValue }
+    | null;
+};

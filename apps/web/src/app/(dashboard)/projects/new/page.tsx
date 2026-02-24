@@ -6,7 +6,10 @@ import Link from "next/link";
 import { useCreateProject } from "@/hooks/use-projects";
 import { useFormValidation } from "@/hooks/use-form-validation";
 import { useOnboarding } from "@/hooks/use-onboarding";
-import { createProjectSchema, type CreateProjectInput } from "@/lib/validations";
+import {
+  createProjectSchema,
+  type CreateProjectInput,
+} from "@/lib/validations";
 
 const TASK_TYPES = [
   { value: "chat", label: "Chat / Conversational" },
@@ -22,7 +25,8 @@ export default function NewProjectPage() {
   const router = useRouter();
   const createProject = useCreateProject();
   const { markStepComplete } = useOnboarding();
-  const { errors, validate, clearFieldError } = useFormValidation<CreateProjectInput>(createProjectSchema);
+  const { errors, validate, clearFieldError } =
+    useFormValidation<CreateProjectInput>(createProjectSchema);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -30,7 +34,11 @@ export default function NewProjectPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const data = validate({ name, description, task_type: taskType || undefined });
+    const data = validate({
+      name,
+      description,
+      task_type: taskType || undefined,
+    });
     if (!data) return;
 
     try {
@@ -59,7 +67,10 @@ export default function NewProjectPage() {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <div>
-          <label htmlFor="name" className="block text-sm font-medium text-zinc-300 mb-1">
+          <label
+            htmlFor="name"
+            className="block text-sm font-medium text-zinc-300 mb-1"
+          >
             Project Name
           </label>
           <input
@@ -72,11 +83,16 @@ export default function NewProjectPage() {
             placeholder="e.g. Customer Support Bot"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
           />
-          {errors.name && <p className="text-sm text-red-400 mt-1">{errors.name}</p>}
+          {errors.name && (
+            <p className="text-sm text-red-400 mt-1">{errors.name}</p>
+          )}
         </div>
 
         <div>
-          <label htmlFor="description" className="block text-sm font-medium text-zinc-300 mb-1">
+          <label
+            htmlFor="description"
+            className="block text-sm font-medium text-zinc-300 mb-1"
+          >
             Description
             <span className="text-zinc-600 font-normal ml-1">(optional)</span>
           </label>
@@ -89,11 +105,16 @@ export default function NewProjectPage() {
             placeholder="What is this model for?"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 resize-none"
           />
-          {errors.description && <p className="text-sm text-red-400 mt-1">{errors.description}</p>}
+          {errors.description && (
+            <p className="text-sm text-red-400 mt-1">{errors.description}</p>
+          )}
         </div>
 
         <div>
-          <label htmlFor="task_type" className="block text-sm font-medium text-zinc-300 mb-1">
+          <label
+            htmlFor="task_type"
+            className="block text-sm font-medium text-zinc-300 mb-1"
+          >
             Task Type
             <span className="text-zinc-600 font-normal ml-1">(optional)</span>
           </label>
@@ -129,9 +150,7 @@ export default function NewProjectPage() {
         </div>
 
         {createProject.isError && (
-          <p className="text-sm text-red-400">
-            {createProject.error.message}
-          </p>
+          <p className="text-sm text-red-400">{createProject.error.message}</p>
         )}
       </form>
     </div>
