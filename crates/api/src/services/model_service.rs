@@ -80,12 +80,12 @@ impl ModelService {
                 message: "Current model not found".to_string(),
             })?;
 
-        let target = repo
-            .get_by_id(tenant_id, target_version_id)
-            .await?
-            .ok_or(AppError::NotFound {
-                message: "Target version not found".to_string(),
-            })?;
+        let target =
+            repo.get_by_id(tenant_id, target_version_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: "Target version not found".to_string(),
+                })?;
 
         // Must be the same base_model within the same project
         if current.project_id != target.project_id || current.base_model != target.base_model {

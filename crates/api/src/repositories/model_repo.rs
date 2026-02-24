@@ -218,6 +218,7 @@ impl ModelRepository for PgModelRepo {
                 SELECT * FROM models
                 WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3
                 ORDER BY version DESC
+                LIMIT 100
                 "#,
             )
             .bind(project_id)

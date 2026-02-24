@@ -42,7 +42,11 @@ pub fn router() -> Router<AppState> {
             "/projects/{project_id}/training-jobs/estimate",
             post(estimate_training_cost),
         )
-        // Training metrics
+        // Training status + metrics streams
+        .route(
+            "/training-jobs/{id}/status/stream",
+            get(stream_training_status),
+        )
         .route(
             "/training-jobs/{id}/metrics/stream",
             get(stream_training_metrics),
@@ -269,6 +273,68 @@ pub async fn cancel_training_job(
     Ok(Json(job))
 }
 
+/// GET /api/v1/training-jobs/:id/status/stream
+///
+/// SSE endpoint that pushes training job status changes. Polls DB server-side
+/// every 3s and only emits when the status field changes, converting N client
+/// polls into 1 server-side poll regardless of connected clients.
+pub async fn stream_training_status(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
+    use platform_shared::enums::TrainingJobStatus;
+
+    let initial = TrainingJobService::get(state.training_job_repo(), user.tenant_id, id).await?;
+    let tenant_id = user.tenant_id;
+
+    let stream = async_stream::stream! {
+        let mut last_status = initial.status;
+
+        if let Ok(json) = serde_json::to_string(&initial) {
+            yield Ok(Event::default().data(json).event("status"));
+        }
+
+        let terminal = |s: TrainingJobStatus| matches!(
+            s,
+            TrainingJobStatus::Completed | TrainingJobStatus::Failed | TrainingJobStatus::Cancelled
+        );
+
+        if terminal(last_status) {
+            return;
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            match TrainingJobService::get(state.training_job_repo(), tenant_id, id).await {
+                Ok(job) => {
+                    if job.status != last_status {
+                        last_status = job.status;
+                        if let Ok(json) = serde_json::to_string(&job) {
+                            yield Ok(Event::default().data(json).event("status"));
+                        }
+                        if terminal(last_status) {
+                            return;
+                        }
+                    } else {
+                        yield Ok(Event::default().comment("heartbeat"));
+                    }
+                }
+                Err(_) => {
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
+}
+
 /// GET /api/v1/training-jobs/:id/metrics/stream
 ///
 /// SSE endpoint that streams real-time training metrics from Redis.
@@ -471,12 +537,12 @@ pub async fn rollback_model(
 ) -> AppResult<Json<ModelResponse>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let target_id: Uuid = body
-        .target_version_id
-        .parse()
-        .map_err(|_| crate::error::AppError::BadRequest {
-            message: "Invalid target_version_id".to_string(),
-        })?;
+    let target_id: Uuid =
+        body.target_version_id
+            .parse()
+            .map_err(|_| crate::error::AppError::BadRequest {
+                message: "Invalid target_version_id".to_string(),
+            })?;
 
     let result = ModelService::rollback(state.model_repo(), user.tenant_id, id, target_id).await?;
 

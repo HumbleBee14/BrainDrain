@@ -9,6 +9,7 @@ import {
   type CreateTrainingJobInput,
 } from "@/lib/api-client";
 import { useAuthedQuery, useAuthedMutation } from "@/hooks/use-authed-query";
+import { useStatusStream } from "@/hooks/use-status-stream";
 
 export function useTrainingJobs(projectId: string, offset = 0, limit = 20) {
   return useAuthedQuery<PaginatedResponse<TrainingJob>>({
@@ -19,21 +20,28 @@ export function useTrainingJobs(projectId: string, offset = 0, limit = 20) {
 }
 
 export function useTrainingJob(id: string, enabled = true) {
-  return useAuthedQuery<TrainingJob>({
+  const queryClient = useQueryClient();
+
+  const query = useAuthedQuery<TrainingJob>({
     queryKey: ["training-jobs", "detail", id],
     queryFn: (token) => api.trainingJobs.get(token, id),
     enabled: !!id && enabled,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return false;
-      // Poll every 5s while job is actively training
-      const isActive: boolean =
-        data.status === "pending" ||
-        data.status === "provisioning" ||
-        data.status === "training";
-      return isActive ? 5000 : false;
-    },
   });
+
+  const isActive =
+    query.data?.status === "pending" ||
+    query.data?.status === "provisioning" ||
+    query.data?.status === "training";
+
+  useStatusStream<TrainingJob>(
+    id ? `/api/v1/training-jobs/${id}/status/stream` : null,
+    !!id && enabled && isActive,
+    (data) => {
+      queryClient.setQueryData(["training-jobs", "detail", id], data);
+    },
+  );
+
+  return query;
 }
 
 export function useCreateTrainingJob(projectId: string) {

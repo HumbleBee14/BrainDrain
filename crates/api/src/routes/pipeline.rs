@@ -1,5 +1,9 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
@@ -27,6 +31,10 @@ pub fn router() -> Router<AppState> {
             post(trigger_full_pipeline),
         )
         .route("/projects/{project_id}/status", get(get_status))
+        .route(
+            "/projects/{project_id}/status/stream",
+            get(stream_pipeline_status),
+        )
 }
 
 /// Trigger IngestWorkflow for all unparsed documents in the project.
@@ -191,4 +199,81 @@ pub async fn get_status(
     .await?;
 
     Ok(Json(status))
+}
+
+/// GET /api/v1/projects/:project_id/status/stream
+///
+/// SSE endpoint that pushes pipeline status changes. Polls DB server-side
+/// every 3s and only emits when any count field changes.
+pub async fn stream_pipeline_status(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
+    let tenant_id = user.tenant_id;
+
+    // Fetch initial status and send immediately
+    let initial = PipelineService::get_status(
+        state.document_repo(),
+        state.dataset_repo(),
+        state.training_job_repo(),
+        state.model_repo(),
+        state.evaluation_repo(),
+        tenant_id,
+        project_id,
+    )
+    .await?;
+
+    let stream = async_stream::stream! {
+        let mut last_json = serde_json::to_string(&initial).unwrap_or_default();
+
+        if let Ok(json) = serde_json::to_string(&initial) {
+            yield Ok(Event::default().data(json).event("status"));
+        }
+
+        let is_idle = |s: &ProjectPipelineStatus| -> bool {
+            s.documents.parsing == 0
+                && s.datasets.generating == 0
+                && s.training_jobs.training == 0
+                && s.training_jobs.pending == 0
+        };
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            match PipelineService::get_status(
+                state.document_repo(),
+                state.dataset_repo(),
+                state.training_job_repo(),
+                state.model_repo(),
+                state.evaluation_repo(),
+                tenant_id,
+                project_id,
+            )
+            .await
+            {
+                Ok(status) => {
+                    let json = serde_json::to_string(&status).unwrap_or_default();
+                    if json != last_json {
+                        last_json = json.clone();
+                        yield Ok(Event::default().data(json).event("status"));
+                    } else {
+                        yield Ok(Event::default().comment("heartbeat"));
+                    }
+                    if is_idle(&status) {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }

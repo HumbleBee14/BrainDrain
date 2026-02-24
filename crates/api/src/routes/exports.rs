@@ -1,5 +1,9 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::sse::{Event, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
@@ -22,6 +26,10 @@ pub fn router() -> Router<AppState> {
             post(create_export).get(list_exports),
         )
         .route("/exports/{export_id}/download", get(download_export))
+        .route(
+            "/models/{model_id}/exports/stream",
+            get(stream_export_status),
+        )
 }
 
 /// POST /api/v1/models/:model_id/exports
@@ -124,4 +132,60 @@ pub async fn download_export(
         file_size_bytes,
         filename,
     }))
+}
+
+/// GET /api/v1/models/:model_id/exports/stream
+///
+/// SSE endpoint that pushes export status changes for a model's exports.
+pub async fn stream_export_status(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(model_id): Path<Uuid>,
+) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
+    let initial = ExportService::list(state.export_repo(), user.tenant_id, model_id).await?;
+    let tenant_id = user.tenant_id;
+
+    let stream = async_stream::stream! {
+        let mut last_json = serde_json::to_string(&initial).unwrap_or_default();
+
+        if let Ok(json) = serde_json::to_string(&initial) {
+            yield Ok(Event::default().data(json).event("status"));
+        }
+
+        let all_terminal = |exports: &[ExportResponse]| -> bool {
+            exports.iter().all(|e| matches!(e.status.as_str(), "completed" | "failed"))
+        };
+
+        if all_terminal(&initial) {
+            return;
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            match ExportService::list(state.export_repo(), tenant_id, model_id).await {
+                Ok(exports) => {
+                    let json = serde_json::to_string(&exports).unwrap_or_default();
+                    if json != last_json {
+                        last_json = json.clone();
+                        yield Ok(Event::default().data(json).event("status"));
+                    } else {
+                        yield Ok(Event::default().comment("heartbeat"));
+                    }
+                    if all_terminal(&exports) {
+                        return;
+                    }
+                }
+                Err(_) => {
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }
