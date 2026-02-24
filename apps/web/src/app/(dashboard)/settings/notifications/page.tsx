@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import {
   useNotificationPreferences,
   useUpdatePreferences,
@@ -33,6 +34,14 @@ export default function NotificationsSettingsPage() {
   const updatePreferences = useUpdatePreferences();
   const { data: deliveries, isLoading: deliveriesLoading } =
     useDeliveryHistory();
+
+  useEffect(() => {
+    if (updatePreferences.isSuccess)
+      toast.success("Notification preferences saved");
+  }, [updatePreferences.isSuccess]);
+  useEffect(() => {
+    if (updatePreferences.isError) toast.error(updatePreferences.error.message);
+  }, [updatePreferences.isError, updatePreferences.error]);
 
   const [localPrefs, setLocalPrefs] = useState<PreferenceState>({});
   const [webhookUrl, setWebhookUrl] = useState("");

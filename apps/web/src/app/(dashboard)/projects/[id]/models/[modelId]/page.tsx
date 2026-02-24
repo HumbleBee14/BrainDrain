@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useModel } from "@/hooks/use-models";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import {
@@ -21,6 +22,7 @@ import {
   useCreateExport,
   useExportDownload,
 } from "@/hooks/use-exports";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function DeploymentBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -99,6 +101,35 @@ export default function ModelDetailPage() {
     if (model) markStepComplete("view_results");
   }, [model, markStepComplete]);
 
+  // Toast notifications for mutations
+  useEffect(() => {
+    if (deployModel.isSuccess) toast.success("Model deployment started");
+  }, [deployModel.isSuccess]);
+  useEffect(() => {
+    if (deployModel.isError) toast.error(deployModel.error.message);
+  }, [deployModel.isError, deployModel.error]);
+
+  useEffect(() => {
+    if (undeployModel.isSuccess) toast.success("Model undeployed");
+  }, [undeployModel.isSuccess]);
+  useEffect(() => {
+    if (undeployModel.isError) toast.error(undeployModel.error.message);
+  }, [undeployModel.isError, undeployModel.error]);
+
+  useEffect(() => {
+    if (revokeApiKey.isSuccess) toast.success("API key revoked");
+  }, [revokeApiKey.isSuccess]);
+  useEffect(() => {
+    if (revokeApiKey.isError) toast.error(revokeApiKey.error.message);
+  }, [revokeApiKey.isError, revokeApiKey.error]);
+
+  useEffect(() => {
+    if (createExport.isSuccess) toast.success("GGUF export started");
+  }, [createExport.isSuccess]);
+  useEffect(() => {
+    if (createExport.isError) toast.error(createExport.error.message);
+  }, [createExport.isError, createExport.error]);
+
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [keyName, setKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
@@ -155,13 +186,14 @@ export default function ModelDetailPage() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <Link
-          href={`/projects/${params.id}`}
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to Project
-        </Link>
-        <div className="flex items-center gap-3 mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "Project", href: `/projects/${params.id}` },
+            { label: model.name },
+          ]}
+        />
+        <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-white">{model.name}</h1>
           <DeploymentBadge status={model.deployment_status} />
         </div>

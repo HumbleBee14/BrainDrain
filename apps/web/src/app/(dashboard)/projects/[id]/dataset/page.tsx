@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   useDataset,
   useDatasetPreview,
   useApproveDataset,
   useRejectDataset,
 } from "@/hooks/use-datasets";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function PairCard({
   pair,
@@ -100,6 +102,22 @@ export default function DatasetReviewPage() {
   const isReviewPending = dataset?.status === "review_pending";
   const isMutating = approveDataset.isPending || rejectDataset.isPending;
 
+  useEffect(() => {
+    if (approveDataset.isSuccess) toast.success("Dataset approved");
+  }, [approveDataset.isSuccess]);
+
+  useEffect(() => {
+    if (approveDataset.isError) toast.error(approveDataset.error.message);
+  }, [approveDataset.isError, approveDataset.error]);
+
+  useEffect(() => {
+    if (rejectDataset.isSuccess) toast.success("Dataset rejected");
+  }, [rejectDataset.isSuccess]);
+
+  useEffect(() => {
+    if (rejectDataset.isError) toast.error(rejectDataset.error.message);
+  }, [rejectDataset.isError, rejectDataset.error]);
+
   if (!datasetId) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -126,13 +144,14 @@ export default function DatasetReviewPage() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <Link
-          href={`/projects/${params.id}`}
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to Project
-        </Link>
-        <div className="flex items-center gap-3 mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "Project", href: `/projects/${params.id}` },
+            { label: dataset?.name || "Dataset" },
+          ]}
+        />
+        <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-white">
             {dataset?.name || "Dataset"}
           </h1>

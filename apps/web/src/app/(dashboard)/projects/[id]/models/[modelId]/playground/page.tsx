@@ -6,6 +6,7 @@ import { useCallback, useRef, useState } from "react";
 import { useModel } from "@/hooks/use-models";
 import { useApiKeys, useCreateApiKey } from "@/hooks/use-api-keys";
 import { useDeploymentStatus } from "@/hooks/use-deployments";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -161,13 +162,18 @@ export default function PlaygroundPage() {
     return (
       <div>
         <div className="mb-8">
-          <Link
-            href={`/projects/${params.id}/models/${params.modelId}`}
-            className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-          >
-            &larr; Back to {model?.name || "Model"}
-          </Link>
-          <h1 className="text-2xl font-bold text-white mt-2">Playground</h1>
+          <Breadcrumbs
+            items={[
+              { label: "Projects", href: "/projects" },
+              { label: "Project", href: `/projects/${params.id}` },
+              {
+                label: model?.name || "Model",
+                href: `/projects/${params.id}/models/${params.modelId}`,
+              },
+              { label: "Playground" },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-white">Playground</h1>
         </div>
         <div className="rounded-lg border border-zinc-800 p-8 text-center">
           <p className="text-zinc-500 mb-2">Model is not deployed.</p>
@@ -189,13 +195,18 @@ export default function PlaygroundPage() {
     <div className="flex flex-col h-[calc(100vh-120px)]">
       {/* Header */}
       <div className="mb-4 shrink-0">
-        <Link
-          href={`/projects/${params.id}/models/${params.modelId}`}
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to {model?.name || "Model"}
-        </Link>
-        <div className="flex items-center justify-between mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "Project", href: `/projects/${params.id}` },
+            {
+              label: model?.name || "Model",
+              href: `/projects/${params.id}/models/${params.modelId}`,
+            },
+            { label: "Playground" },
+          ]}
+        />
+        <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-white">Playground</h1>
           <button
             onClick={() => setShowSettings(!showSettings)}

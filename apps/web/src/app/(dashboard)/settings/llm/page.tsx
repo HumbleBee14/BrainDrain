@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import {
   useLlmSettings,
   useUpdateLlmSettings,
@@ -67,6 +68,17 @@ export default function LlmSettingsPage() {
   const { data: settings, isLoading } = useLlmSettings();
   const updateSettings = useUpdateLlmSettings();
   const deleteSettings = useDeleteLlmSettings();
+
+  useEffect(() => {
+    if (updateSettings.isSuccess) toast.success("LLM settings saved");
+  }, [updateSettings.isSuccess]);
+  useEffect(() => {
+    if (updateSettings.isError) toast.error(updateSettings.error.message);
+  }, [updateSettings.isError, updateSettings.error]);
+  useEffect(() => {
+    if (deleteSettings.isSuccess)
+      toast.success("LLM settings reset to defaults");
+  }, [deleteSettings.isSuccess]);
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [hasChanges, setHasChanges] = useState(false);

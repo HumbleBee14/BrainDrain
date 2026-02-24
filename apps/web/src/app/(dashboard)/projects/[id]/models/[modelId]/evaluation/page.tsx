@@ -2,10 +2,12 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useModel } from "@/hooks/use-models";
 import { useEvaluations, useCreateEvaluation } from "@/hooks/use-evaluations";
 import type { Evaluation } from "@/lib/api-client";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -320,6 +322,13 @@ export default function EvaluationPage() {
   const { data: evalsData, isLoading } = useEvaluations(params.modelId);
   const createEvaluation = useCreateEvaluation(params.modelId);
 
+  useEffect(() => {
+    if (createEvaluation.isSuccess) toast.success("Evaluation started");
+  }, [createEvaluation.isSuccess]);
+  useEffect(() => {
+    if (createEvaluation.isError) toast.error(createEvaluation.error.message);
+  }, [createEvaluation.isError, createEvaluation.error]);
+
   const [showRunForm, setShowRunForm] = useState(false);
   const [judgeModel, setJudgeModel] = useState("");
 
@@ -351,13 +360,18 @@ export default function EvaluationPage() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <Link
-          href={`/projects/${params.id}/models/${params.modelId}`}
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to {model?.name || "Model"}
-        </Link>
-        <div className="flex items-center justify-between mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "Project", href: `/projects/${params.id}` },
+            {
+              label: model?.name || "Model",
+              href: `/projects/${params.id}/models/${params.modelId}`,
+            },
+            { label: "Evaluation" },
+          ]}
+        />
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-white">Evaluation</h1>
             {latestEval && <StatusBadge status={latestEval.status} />}

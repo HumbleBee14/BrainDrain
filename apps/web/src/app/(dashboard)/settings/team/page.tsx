@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   useTeamMembers,
   useTeamInvitations,
@@ -18,6 +19,22 @@ export default function TeamSettingsPage() {
   const updateRole = useUpdateRole();
   const removeMember = useRemoveMember();
   const revokeInvitation = useRevokeInvitation();
+
+  useEffect(() => {
+    if (inviteMember.isSuccess) toast.success("Invitation sent");
+  }, [inviteMember.isSuccess]);
+  useEffect(() => {
+    if (inviteMember.isError) toast.error(inviteMember.error.message);
+  }, [inviteMember.isError, inviteMember.error]);
+  useEffect(() => {
+    if (updateRole.isSuccess) toast.success("Role updated");
+  }, [updateRole.isSuccess]);
+  useEffect(() => {
+    if (removeMember.isSuccess) toast.success("Member removed");
+  }, [removeMember.isSuccess]);
+  useEffect(() => {
+    if (revokeInvitation.isSuccess) toast.success("Invitation revoked");
+  }, [revokeInvitation.isSuccess]);
 
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");

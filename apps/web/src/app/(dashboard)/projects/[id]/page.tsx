@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { useProject, useDeleteProject } from "@/hooks/use-projects";
 import { useDocuments, useUploadDocuments } from "@/hooks/use-documents";
 import {
@@ -20,6 +21,7 @@ import type { CreateTrainingJobInput } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 import {
   StatusBadge,
   DatasetStatusBadge,
@@ -55,22 +57,62 @@ export default function ProjectDetailPage() {
   const cancelTrainingJob = useCancelTrainingJob(params.id);
   const { markStepComplete } = useOnboarding();
 
-  // Track onboarding steps when mutations succeed
+  // Track onboarding steps + show toast notifications when mutations succeed/fail
   useEffect(() => {
-    if (uploadDocs.isSuccess) markStepComplete("upload_document");
-  }, [uploadDocs.isSuccess, markStepComplete]);
+    if (uploadDocs.isSuccess) {
+      markStepComplete("upload_document");
+      toast.success(`${uploadDocs.data.length} file(s) uploaded successfully`);
+    }
+  }, [uploadDocs.isSuccess, uploadDocs.data, markStepComplete]);
 
   useEffect(() => {
-    if (triggerParse.isSuccess) markStepComplete("parse_documents");
-  }, [triggerParse.isSuccess, markStepComplete]);
+    if (uploadDocs.isError) toast.error(uploadDocs.error.message);
+  }, [uploadDocs.isError, uploadDocs.error]);
 
   useEffect(() => {
-    if (triggerRefine.isSuccess) markStepComplete("generate_data");
-  }, [triggerRefine.isSuccess, markStepComplete]);
+    if (triggerParse.isSuccess) {
+      markStepComplete("parse_documents");
+      toast.success(
+        `Parse started for ${triggerParse.data.document_count} documents`,
+      );
+    }
+  }, [triggerParse.isSuccess, triggerParse.data, markStepComplete]);
 
   useEffect(() => {
-    if (createTrainingJob.isSuccess) markStepComplete("start_training");
+    if (triggerParse.isError) toast.error(triggerParse.error.message);
+  }, [triggerParse.isError, triggerParse.error]);
+
+  useEffect(() => {
+    if (triggerRefine.isSuccess) {
+      markStepComplete("generate_data");
+      toast.success(
+        `Refine started for ${triggerRefine.data.document_count} documents`,
+      );
+    }
+  }, [triggerRefine.isSuccess, triggerRefine.data, markStepComplete]);
+
+  useEffect(() => {
+    if (triggerRefine.isError) toast.error(triggerRefine.error.message);
+  }, [triggerRefine.isError, triggerRefine.error]);
+
+  useEffect(() => {
+    if (createTrainingJob.isSuccess) {
+      markStepComplete("start_training");
+      toast.success("Training job created");
+    }
   }, [createTrainingJob.isSuccess, markStepComplete]);
+
+  useEffect(() => {
+    if (createTrainingJob.isError) toast.error(createTrainingJob.error.message);
+  }, [createTrainingJob.isError, createTrainingJob.error]);
+
+  useEffect(() => {
+    if (cancelTrainingJob.isSuccess) toast.success("Training job cancelled");
+  }, [cancelTrainingJob.isSuccess]);
+
+  useEffect(() => {
+    if (cancelTrainingJob.isError) toast.error(cancelTrainingJob.error.message);
+  }, [cancelTrainingJob.isError, cancelTrainingJob.error]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -84,9 +126,29 @@ export default function ProjectDetailPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: costEstimate } = useEstimateTrainingCost(params.id, trainForm);
 
-  const documents = docsData?.data ?? [];
+  // Search/filter state
+  const [docSearch, setDocSearch] = useState("");
+  const [docStatusFilter, setDocStatusFilter] = useState<string>("all");
+  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+
+  const allDocuments = docsData?.data ?? [];
   const datasets = datasetsData?.data ?? [];
-  const trainingJobs = trainingJobsData?.data ?? [];
+  const allTrainingJobs = trainingJobsData?.data ?? [];
+
+  // Filter documents
+  const documents = allDocuments.filter((doc) => {
+    const matchesSearch =
+      !docSearch ||
+      doc.filename.toLowerCase().includes(docSearch.toLowerCase());
+    const matchesStatus =
+      docStatusFilter === "all" || doc.status === docStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  // Filter training jobs
+  const trainingJobs = allTrainingJobs.filter((job) => {
+    return jobStatusFilter === "all" || job.status === jobStatusFilter;
+  });
   const models = modelsData?.data ?? [];
   const status = pipelineStatus;
 
@@ -156,13 +218,13 @@ export default function ProjectDetailPage() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <Link
-          href="/projects"
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to Projects
-        </Link>
-        <div className="flex items-center gap-3 mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: project.name },
+          ]}
+        />
+        <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-white">{project.name}</h1>
           <StatusBadge status={project.status} />
         </div>
@@ -270,9 +332,32 @@ export default function ProjectDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">
             Documents{" "}
-            {documents.length > 0 && `(${docsData?.total ?? documents.length})`}
+            {allDocuments.length > 0 &&
+              `(${documents.length}${documents.length !== allDocuments.length ? ` of ${allDocuments.length}` : ""})`}
           </h2>
         </div>
+        {/* Document search & filter */}
+        {allDocuments.length > 3 && (
+          <div className="flex gap-2 mb-3">
+            <input
+              value={docSearch}
+              onChange={(e) => setDocSearch(e.target.value)}
+              placeholder="Search documents..."
+              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white placeholder:text-zinc-600"
+            />
+            <select
+              value={docStatusFilter}
+              onChange={(e) => setDocStatusFilter(e.target.value)}
+              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white"
+            >
+              <option value="all">All statuses</option>
+              <option value="uploaded">Uploaded</option>
+              <option value="parsing">Parsing</option>
+              <option value="parsed">Parsed</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+        )}
         <div
           className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
             isDragging
@@ -370,8 +455,8 @@ export default function ProjectDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">
             Training Jobs{" "}
-            {trainingJobs.length > 0 &&
-              `(${trainingJobsData?.total ?? trainingJobs.length})`}
+            {allTrainingJobs.length > 0 &&
+              `(${trainingJobs.length}${trainingJobs.length !== allTrainingJobs.length ? ` of ${allTrainingJobs.length}` : ""})`}
           </h2>
           <button
             onClick={() => setShowTrainForm(!showTrainForm)}
@@ -382,9 +467,85 @@ export default function ProjectDetailPage() {
           </button>
         </div>
 
+        {/* Training jobs filter */}
+        {allTrainingJobs.length > 3 && (
+          <div className="flex gap-2 mb-3">
+            <select
+              value={jobStatusFilter}
+              onChange={(e) => setJobStatusFilter(e.target.value)}
+              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white"
+            >
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="training">Training</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+        )}
+
         {/* Training form */}
         {showTrainForm && (
           <div className="rounded-lg border border-zinc-800 p-4 mb-4 space-y-3">
+            {/* Hyperparameter presets */}
+            <div>
+              <label className="block text-xs text-zinc-500 mb-2">
+                Quick Presets
+              </label>
+              <div className="flex gap-2">
+                {[
+                  {
+                    label: "Quick Experiment",
+                    method: "qlora" as const,
+                    mode: "quick" as const,
+                    base_model: "unsloth/Llama-3.2-1B-Instruct",
+                    desc: "Fastest, smallest model, QLoRA",
+                  },
+                  {
+                    label: "Balanced",
+                    method: "qlora" as const,
+                    mode: "aligned" as const,
+                    base_model: "unsloth/Llama-3.2-3B-Instruct",
+                    desc: "SFT + DPO, 3B model",
+                  },
+                  {
+                    label: "Production",
+                    method: "lora" as const,
+                    mode: "aligned" as const,
+                    base_model: "unsloth/Meta-Llama-3.1-8B-Instruct",
+                    gpu_class: "a10g" as const,
+                    desc: "8B, LoRA, A10G GPU",
+                  },
+                  {
+                    label: "Max Quality",
+                    method: "lora" as const,
+                    mode: "reasoning" as const,
+                    base_model: "unsloth/Meta-Llama-3.1-8B-Instruct",
+                    gpu_class: "l40s" as const,
+                    desc: "8B, GRPO reasoning, L40S",
+                  },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      setTrainForm({
+                        ...trainForm,
+                        method: preset.method,
+                        mode: preset.mode,
+                        base_model: preset.base_model,
+                        gpu_class: preset.gpu_class,
+                      })
+                    }
+                    className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-500 hover:text-white transition"
+                    title={preset.desc}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
@@ -598,9 +759,11 @@ export default function ProjectDetailPage() {
 
         {trainingJobs.length === 0 && !showTrainForm && (
           <p className="text-sm text-zinc-600">
-            {hasApprovedDatasets
-              ? 'No training jobs yet. Click "Start Training" to begin.'
-              : "Approve a dataset first to start training."}
+            {allTrainingJobs.length > 0 && jobStatusFilter !== "all"
+              ? "No training jobs match the current filter."
+              : hasApprovedDatasets
+                ? 'No training jobs yet. Click "Start Training" to begin.'
+                : "Approve a dataset first to start training."}
           </p>
         )}
       </div>

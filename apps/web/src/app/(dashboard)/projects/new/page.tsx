@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import { useCreateProject } from "@/hooks/use-projects";
 import { useFormValidation } from "@/hooks/use-form-validation";
 import { useOnboarding } from "@/hooks/use-onboarding";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 import {
   createProjectSchema,
   type CreateProjectInput,
@@ -44,22 +46,25 @@ export default function NewProjectPage() {
     try {
       await createProject.mutateAsync(data);
       markStepComplete("create_project");
+      toast.success("Project created");
       router.push("/projects");
-    } catch {
-      // Error is captured by React Query and surfaced via createProject.isError
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create project",
+      );
     }
   };
 
   return (
     <div className="max-w-xl">
       <div className="mb-8">
-        <Link
-          href="/projects"
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to Projects
-        </Link>
-        <h1 className="text-2xl font-bold text-white mt-2">Create Project</h1>
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "New Project" },
+          ]}
+        />
+        <h1 className="text-2xl font-bold text-white">Create Project</h1>
         <p className="text-zinc-500 mt-1">
           A project groups your documents, datasets, and fine-tuned models.
         </p>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useTrainingJob } from "@/hooks/use-training";
 import { useTrainingMetricsStream } from "@/hooks/use-training-metrics";
 import { useMemo } from "react";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -123,13 +124,14 @@ export default function TrainingJobDetailPage() {
     <div>
       {/* Header */}
       <div className="mb-8">
-        <Link
-          href={`/projects/${params.id}`}
-          className="text-sm text-zinc-500 hover:text-zinc-300 transition"
-        >
-          &larr; Back to Project
-        </Link>
-        <div className="flex items-center gap-3 mt-2">
+        <Breadcrumbs
+          items={[
+            { label: "Projects", href: "/projects" },
+            { label: "Project", href: `/projects/${params.id}` },
+            { label: job.base_model.split("/").pop() ?? "Training" },
+          ]}
+        />
+        <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-white">
             {job.base_model.split("/").pop()}
           </h1>
@@ -147,6 +149,36 @@ export default function TrainingJobDetailPage() {
             ` \u00b7 Est. $${job.cost_estimate.toFixed(2)}`}
         </p>
       </div>
+
+      {/* Training progress bar */}
+      {isActiveTraining &&
+        streamedMetrics.length > 0 &&
+        (() => {
+          const totalEpochs =
+            (job.hyperparams as Record<string, unknown>)?.num_train_epochs ??
+            (job.hyperparams as Record<string, unknown>)?.epochs ??
+            3;
+          const currentEpoch = Number(
+            streamedMetrics[streamedMetrics.length - 1]?.epoch ?? 0,
+          );
+          const pct = Math.min(100, (currentEpoch / Number(totalEpochs)) * 100);
+          return (
+            <div className="mb-6">
+              <div className="flex justify-between text-sm mb-1.5">
+                <span className="text-zinc-400">
+                  Epoch {currentEpoch.toFixed(2)} / {String(totalEpochs)}
+                </span>
+                <span className="text-zinc-400">{pct.toFixed(0)}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
       {/* Real-time loss chart */}
       <div className="mb-8">
@@ -270,6 +302,22 @@ export default function TrainingJobDetailPage() {
                 </span>
               </div>
             )}
+            {job.started_at && job.completed_at && (
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-500">Duration</span>
+                <span className="text-white">
+                  {(() => {
+                    const ms =
+                      new Date(job.completed_at).getTime() -
+                      new Date(job.started_at).getTime();
+                    const mins = Math.floor(ms / 60000);
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs > 0) return `${hrs}h ${mins % 60}m`;
+                    return `${mins}m`;
+                  })()}
+                </span>
+              </div>
+            )}
             {job.cost_estimate != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Estimated Cost</span>
@@ -281,9 +329,30 @@ export default function TrainingJobDetailPage() {
             {job.actual_cost != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Actual Cost</span>
-                <span className="text-white">
+                <span className="text-white font-medium">
                   ${job.actual_cost.toFixed(2)}
                 </span>
+              </div>
+            )}
+            {job.cost_estimate != null && job.actual_cost != null && (
+              <div className="flex justify-between text-sm">
+                <span className="text-zinc-500">Cost Variance</span>
+                {(() => {
+                  const diff = job.actual_cost! - job.cost_estimate!;
+                  const pct =
+                    job.cost_estimate! > 0
+                      ? (diff / job.cost_estimate!) * 100
+                      : 0;
+                  const isOver = diff > 0;
+                  return (
+                    <span
+                      className={isOver ? "text-amber-400" : "text-emerald-400"}
+                    >
+                      {isOver ? "+" : ""}${diff.toFixed(2)} ({isOver ? "+" : ""}
+                      {pct.toFixed(0)}%)
+                    </span>
+                  );
+                })()}
               </div>
             )}
           </div>
