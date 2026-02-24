@@ -20,6 +20,8 @@ import type {
   PaginatedResponse,
   LlmSettingsResponse,
   UpdateLlmSettingsRequest,
+  AdminConfigResponse,
+  UpdateAdminConfigRequest,
 } from "./generated";
 
 // ── Re-export generated types with frontend-friendly aliases ──
@@ -70,6 +72,8 @@ export type { CreateApiKeyRequest as CreateApiKeyInput } from "./generated";
 export type {
   LlmSettingsResponse,
   UpdateLlmSettingsRequest,
+  AdminConfigResponse,
+  UpdateAdminConfigRequest,
 } from "./generated";
 
 // Backward-compatible alias
@@ -798,6 +802,19 @@ export const api = {
 
     deleteLlm: (token: string) =>
       request<void>("/api/v1/settings/llm", { token, method: "DELETE" }),
+
+    getAdminConfig: (token: string) =>
+      request<AdminConfigResponse>("/api/v1/settings/admin", { token }),
+
+    updateAdminConfig: (token: string, data: UpdateAdminConfigRequest) =>
+      request<AdminConfigResponse>("/api/v1/settings/admin", {
+        token,
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+
+    resetAdminConfig: (token: string) =>
+      request<void>("/api/v1/settings/admin", { token, method: "DELETE" }),
   },
 
   auditLogs: {

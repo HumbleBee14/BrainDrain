@@ -125,10 +125,19 @@ All Phase B tasks completed.
 - **Files**: `inference.rs` (routes)
 
 ### C9. Admin Config Panel
-- **Status**: Pending
+- **Status**: Done
 - **Why**: GPU rates, model list, chunk sizes all hardcoded
-- **Scope**: Tenant admin settings page exposing configuration
-- **Files**: Backend settings API + frontend page
+- **What was done**: Built per-tenant admin configuration with platform defaults:
+  - Added `UpdateAdminConfigRequest` and `AdminConfigResponse` DTOs with ts-rs export
+  - Added `get_admin_config()`, `update_admin_config()`, `reset_admin_config()` to `TenantSettingsService` — reads from `settings.admin` JSONB key with fallback to platform defaults
+  - Configurable values: GPU hourly rates (per GPU class), cost approval threshold, inference input/output token pricing, default max tokens, default API key rate limit, max batch size, document chunk size
+  - Added `GET/PUT/DELETE /settings/admin` routes (Admin role, audit logged)
+  - Added `getAdminConfig()`, `updateAdminConfig()`, `resetAdminConfig()` API client methods
+  - Added `useAdminConfig`, `useUpdateAdminConfig`, `useResetAdminConfig` React hooks
+  - Built `/settings/admin` page with: GPU rate grid (6 GPU classes), training config section, inference pricing and limits section, rate limits section, save/reset buttons
+  - Added "Admin Config" tab to settings layout
+  - All values show platform defaults when tenant has no overrides
+- **Files**: `tenant_settings.rs` (DTO + service), `tenant_settings.rs` (routes), `api-client.ts`, `use-settings.ts`, `settings/admin/page.tsx`, `settings/layout.tsx`, `generated/index.ts`
 
 ### C10. Iterative Training Early Stopping
 - **Status**: Pending
