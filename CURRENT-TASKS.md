@@ -140,10 +140,20 @@ All Phase B tasks completed.
 - **Files**: `tenant_settings.rs` (DTO + service), `tenant_settings.rs` (routes), `api-client.ts`, `use-settings.ts`, `settings/admin/page.tsx`, `settings/layout.tsx`, `generated/index.ts`
 
 ### C10. Iterative Training Early Stopping
-- **Status**: Pending
-- **Why**: Workflow exists but early stopping is a stub
-- **Scope**: Implement validation metric computation between rounds
-- **Files**: Python worker activities
+- **Status**: Done
+- **Why**: Workflow existed but early stopping lacked patience tolerance, had no cost tracking, no metrics streaming during holdout eval, and no DB lifecycle (status updates, model creation) for iterative mode
+- **What was done**: Production-hardened the iterative training workflow with proper early stopping and full DB lifecycle:
+  - Added **patience-based early stopping**: configurable `early_stop_patience` (default: 2) — requires N consecutive non-improving iterations before stopping, replacing single-regression trigger
+  - Added **min_delta threshold**: configurable `early_stop_min_delta` (default: 0.01) — improvement must exceed this threshold to count, filtering out noise
+  - Added **metrics streaming to holdout evaluation**: `EvaluateHoldoutActivity` now streams `eval_begin`, `eval_dataset_loaded`, and `eval_end` events to Redis for real-time UI visibility
+  - Added **DB status lifecycle for iterative mode**: `TrainSftRoundActivity` sets status to `TRAINING` on first iteration (iteration 0)
+  - Added **`FinalizeIterativeTrainingActivity`**: handles post-training DB updates (status → COMPLETED, actual_cost calculation from per-iteration runtimes, model record creation with auto-increment versioning)
+  - Added **`FinalizeIterativeTrainingInput`** dataclass in stubs with all required fields
+  - Wired finalization into `TrainWorkflow` dispatcher — called after `TrainIterativeWorkflow` child completes
+  - Registered new activity in `worker.py` GPU activities list
+  - Early stopping metrics recorded: `early_stopped`, `early_stop_reason`, `patience`, `min_delta`, `no_improvement_count` per iteration, `improved` flag per iteration
+  - Progress query returns patience config and per-iteration improvement tracking
+- **Files**: `train_iterative.py` (workflow), `train_model.py` (activities), `stubs.py` (dataclasses), `train.py` (dispatcher), `worker.py` (registration)
 
 ---
 
