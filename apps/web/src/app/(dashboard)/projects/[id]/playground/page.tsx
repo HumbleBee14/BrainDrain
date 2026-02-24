@@ -2,8 +2,8 @@
 
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { useModels, useModel } from "@/hooks/use-models";
-import { useApiKeys, useCreateApiKey } from "@/hooks/use-api-keys";
+import { useModels } from "@/hooks/use-models";
+import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useProject } from "@/hooks/use-projects";
 
@@ -163,8 +163,6 @@ export default function ABPlaygroundPage() {
   }, []);
 
   // API key hooks — conditionally used based on selected models
-  const keysA = useApiKeys(panelA.modelId);
-  const keysB = useApiKeys(panelB.modelId);
   const createKeyA = useCreateApiKey(panelA.modelId);
   const createKeyB = useCreateApiKey(panelB.modelId);
 

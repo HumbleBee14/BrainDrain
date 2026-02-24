@@ -283,11 +283,14 @@ class EvaluateHoldoutActivity:
 
         _get_sync_redis(self.infra.settings)
 
-        _stream_metric(job_id, {
-            "event": "eval_begin",
-            "phase": f"eval_iter_{iteration}",
-            "timestamp": datetime.now(UTC).isoformat(),
-        })
+        _stream_metric(
+            job_id,
+            {
+                "event": "eval_begin",
+                "phase": f"eval_iter_{iteration}",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
 
         job_prefix = job_id[:8]
         with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
@@ -300,12 +303,15 @@ class EvaluateHoldoutActivity:
             val_dataset = _load_chatml_dataset(val_local)
             logger.info("Loaded validation set: %d examples", len(val_dataset))
 
-            _stream_metric(job_id, {
-                "event": "eval_dataset_loaded",
-                "phase": f"eval_iter_{iteration}",
-                "val_examples": str(len(val_dataset)),
-                "timestamp": datetime.now(UTC).isoformat(),
-            })
+            _stream_metric(
+                job_id,
+                {
+                    "event": "eval_dataset_loaded",
+                    "phase": f"eval_iter_{iteration}",
+                    "val_examples": str(len(val_dataset)),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
 
             # Load model + adapter from this iteration's checkpoint
             max_seq_length = hp.get("max_seq_length", 2048)
@@ -342,12 +348,15 @@ class EvaluateHoldoutActivity:
             # Evaluate
             eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
 
-            _stream_metric(job_id, {
-                "event": "eval_end",
-                "phase": f"eval_iter_{iteration}",
-                "eval_loss": str(round(eval_loss, 6)),
-                "timestamp": datetime.now(UTC).isoformat(),
-            })
+            _stream_metric(
+                job_id,
+                {
+                    "event": "eval_end",
+                    "phase": f"eval_iter_{iteration}",
+                    "eval_loss": str(round(eval_loss, 6)),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
 
             logger.info(
                 "Holdout eval iteration %d for job %s: eval_loss=%.4f",
@@ -383,8 +392,12 @@ class FinalizeIterativeTrainingActivity:
 
         # Calculate actual cost from aggregate iteration runtimes
         gpu_rates = {
-            "t4": 0.80, "a10g": 1.20, "l40s": 1.80,
-            "a10040gb": 2.00, "a10080gb": 3.00, "h100": 4.50,
+            "t4": 0.80,
+            "a10g": 1.20,
+            "l40s": 1.80,
+            "a10040gb": 2.00,
+            "a10080gb": 3.00,
+            "h100": 4.50,
         }
         gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
         total_runtime = 0.0
@@ -439,7 +452,9 @@ class FinalizeIterativeTrainingActivity:
 
         logger.info(
             "Iterative training finalized for job %s, model: %s (cost: $%.2f)",
-            job_id, model_name, actual_cost,
+            job_id,
+            model_name,
+            actual_cost,
         )
 
 

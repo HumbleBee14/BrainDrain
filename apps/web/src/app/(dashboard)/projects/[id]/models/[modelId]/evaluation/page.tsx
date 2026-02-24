@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useModel } from "@/hooks/use-models";

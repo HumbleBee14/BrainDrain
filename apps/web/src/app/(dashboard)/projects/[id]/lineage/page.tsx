@@ -136,12 +136,12 @@ export default function LineagePage() {
   const { data: jobsData } = useTrainingJobs(params.id);
   const { data: modelsData } = useModels(params.id, 0, 50);
 
-  const documents = docsData?.data ?? [];
-  const datasets = datasetsData?.data ?? [];
-  const jobs = jobsData?.data ?? [];
-  const models = modelsData?.data ?? [];
+  const documents = useMemo(() => docsData?.data ?? [], [docsData?.data]);
+  const datasets = useMemo(() => datasetsData?.data ?? [], [datasetsData?.data]);
+  const jobs = useMemo(() => jobsData?.data ?? [], [jobsData?.data]);
+  const models = useMemo(() => modelsData?.data ?? [], [modelsData?.data]);
 
-  const { datasetToJobs, jobToModels } = useMemo(
+  const { datasetToJobs } = useMemo(
     () => buildLineage(documents, datasets, jobs, models),
     [documents, datasets, jobs, models],
   );
