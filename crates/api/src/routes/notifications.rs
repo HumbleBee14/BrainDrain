@@ -1,8 +1,9 @@
-use axum::extract::{Query, State};
-use axum::routing::get;
+use axum::extract::{Path, Query, State};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use platform_shared::enums::TeamRole;
+use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
@@ -12,6 +13,7 @@ use crate::dto::notification::{
 };
 use crate::error::AppResult;
 use crate::rbac::require_role;
+use crate::services::audit_logger::AuditLogger;
 use crate::services::notification_service::NotificationService;
 
 /// Notification routes.
@@ -22,6 +24,8 @@ pub fn router() -> Router<AppState> {
             get(list_preferences).put(update_preferences),
         )
         .route("/notifications/deliveries", get(list_deliveries))
+        .route("/notifications/preferences/:id/test", post(test_webhook))
+        .route("/notifications/deliveries/:id/retry", post(retry_delivery))
 }
 
 /// List notification preferences.
@@ -110,4 +114,82 @@ pub async fn list_deliveries(
         offset,
         limit,
     }))
+}
+
+/// Send a test webhook to a configured preference URL.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/preferences/{id}/test",
+    tag = "Notifications",
+    params(("id" = Uuid, Path, description = "Preference ID")),
+    responses(
+        (status = 200, description = "Test delivery result", body = NotificationDeliveryResponse),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn test_webhook(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(preference_id): Path<Uuid>,
+) -> AppResult<Json<NotificationDeliveryResponse>> {
+    require_role(&user, TeamRole::Admin)?;
+
+    let result = NotificationService::test_webhook(
+        state.notification_repo(),
+        state.http_client(),
+        user.tenant_id,
+        preference_id,
+    )
+    .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "notification.webhook_test",
+        "notification_preference",
+        Some(preference_id),
+        serde_json::json!({ "delivery_status": result.status }),
+    )
+    .await;
+
+    Ok(Json(result))
+}
+
+/// Retry a failed notification delivery.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/deliveries/{id}/retry",
+    tag = "Notifications",
+    params(("id" = Uuid, Path, description = "Delivery ID")),
+    responses(
+        (status = 200, description = "Retry result", body = NotificationDeliveryResponse),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn retry_delivery(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(delivery_id): Path<Uuid>,
+) -> AppResult<Json<NotificationDeliveryResponse>> {
+    require_role(&user, TeamRole::Admin)?;
+
+    let result = NotificationService::retry_delivery(
+        state.notification_repo(),
+        state.http_client(),
+        user.tenant_id,
+        delivery_id,
+    )
+    .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "notification.delivery_retry",
+        "notification_delivery",
+        Some(delivery_id),
+        serde_json::json!({ "delivery_status": result.status }),
+    )
+    .await;
+
+    Ok(Json(result))
 }

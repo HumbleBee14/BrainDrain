@@ -626,6 +626,18 @@ pub trait NotificationRepository: Send + Sync {
         status: &str,
         error: Option<&str>,
     ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn get_delivery(
+        &self,
+        tenant_id: Uuid,
+        delivery_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationDelivery>>>;
+
+    fn get_preference(
+        &self,
+        tenant_id: Uuid,
+        preference_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>>;
 }
 
 /// Contract for model export database operations.

@@ -37,3 +37,29 @@ export function useDeliveryHistory(offset = 0, limit = 20) {
     queryFn: (token) => api.notifications.getDeliveries(token, offset, limit),
   });
 }
+
+export function useTestWebhook() {
+  const queryClient = useQueryClient();
+  return useAuthedMutation({
+    mutationFn: (token: string, preferenceId: string) =>
+      api.notifications.testWebhook(token, preferenceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "deliveries"],
+      });
+    },
+  });
+}
+
+export function useRetryDelivery() {
+  const queryClient = useQueryClient();
+  return useAuthedMutation({
+    mutationFn: (token: string, deliveryId: string) =>
+      api.notifications.retryDelivery(token, deliveryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "deliveries"],
+      });
+    },
+  });
+}

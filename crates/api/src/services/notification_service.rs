@@ -2,7 +2,9 @@ use std::net::IpAddr;
 
 use uuid::Uuid;
 
-use crate::dto::notification::{NotificationPreferenceResponse, PreferenceUpdate};
+use crate::dto::notification::{
+    NotificationDeliveryResponse, NotificationPreferenceResponse, PreferenceUpdate,
+};
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::NotificationRepository;
 
@@ -182,6 +184,167 @@ impl NotificationService {
                 _ => {}
             }
         }
+    }
+
+    /// Send a test webhook to validate the configured URL.
+    /// Creates a delivery record so the result is visible in delivery history.
+    pub async fn test_webhook(
+        repo: &dyn NotificationRepository,
+        http_client: &reqwest::Client,
+        tenant_id: Uuid,
+        preference_id: Uuid,
+    ) -> AppResult<NotificationDeliveryResponse> {
+        let pref =
+            repo.get_preference(tenant_id, preference_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: format!("Notification preference {} not found", preference_id),
+                })?;
+
+        if pref.channel != "webhook" {
+            return Err(AppError::BadRequest {
+                message: "Test is only available for webhook channels".into(),
+            });
+        }
+
+        let url = pref
+            .config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or(AppError::BadRequest {
+                message: "No webhook URL configured for this preference".into(),
+            })?;
+
+        if !is_safe_webhook_url(url).await {
+            return Err(AppError::BadRequest {
+                message: "Webhook URL targets a private or internal network".into(),
+            });
+        }
+
+        let payload = serde_json::json!({
+            "event": "test",
+            "message": "This is a test webhook delivery",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let delivery = repo
+            .create_delivery(tenant_id, preference_id, "test", "webhook", payload.clone())
+            .await?;
+
+        let result = http_client
+            .post(url)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
+        match result {
+            Ok(res) if res.status().is_success() => {
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "sent", None)
+                    .await;
+            }
+            Ok(res) => {
+                let msg = format!("HTTP {}", res.status());
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "failed", Some(&msg))
+                    .await;
+            }
+            Err(e) => {
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "failed", Some(&e.to_string()))
+                    .await;
+            }
+        }
+
+        // Re-fetch to get updated status
+        let updated = repo
+            .get_delivery(tenant_id, delivery.id)
+            .await?
+            .unwrap_or(delivery);
+
+        Ok(updated.into())
+    }
+
+    /// Retry a failed delivery by re-sending the original payload to the webhook URL.
+    pub async fn retry_delivery(
+        repo: &dyn NotificationRepository,
+        http_client: &reqwest::Client,
+        tenant_id: Uuid,
+        delivery_id: Uuid,
+    ) -> AppResult<NotificationDeliveryResponse> {
+        let delivery =
+            repo.get_delivery(tenant_id, delivery_id)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: format!("Notification delivery {} not found", delivery_id),
+                })?;
+
+        if delivery.status != "failed" {
+            return Err(AppError::BadRequest {
+                message: format!(
+                    "Only failed deliveries can be retried. Current status: {}",
+                    delivery.status
+                ),
+            });
+        }
+
+        let pref = repo
+            .get_preference(tenant_id, delivery.preference_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: format!(
+                    "Notification preference {} not found",
+                    delivery.preference_id
+                ),
+            })?;
+
+        let url = pref
+            .config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or(AppError::BadRequest {
+                message: "No webhook URL configured for this preference".into(),
+            })?;
+
+        if !is_safe_webhook_url(url).await {
+            return Err(AppError::BadRequest {
+                message: "Webhook URL targets a private or internal network".into(),
+            });
+        }
+
+        let result = http_client
+            .post(url)
+            .json(&delivery.payload)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await;
+
+        match result {
+            Ok(res) if res.status().is_success() => {
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "sent", None)
+                    .await;
+            }
+            Ok(res) => {
+                let msg = format!("HTTP {}", res.status());
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "failed", Some(&msg))
+                    .await;
+            }
+            Err(e) => {
+                let _ = repo
+                    .update_delivery_status(tenant_id, delivery.id, "failed", Some(&e.to_string()))
+                    .await;
+            }
+        }
+
+        let updated = repo
+            .get_delivery(tenant_id, delivery.id)
+            .await?
+            .unwrap_or(delivery);
+
+        Ok(updated.into())
     }
 
     /// List all notification preferences for a tenant.

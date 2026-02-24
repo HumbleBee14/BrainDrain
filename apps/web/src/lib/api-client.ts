@@ -743,6 +743,36 @@ export const api = {
       >(`/api/v1/notifications/deliveries?offset=${offset}&limit=${limit}`, {
         token,
       }),
+
+    testWebhook: (token: string, preferenceId: string) =>
+      request<{
+        id: string;
+        event_type: string;
+        channel: string;
+        status: string;
+        attempts: number;
+        last_error: string | null;
+        created_at: string;
+        sent_at: string | null;
+      }>(`/api/v1/notifications/preferences/${preferenceId}/test`, {
+        token,
+        method: "POST",
+      }),
+
+    retryDelivery: (token: string, deliveryId: string) =>
+      request<{
+        id: string;
+        event_type: string;
+        channel: string;
+        status: string;
+        attempts: number;
+        last_error: string | null;
+        created_at: string;
+        sent_at: string | null;
+      }>(`/api/v1/notifications/deliveries/${deliveryId}/retry`, {
+        token,
+        method: "POST",
+      }),
   },
 
   settings: {

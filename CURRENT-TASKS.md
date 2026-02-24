@@ -7,11 +7,7 @@
 
 ## Phase B: Backend Light (Small Backend Changes + Frontend)
 
-### B4. Webhook Testing & Retry
-- **Status**: Pending
-- **Why**: Users can configure webhook URLs but can't test them or retry failed deliveries
-- **Scope**: Add test endpoint + retry button in notification UI
-- **Files**: Backend route + frontend
+All Phase B tasks completed.
 
 ---
 
@@ -80,6 +76,23 @@
 ---
 
 ## Completed Tasks
+
+### B4. Webhook Testing & Retry
+- **Status**: Done
+- **Why**: Users could configure webhook URLs but had no way to test connectivity or retry failed deliveries
+- **What was done**: Implemented webhook test and delivery retry capability:
+  - Added `get_delivery` and `get_preference` to `NotificationRepository` trait + `PgNotificationRepo` implementation
+  - Added `test_webhook()` to `NotificationService` — sends a test payload to the configured webhook URL, creates delivery record, returns result with status
+  - Added `retry_delivery()` to `NotificationService` — re-sends original payload for failed deliveries, increments attempt counter
+  - Added `POST /notifications/preferences/:id/test` route (Admin role, audit logged)
+  - Added `POST /notifications/deliveries/:id/retry` route (Admin role, audit logged)
+  - Added `testWebhook()` and `retryDelivery()` API client methods
+  - Added `useTestWebhook` and `useRetryDelivery` React hooks with query invalidation
+  - Added "Test Webhook" button next to webhook URL input (visible when saved, no unsaved changes)
+  - Added "Retry" button per failed delivery row in delivery history table
+  - Added inline error display for failed deliveries (truncated error message with tooltip)
+  - SSRF protection applied to both test and retry paths via existing `is_safe_webhook_url()` validation
+- **Files**: `traits.rs`, `notification_repo.rs`, `notification_service.rs`, `notifications.rs` (routes), `api-client.ts`, `use-notifications.ts`, notifications settings page
 
 ### A1. Toast Notifications for Mutations
 - **Status**: Done

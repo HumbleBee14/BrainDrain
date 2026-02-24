@@ -6,6 +6,8 @@ import {
   useNotificationPreferences,
   useUpdatePreferences,
   useDeliveryHistory,
+  useTestWebhook,
+  useRetryDelivery,
 } from "@/hooks/use-notifications";
 
 const EVENT_TYPES = [
@@ -34,6 +36,36 @@ export default function NotificationsSettingsPage() {
   const updatePreferences = useUpdatePreferences();
   const { data: deliveries, isLoading: deliveriesLoading } =
     useDeliveryHistory();
+  const testWebhook = useTestWebhook();
+  const retryDelivery = useRetryDelivery();
+
+  useEffect(() => {
+    if (testWebhook.isSuccess) {
+      const status = testWebhook.data?.status;
+      if (status === "sent")
+        toast.success("Webhook test delivered successfully");
+      else
+        toast.error(
+          `Webhook test failed: ${testWebhook.data?.last_error ?? "unknown error"}`,
+        );
+    }
+  }, [testWebhook.isSuccess, testWebhook.data]);
+  useEffect(() => {
+    if (testWebhook.isError) toast.error(testWebhook.error.message);
+  }, [testWebhook.isError, testWebhook.error]);
+  useEffect(() => {
+    if (retryDelivery.isSuccess) {
+      const status = retryDelivery.data?.status;
+      if (status === "sent") toast.success("Delivery retry succeeded");
+      else
+        toast.error(
+          `Retry failed: ${retryDelivery.data?.last_error ?? "unknown error"}`,
+        );
+    }
+  }, [retryDelivery.isSuccess, retryDelivery.data]);
+  useEffect(() => {
+    if (retryDelivery.isError) toast.error(retryDelivery.error.message);
+  }, [retryDelivery.isError, retryDelivery.error]);
 
   useEffect(() => {
     if (updatePreferences.isSuccess)
@@ -192,16 +224,33 @@ export default function NotificationsSettingsPage() {
                 <label className="block text-sm text-zinc-400 mb-2">
                   Webhook URL
                 </label>
-                <input
-                  type="url"
-                  placeholder="https://example.com/webhook"
-                  value={webhookUrl}
-                  onChange={(e) => {
-                    setWebhookUrl(e.target.value);
-                    setHasChanges(true);
-                  }}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    placeholder="https://example.com/webhook"
+                    value={webhookUrl}
+                    onChange={(e) => {
+                      setWebhookUrl(e.target.value);
+                      setHasChanges(true);
+                    }}
+                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                  />
+                  {(() => {
+                    const webhookPref = preferences?.find(
+                      (p) => p.channel === "webhook" && p.config?.url,
+                    );
+                    if (!webhookPref || hasChanges) return null;
+                    return (
+                      <button
+                        onClick={() => testWebhook.mutate(webhookPref.id)}
+                        disabled={testWebhook.isPending}
+                        className="rounded-md bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-600 transition disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {testWebhook.isPending ? "Testing..." : "Test Webhook"}
+                      </button>
+                    );
+                  })()}
+                </div>
               </div>
             )}
 
@@ -259,6 +308,9 @@ export default function NotificationsSettingsPage() {
                   <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
                     Time
                   </th>
+                  <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800">
@@ -281,7 +333,17 @@ export default function NotificationsSettingsPage() {
                         {d.channel}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <StatusBadge status={d.status} />
+                        <span className="flex items-center gap-1.5">
+                          <StatusBadge status={d.status} />
+                          {d.status === "failed" && d.last_error && (
+                            <span
+                              className="text-xs text-red-400/70 truncate max-w-[200px]"
+                              title={d.last_error}
+                            >
+                              {d.last_error}
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">
                         {d.attempts}
@@ -290,6 +352,17 @@ export default function NotificationsSettingsPage() {
                         {d.sent_at
                           ? new Date(d.sent_at).toLocaleString()
                           : new Date(d.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {d.status === "failed" && (
+                          <button
+                            onClick={() => retryDelivery.mutate(d.id)}
+                            disabled={retryDelivery.isPending}
+                            className="text-xs text-violet-400 hover:text-violet-300 transition disabled:opacity-50"
+                          >
+                            {retryDelivery.isPending ? "Retrying..." : "Retry"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ),
