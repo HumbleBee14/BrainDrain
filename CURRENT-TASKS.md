@@ -56,10 +56,21 @@ All Phase B tasks completed.
 - **Files**: Frontend page + possibly new API endpoint
 
 ### C6. Model A/B Playground
-- **Status**: Pending
+- **Status**: Done
 - **Why**: Playground only chats with one model; side-by-side comparison is powerful
-- **Scope**: Split-screen playground with two model selections
-- **Files**: Frontend page
+- **What was done**: Built split-screen A/B playground at project level:
+  - Created `/projects/[id]/playground` page with dual-panel chat interface
+  - Each panel has independent model selector filtered to deployed models (prevents selecting the same model twice)
+  - Shared input sends the same message to both models simultaneously via `Promise.allSettled`
+  - SSE streaming handled independently per panel with separate scroll refs
+  - Auto-creates API keys per model on first use (`playground-ab` named keys)
+  - Shared settings panel: system prompt, temperature slider, max tokens slider
+  - `ChatPanel` component encapsulates per-model message display, loading state, error display
+  - Color-coded panels (violet for Model A, emerald for Model B)
+  - Clear All button resets both conversations
+  - "A/B Playground" entry button on project detail page (visible when at least 1 deployed model)
+  - Breadcrumb navigation
+- **Files**: `apps/web/src/app/(dashboard)/projects/[id]/playground/page.tsx`, project detail page
 
 ### C7. Model Versioning & Rollback
 - **Status**: Pending

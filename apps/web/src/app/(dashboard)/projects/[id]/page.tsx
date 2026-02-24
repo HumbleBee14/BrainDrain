@@ -844,9 +844,20 @@ export default function ProjectDetailPage() {
       {/* Models section */}
       {models.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Models ({modelsData?.total ?? models.length})
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">
+              Models ({modelsData?.total ?? models.length})
+            </h2>
+            {models.filter((m) => m.deployment_status === "active").length >=
+              1 && (
+              <Link
+                href={`/projects/${params.id}/playground`}
+                className="rounded-lg border border-blue-700 bg-blue-600/10 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition"
+              >
+                A/B Playground
+              </Link>
+            )}
+          </div>
           <div className="rounded-lg border border-zinc-800">
             {models.map((model) => (
               <Link
