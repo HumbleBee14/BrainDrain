@@ -38,6 +38,29 @@ pub struct TriggerTrainResponse {
     pub training_job_id: String,
 }
 
+/// Request body for triggering the full pipeline (one-click fine-tune).
+#[derive(Debug, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TriggerFullPipelineRequest {
+    /// Task type for refinement (defaults to project's task_type or "question_answering")
+    #[ts(optional)]
+    pub task_type: Option<String>,
+    /// Base model to fine-tune (e.g. "unsloth/Llama-3.2-1B-Instruct")
+    pub base_model: String,
+    /// Training configuration: method, mode, hyperparams, gpu_class, auto_deploy
+    #[serde(default)]
+    #[schema(value_type = Object)]
+    pub training_config: serde_json::Value,
+}
+
+/// Response from triggering the full pipeline.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TriggerFullPipelineResponse {
+    pub workflow_id: String,
+    pub document_count: usize,
+}
+
 /// Aggregate pipeline status for a project.
 #[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]

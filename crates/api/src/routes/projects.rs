@@ -9,7 +9,9 @@ use platform_shared::enums::TeamRole;
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
-use crate::dto::project::{CreateProjectRequest, ProjectResponse, UpdateProjectRequest};
+use crate::dto::project::{
+    CreateProjectRequest, ProjectResponse, UpdateProjectRequest, UpdateProjectStatusRequest,
+};
 use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
@@ -23,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/projects", get(list_projects))
         .route("/projects/{id}", get(get_project))
         .route("/projects/{id}", put(update_project))
+        .route("/projects/{id}/status", put(update_project_status))
         .route("/projects/{id}", delete(delete_project))
 }
 
@@ -141,6 +144,44 @@ pub async fn update_project(
         "project",
         Some(id),
         serde_json::json!({}),
+    )
+    .await;
+    Ok(Json(project))
+}
+
+/// PUT /api/v1/projects/:id/status
+///
+/// Update a project's status with state machine validation.
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{id}/status",
+    tag = "Projects",
+    params(("id" = Uuid, Path, description = "Project ID")),
+    request_body = UpdateProjectStatusRequest,
+    responses(
+        (status = 200, description = "Status updated", body = ProjectResponse),
+        (status = 400, description = "Invalid transition", body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn update_project_status(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateProjectStatusRequest>,
+) -> AppResult<Json<ProjectResponse>> {
+    require_role(&user, TeamRole::Member)?;
+    let project =
+        ProjectService::update_status(state.project_repo(), user.tenant_id, id, body.status)
+            .await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "update_status",
+        "project",
+        Some(id),
+        serde_json::json!({"new_status": project.status}),
     )
     .await;
     Ok(Json(project))

@@ -9,6 +9,7 @@ import {
   usePipelineStatus,
   useTriggerParse,
   useTriggerRefine,
+  useTriggerFullPipeline,
 } from "@/hooks/use-pipeline";
 import { useDatasets } from "@/hooks/use-datasets";
 import {
@@ -53,6 +54,7 @@ export default function ProjectDetailPage() {
   const uploadDocs = useUploadDocuments(params.id);
   const triggerParse = useTriggerParse(params.id);
   const triggerRefine = useTriggerRefine(params.id);
+  const triggerFullPipeline = useTriggerFullPipeline(params.id);
   const createTrainingJob = useCreateTrainingJob(params.id);
   const cancelTrainingJob = useCancelTrainingJob(params.id);
   const { markStepComplete } = useOnboarding();
@@ -113,6 +115,18 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (cancelTrainingJob.isError) toast.error(cancelTrainingJob.error.message);
   }, [cancelTrainingJob.isError, cancelTrainingJob.error]);
+
+  useEffect(() => {
+    if (triggerFullPipeline.isSuccess)
+      toast.success(
+        `Full pipeline started for ${triggerFullPipeline.data.document_count} documents`,
+      );
+  }, [triggerFullPipeline.isSuccess, triggerFullPipeline.data]);
+
+  useEffect(() => {
+    if (triggerFullPipeline.isError)
+      toast.error(triggerFullPipeline.error.message);
+  }, [triggerFullPipeline.isError, triggerFullPipeline.error]);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -299,6 +313,27 @@ export default function ProjectDetailPage() {
                 : isGenerating
                   ? "Generating..."
                   : "Generate Training Data"}
+            </button>
+            <button
+              onClick={() =>
+                triggerFullPipeline.mutate({
+                  task_type: project.task_type || "question_answering",
+                  base_model: "unsloth/Llama-3.2-1B-Instruct",
+                  training_config: {
+                    method: "qlora",
+                    mode: "quick",
+                  },
+                })
+              }
+              disabled={
+                (!hasUploaded && !hasParsed) || triggerFullPipeline.isPending
+              }
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Run the entire pipeline: parse → generate data → train → evaluate"
+            >
+              {triggerFullPipeline.isPending
+                ? "Starting..."
+                : "One-Click Fine-Tune"}
             </button>
           </div>
 

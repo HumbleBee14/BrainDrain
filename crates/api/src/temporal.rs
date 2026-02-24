@@ -90,6 +90,16 @@ pub trait WorkflowOrchestrator: Send + Sync {
         quant_type: &str,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
+    fn start_full_pipeline(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        document_ids: Vec<Uuid>,
+        task_type: &str,
+        base_model: &str,
+        training_config: serde_json::Value,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
     fn get_workflow_status(
         &self,
         workflow_id: &str,
@@ -337,6 +347,41 @@ impl WorkflowOrchestrator for TemporalClient {
                     quant_type,
                 ]),
                 Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+            )
+            .await
+        })
+    }
+
+    fn start_full_pipeline(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        document_ids: Vec<Uuid>,
+        task_type: &str,
+        base_model: &str,
+        training_config: serde_json::Value,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let workflow_id = format!(
+                "full-pipeline-{project_id}-{}",
+                chrono::Utc::now().timestamp()
+            );
+            let doc_ids: Vec<String> = document_ids.iter().map(|id| id.to_string()).collect();
+
+            self.start_workflow_on_queue(
+                "FullPipelineWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    doc_ids,
+                    task_type,
+                    base_model,
+                    training_config,
+                ]),
+                None,
             )
             .await
         })

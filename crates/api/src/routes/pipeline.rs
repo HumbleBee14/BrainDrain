@@ -9,7 +9,8 @@ use platform_shared::enums::TeamRole;
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::pipeline::{
-    ProjectPipelineStatus, TriggerParseResponse, TriggerRefineRequest, TriggerRefineResponse,
+    ProjectPipelineStatus, TriggerFullPipelineRequest, TriggerFullPipelineResponse,
+    TriggerParseResponse, TriggerRefineRequest, TriggerRefineResponse,
 };
 use crate::error::AppResult;
 use crate::rbac::require_role;
@@ -21,6 +22,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/projects/{project_id}/parse", post(trigger_parse))
         .route("/projects/{project_id}/refine", post(trigger_refine))
+        .route(
+            "/projects/{project_id}/full-pipeline",
+            post(trigger_full_pipeline),
+        )
         .route("/projects/{project_id}/status", get(get_status))
 }
 
@@ -102,6 +107,55 @@ pub async fn trigger_refine(
         "project",
         Some(project_id),
         serde_json::json!({"task_type": task_type, "document_count": result.document_count}),
+    )
+    .await;
+
+    Ok((StatusCode::ACCEPTED, Json(result)))
+}
+
+/// Trigger the full pipeline: ingest → refine → train → evaluate → deploy.
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/full-pipeline",
+    tag = "Pipeline",
+    params(("project_id" = Uuid, Path, description = "Project ID")),
+    request_body = TriggerFullPipelineRequest,
+    responses(
+        (status = 202, description = "Full pipeline triggered", body = TriggerFullPipelineResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn trigger_full_pipeline(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(project_id): Path<Uuid>,
+    Json(body): Json<TriggerFullPipelineRequest>,
+) -> AppResult<(StatusCode, Json<TriggerFullPipelineResponse>)> {
+    require_role(&user, TeamRole::Member)?;
+    let task_type = body.task_type.as_deref().unwrap_or("question_answering");
+
+    let result = PipelineService::trigger_full_pipeline(
+        state.document_repo(),
+        state.orchestrator(),
+        user.tenant_id,
+        project_id,
+        task_type,
+        &body.base_model,
+        body.training_config,
+    )
+    .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "trigger_full_pipeline",
+        "project",
+        Some(project_id),
+        serde_json::json!({
+            "base_model": body.base_model,
+            "document_count": result.document_count,
+        }),
     )
     .await;
 

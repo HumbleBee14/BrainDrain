@@ -2,9 +2,14 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useTrainingJob } from "@/hooks/use-training";
+import { toast } from "sonner";
+import {
+  useTrainingJob,
+  useApproveCost,
+  useCancelTrainingJob,
+} from "@/hooks/use-training";
 import { useTrainingMetricsStream } from "@/hooks/use-training-metrics";
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function StatusBadge({ status }: { status: string }) {
@@ -82,6 +87,25 @@ function MetricsChart({
 export default function TrainingJobDetailPage() {
   const params = useParams<{ id: string; jobId: string }>();
   const { data: job, isLoading, error } = useTrainingJob(params.jobId);
+  const approveCost = useApproveCost(params.id);
+  const cancelJob = useCancelTrainingJob(params.id);
+
+  useEffect(() => {
+    if (approveCost.isSuccess)
+      toast.success("Cost approved — training started");
+  }, [approveCost.isSuccess]);
+
+  useEffect(() => {
+    if (approveCost.isError) toast.error(approveCost.error.message);
+  }, [approveCost.isError, approveCost.error]);
+
+  useEffect(() => {
+    if (cancelJob.isSuccess) toast.success("Training job cancelled");
+  }, [cancelJob.isSuccess]);
+
+  useEffect(() => {
+    if (cancelJob.isError) toast.error(cancelJob.error.message);
+  }, [cancelJob.isError, cancelJob.error]);
 
   const isActiveTraining =
     job?.status === "training" || job?.status === "provisioning";
@@ -149,6 +173,40 @@ export default function TrainingJobDetailPage() {
             ` \u00b7 Est. $${job.cost_estimate.toFixed(2)}`}
         </p>
       </div>
+
+      {/* Cost approval banner */}
+      {job.status === "cost_approval" && (
+        <div className="mb-6 rounded-lg border border-amber-800 bg-amber-900/20 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-amber-400">
+                Cost Approval Required
+              </p>
+              <p className="text-sm text-amber-300/70 mt-0.5">
+                Estimated cost of ${job.cost_estimate?.toFixed(2) ?? "?"}{" "}
+                exceeds the approval threshold. Approve to start training or
+                cancel.
+              </p>
+            </div>
+            <div className="flex gap-2 ml-4">
+              <button
+                onClick={() => approveCost.mutate(params.jobId)}
+                disabled={approveCost.isPending}
+                className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
+              >
+                {approveCost.isPending ? "Approving..." : "Approve"}
+              </button>
+              <button
+                onClick={() => cancelJob.mutate(params.jobId)}
+                disabled={cancelJob.isPending}
+                className="rounded-lg bg-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-600 transition disabled:opacity-50"
+              >
+                {cancelJob.isPending ? "Cancelling..." : "Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Training progress bar */}
       {isActiveTraining &&

@@ -35,6 +35,10 @@ pub fn router() -> Router<AppState> {
         .route("/training-jobs/{id}", get(get_training_job))
         .route("/training-jobs/{id}/cancel", post(cancel_training_job))
         .route(
+            "/training-jobs/{id}/approve-cost",
+            post(approve_training_cost),
+        )
+        .route(
             "/projects/{project_id}/training-jobs/estimate",
             post(estimate_training_cost),
         )
@@ -84,6 +88,7 @@ pub async fn create_training_job(
         project_id,
         body,
         Some(limits.max_models),
+        None, // use default cost approval threshold
     )
     .await?;
 
@@ -181,6 +186,51 @@ pub async fn get_training_job(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
     let job = TrainingJobService::get(state.training_job_repo(), user.tenant_id, id).await?;
+    Ok(Json(job))
+}
+
+/// POST /api/v1/training-jobs/:id/approve-cost
+///
+/// Approve a training job that's waiting for cost approval.
+#[utoipa::path(
+    post,
+    path = "/api/v1/training-jobs/{id}/approve-cost",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Training job ID")
+    ),
+    responses(
+        (status = 200, description = "Cost approved, training started", body = TrainingJobResponse),
+        (status = 400, description = "Job not in cost_approval status"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn approve_training_cost(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<TrainingJobResponse>> {
+    require_role(&user, TeamRole::Admin)?;
+    let job = TrainingJobService::approve_cost(
+        state.training_job_repo(),
+        state.dataset_repo(),
+        state.orchestrator(),
+        user.tenant_id,
+        id,
+    )
+    .await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "approve_cost",
+        "training_job",
+        Some(id),
+        serde_json::json!({"cost_estimate": job.cost_estimate}),
+    )
+    .await;
+
     Ok(Json(job))
 }
 

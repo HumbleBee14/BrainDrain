@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::dto::pipeline::{
     DatasetStatusCounts, DocumentStatusCounts, EvaluationStatusCounts, ModelStatusCounts,
-    ProjectPipelineStatus, TrainingJobStatusCounts, TriggerParseResponse, TriggerRefineResponse,
+    ProjectPipelineStatus, TrainingJobStatusCounts, TriggerFullPipelineResponse,
+    TriggerParseResponse, TriggerRefineResponse,
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{
@@ -112,6 +113,70 @@ impl PipelineService {
         );
 
         Ok(TriggerRefineResponse {
+            workflow_id: result.workflow_id,
+            document_count: doc_count,
+        })
+    }
+
+    /// Trigger the full pipeline: ingest → refine → train → evaluate → (optional deploy).
+    ///
+    /// Starts a FullPipelineWorkflow for all uploaded documents in a project.
+    pub async fn trigger_full_pipeline(
+        doc_repo: &dyn DocumentRepository,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        task_type: &str,
+        base_model: &str,
+        training_config: serde_json::Value,
+    ) -> AppResult<TriggerFullPipelineResponse> {
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Pipeline workflows are not available (orchestrator not configured)"
+                .to_string(),
+        })?;
+
+        // Collect all documents that haven't failed (uploaded or parsed)
+        let (uploaded, parsed) = tokio::try_join!(
+            doc_repo.list_by_status(tenant_id, project_id, DocumentStatus::Uploaded),
+            doc_repo.list_by_status(tenant_id, project_id, DocumentStatus::Parsed),
+        )?;
+
+        let mut doc_ids: Vec<Uuid> = uploaded.iter().map(|d| d.id).collect();
+        doc_ids.extend(parsed.iter().map(|d| d.id));
+
+        if doc_ids.is_empty() {
+            return Err(AppError::BadRequest {
+                message:
+                    "No documents available for the pipeline (need uploaded or parsed documents)"
+                        .to_string(),
+            });
+        }
+
+        let doc_count = doc_ids.len();
+
+        let result = orchestrator
+            .start_full_pipeline(
+                tenant_id,
+                project_id,
+                doc_ids,
+                task_type,
+                base_model,
+                training_config,
+            )
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to start FullPipelineWorkflow: {e}"))
+            })?;
+
+        tracing::info!(
+            project_id = %project_id,
+            workflow_id = %result.workflow_id,
+            document_count = doc_count,
+            base_model = base_model,
+            "FullPipelineWorkflow started"
+        );
+
+        Ok(TriggerFullPipelineResponse {
             workflow_id: result.workflow_id,
             document_count: doc_count,
         })

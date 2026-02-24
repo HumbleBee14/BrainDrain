@@ -7,35 +7,11 @@
 
 ## Phase B: Backend Light (Small Backend Changes + Frontend)
 
-### B1. Full Pipeline One-Click Endpoint
-- **Status**: Pending
-- **Why**: `FullPipelineWorkflow` exists in workers but has no API endpoint; users manually trigger each stage
-- **Scope**: Add API route + frontend button to trigger full pipeline
-- **Files**: Backend route + service + frontend
-
-### B2. Rate Limit Enforcement Middleware
-- **Status**: Pending
-- **Why**: `ApiKey.rate_limit` field exists, UI shows it, but no middleware enforces it
-- **Scope**: Add Redis-based rate limiting middleware for inference endpoint
-- **Files**: Backend middleware + Redis
-
-### B3. Cost Approval Workflow
-- **Status**: Pending
-- **Why**: `TrainingJobStatus::CostApproval` enum exists but is never used; prevents surprise bills
-- **Scope**: Add configurable threshold, pause jobs above it, add approve/reject routes
-- **Files**: Backend service + routes + frontend
-
 ### B4. Webhook Testing & Retry
 - **Status**: Pending
 - **Why**: Users can configure webhook URLs but can't test them or retry failed deliveries
 - **Scope**: Add test endpoint + retry button in notification UI
 - **Files**: Backend route + frontend
-
-### B5. Project Status State Machine
-- **Status**: Pending
-- **Why**: 7 project statuses exist but no transition validation; projects can jump randomly
-- **Scope**: Add state machine validation in service layer
-- **Files**: Backend service
 
 ---
 
@@ -162,6 +138,51 @@
   - Total epochs derived from `hyperparams.num_train_epochs` or `hyperparams.epochs`, defaulting to 3
   - Smooth 500ms CSS transition for bar width updates
 - **Files**: `apps/web/src/app/(dashboard)/projects/[id]/training/[jobId]/page.tsx`
+
+### B1. Full Pipeline One-Click Endpoint
+- **Status**: Done
+- **Why**: `FullPipelineWorkflow` exists in Python workers but had no API endpoint; users had to manually trigger each pipeline stage (parse → refine → train → evaluate) individually
+- **What was done**: Added end-to-end "one-click fine-tune" capability:
+  - Added `start_full_pipeline()` method to `WorkflowOrchestrator` trait and `TemporalClient` implementation — starts `FullPipelineWorkflow` with all parameters (tenant_id, project_id, document_ids, task_type, base_model, training_config)
+  - Added `trigger_full_pipeline()` to `PipelineService` — collects all uploaded + parsed documents and starts the workflow
+  - Added `POST /projects/{project_id}/full-pipeline` route with audit logging
+  - Added `TriggerFullPipelineRequest` and `TriggerFullPipelineResponse` DTOs with ts-rs export
+  - Added `triggerFullPipeline()` API client method and `useTriggerFullPipeline` React hook
+  - Added violet "One-Click Fine-Tune" button in project detail page pipeline actions, with toast notifications
+- **Files**: `temporal.rs`, `pipeline_service.rs`, `pipeline.rs` (routes), `dto/pipeline.rs`, `api-client.ts`, `use-pipeline.ts`, project detail page
+
+### B2. Rate Limit Enforcement Middleware
+- **Status**: Done (was already implemented)
+- **Why**: Discovered during code audit that rate limiting already exists in `ApiKeyService::authenticate()` using a Redis Lua script per-minute sliding window. No additional work needed.
+
+### B3. Cost Approval Workflow
+- **Status**: Done
+- **Why**: `TrainingJobStatus::CostApproval` enum existed but was never used; prevents surprise training bills by requiring manual approval for expensive jobs
+- **What was done**: Implemented complete cost approval workflow:
+  - Added configurable cost threshold (default $5.00) — jobs above this cost are paused before starting
+  - Modified `TrainingJobService::create()` to check `cost_estimate > threshold`; if exceeded, transitions job to `cost_approval` status and does NOT start the Temporal workflow
+  - Added `set_cost_approval()` and `approve_cost()` methods to `TrainingJobRepository` trait + `PgTrainingJobRepo` implementation
+  - Added `approve_cost()` to `TrainingJobService` — transitions from `cost_approval → pending`, then starts the TrainWorkflow
+  - Added `POST /training-jobs/{id}/approve-cost` route (requires Admin role) with audit logging
+  - Cancel already handled `cost_approval` status (existing `cancel()` method)
+  - Added `approveCost()` API client method and `useApproveCost` React hook
+  - Added amber cost approval banner on training job detail page with Approve/Reject buttons
+- **Files**: `training_job_service.rs`, `training.rs` (routes), `traits.rs`, `training_job_repo.rs`, `api-client.ts`, `use-training.ts`, training job detail page
+
+### B5. Project Status State Machine
+- **Status**: Done
+- **Why**: 7 project statuses (Created, Ingesting, Refining, Training, Evaluating, Deployed, Archived) existed but no transition validation; projects could jump to any status randomly
+- **What was done**: Added state machine validation with allowed transitions:
+  - Forward pipeline: Created → Ingesting → Refining → Training → Evaluating → Deployed
+  - Rollback on failure: each step can go back one step
+  - Archive: Created/Deployed → Archived, Archived → Created (un-archive)
+  - Re-evaluate: Deployed → Evaluating
+  - Added `is_valid_transition()` function with pattern matching
+  - Added `update_status()` to `ProjectService` with validation
+  - Added `update_status()` to `ProjectRepository` trait + `PgProjectRepo` implementation
+  - Added `PUT /projects/{id}/status` route with `UpdateProjectStatusRequest` DTO
+  - Added 5 unit tests covering forward, rollback, archive, invalid, and same-status transitions
+- **Files**: `project_service.rs`, `projects.rs` (routes), `project.rs` (DTO), `traits.rs`, `project_repo.rs`
 
 ---
 

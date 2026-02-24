@@ -9,12 +9,18 @@ use crate::repositories::traits::{DatasetRepository, TrainingJobRepository};
 use crate::temporal::WorkflowOrchestrator;
 use platform_shared::enums::{DatasetStatus, TrainingMethod, TrainingMode};
 
+/// Default cost threshold (USD) above which jobs require approval.
+const DEFAULT_COST_APPROVAL_THRESHOLD: f64 = 5.0;
+
 /// Business logic for training job operations.
 pub struct TrainingJobService;
 
 impl TrainingJobService {
     /// Create a new training job and auto-trigger the TrainWorkflow.
     /// Uses atomic plan limit enforcement when max_models is provided.
+    /// If the estimated cost exceeds `cost_approval_threshold`, the job is created
+    /// in `cost_approval` status and the workflow is NOT started until approved.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         training_repo: &dyn TrainingJobRepository,
         dataset_repo: &dyn DatasetRepository,
@@ -23,6 +29,7 @@ impl TrainingJobService {
         project_id: Uuid,
         req: CreateTrainingJobRequest,
         max_models: Option<i64>,
+        cost_approval_threshold: Option<f64>,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Training workflows are not available (orchestrator not configured)"
@@ -127,6 +134,26 @@ impl TrainingJobService {
                 )
                 .await?
         };
+
+        // Check if cost exceeds approval threshold
+        let threshold = cost_approval_threshold.unwrap_or(DEFAULT_COST_APPROVAL_THRESHOLD);
+        if cost_estimate > threshold {
+            // Set job to cost_approval status — requires manual approval before starting
+            let updated = training_repo
+                .set_cost_approval(tenant_id, job.id)
+                .await?
+                .unwrap_or(job);
+
+            tracing::info!(
+                project_id = %project_id,
+                training_job_id = %updated.id,
+                cost_estimate = cost_estimate,
+                threshold = threshold,
+                "Training job requires cost approval"
+            );
+
+            return Ok(updated.into());
+        }
 
         // Build dataset S3 path
         let dataset_path = dataset.storage_path.unwrap_or_else(|| {
@@ -259,6 +286,71 @@ impl TrainingJobService {
             gpu_class: gpu_class_str.to_string(),
             gpu_rate_per_hour: gpu_rate,
         })
+    }
+
+    /// Approve a training job that's waiting for cost approval.
+    /// Transitions from cost_approval → pending, then starts the TrainWorkflow.
+    pub async fn approve_cost(
+        training_repo: &dyn TrainingJobRepository,
+        dataset_repo: &dyn DatasetRepository,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> AppResult<TrainingJobResponse> {
+        let orchestrator = orchestrator.ok_or(AppError::BadRequest {
+            message: "Training workflows are not available (orchestrator not configured)"
+                .to_string(),
+        })?;
+
+        let job =
+            training_repo
+                .approve_cost(tenant_id, job_id)
+                .await?
+                .ok_or(AppError::BadRequest {
+                    message: "Cannot approve: job not found or not in cost_approval status"
+                        .to_string(),
+                })?;
+
+        // Fetch dataset for S3 path
+        let dataset = dataset_repo
+            .get_by_id(tenant_id, job.dataset_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Dataset not found".to_string(),
+            })?;
+
+        let dataset_path = dataset.storage_path.unwrap_or_else(|| {
+            platform_shared::s3_paths::dataset_path(tenant_id, job.project_id, job.dataset_id)
+        });
+
+        // Start TrainWorkflow
+        let result = orchestrator
+            .start_train(
+                tenant_id,
+                job.id,
+                &dataset_path,
+                &job.base_model,
+                &job.method,
+                &job.mode,
+                job.hyperparams.clone(),
+                job.gpu_class.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to start TrainWorkflow: {e}"))
+            })?;
+
+        training_repo
+            .update_workflow_id(tenant_id, job.id, &result.workflow_id)
+            .await?;
+
+        tracing::info!(
+            training_job_id = %job.id,
+            workflow_id = %result.workflow_id,
+            "Cost approved — TrainWorkflow started"
+        );
+
+        Ok(job.into())
     }
 
     /// Cancel a training job.

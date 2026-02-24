@@ -6,6 +6,8 @@ import {
   api,
   type TriggerParseResponse,
   type TriggerRefineResponse,
+  type TriggerFullPipelineRequest,
+  type TriggerFullPipelineResponse,
   type ProjectPipelineStatus,
 } from "@/lib/api-client";
 
@@ -50,6 +52,33 @@ export function useTriggerParse(projectId: string) {
         queryKey: ["pipeline-status", projectId],
       });
       queryClient.invalidateQueries({ queryKey: ["documents", projectId] });
+    },
+  });
+}
+
+export function useTriggerFullPipeline(projectId: string) {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    TriggerFullPipelineResponse,
+    Error,
+    TriggerFullPipelineRequest
+  >({
+    mutationFn: async (data) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.pipeline.triggerFullPipeline(token, projectId, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["pipeline-status", projectId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["documents", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["datasets", projectId] });
+      queryClient.invalidateQueries({
+        queryKey: ["training-jobs", projectId],
+      });
     },
   });
 }

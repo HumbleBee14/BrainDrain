@@ -69,6 +69,22 @@ export function useCancelTrainingJob(projectId: string) {
   });
 }
 
+export function useApproveCost(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useAuthedMutation<TrainingJob, Error, string>({
+    mutationFn: (token, jobId) => api.trainingJobs.approveCost(token, jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["training-jobs", projectId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["pipeline-status", projectId],
+      });
+    },
+  });
+}
+
 export function useEstimateTrainingCost(
   projectId: string,
   data: CreateTrainingJobInput,

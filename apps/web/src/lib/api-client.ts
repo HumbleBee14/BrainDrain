@@ -94,6 +94,19 @@ export interface TeamInvitation {
   created_at: string;
 }
 
+// ── Pipeline types (generated after typegen) ──
+
+export interface TriggerFullPipelineRequest {
+  task_type?: string;
+  base_model: string;
+  training_config: Record<string, unknown>;
+}
+
+export interface TriggerFullPipelineResponse {
+  workflow_id: string;
+  document_count: number;
+}
+
 // ── Frontend-only types (not in Rust DTOs) ──
 
 export interface TrainingMetricsEntry {
@@ -363,6 +376,20 @@ export const api = {
         body: JSON.stringify({ task_type: taskType, config: config || {} }),
       }),
 
+    triggerFullPipeline: (
+      token: string,
+      projectId: string,
+      data: TriggerFullPipelineRequest,
+    ) =>
+      request<TriggerFullPipelineResponse>(
+        `/api/v1/projects/${projectId}/full-pipeline`,
+        {
+          token,
+          method: "POST",
+          body: JSON.stringify(data),
+        },
+      ),
+
     getStatus: (token: string, projectId: string) =>
       request<ProjectPipelineStatus>(`/api/v1/projects/${projectId}/status`, {
         token,
@@ -426,6 +453,13 @@ export const api = {
 
     cancel: (token: string, id: string) =>
       request<TrainingJobResponse>(`/api/v1/training-jobs/${id}/cancel`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+
+    approveCost: (token: string, id: string) =>
+      request<TrainingJobResponse>(`/api/v1/training-jobs/${id}/approve-cost`, {
         token,
         method: "POST",
         body: JSON.stringify({}),

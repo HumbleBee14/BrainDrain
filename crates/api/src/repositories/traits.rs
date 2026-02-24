@@ -66,6 +66,13 @@ pub trait ProjectRepository: Send + Sync {
         task_type: Option<&str>,
     ) -> BoxFuture<'_, AppResult<Option<Project>>>;
 
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        status: &str,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>>;
+
     fn delete(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
 
@@ -221,6 +228,20 @@ pub trait TrainingJobRepository: Send + Sync {
     ) -> BoxFuture<'_, AppResult<bool>>;
 
     fn cancel(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
+    /// Set a job's status to cost_approval (only from pending).
+    fn set_cost_approval(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
+    /// Approve a cost_approval job — transitions to pending so it can be started.
+    fn approve_cost(
         &self,
         tenant_id: Uuid,
         job_id: Uuid,
