@@ -19,10 +19,10 @@ function ComparisonRow({
   const allNumeric = numericValues.every((n) => !isNaN(n));
 
   return (
-    <div className="grid grid-cols-[200px,1fr,1fr] gap-4 py-2 border-b border-zinc-800/50 last:border-b-0">
+    <div className="grid grid-cols-[200px,1fr,1fr] gap-4 py-2 border-b border-zinc-200/50 dark:border-zinc-800/50 last:border-b-0">
       <span className="text-sm text-zinc-500">{label}</span>
       {values.map((val, i) => {
-        let cls = "text-sm text-white font-mono";
+        let cls = "text-sm text-zinc-900 dark:text-white font-mono";
         if (allNumeric && highlight && values.length === 2) {
           const isBetter =
             highlight === "lower"
@@ -56,27 +56,27 @@ function JobColumn({ job }: { job: TrainingJob }) {
 
   return (
     <div className="text-sm">
-      <p className="text-white font-semibold">
+      <p className="text-zinc-900 dark:text-white font-semibold">
         {job.base_model.split("/").pop()}
       </p>
       <p className="text-zinc-500">
         {String(job.method).toUpperCase()} / {job.mode}
       </p>
-      {duration && <p className="text-zinc-600 text-xs">{duration}</p>}
+      {duration && <p className="text-zinc-400 dark:text-zinc-600 text-xs">{duration}</p>}
     </div>
   );
 }
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
-    training: "bg-violet-900/50 text-violet-400 border-violet-800",
-    pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    cancelled: "bg-zinc-800 text-zinc-500 border-zinc-700",
+    completed: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800",
+    failed: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/50 dark:text-red-400 dark:border-red-800",
+    training: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/50 dark:text-violet-400 dark:border-violet-800",
+    pending: "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700",
+    cancelled: "bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-500 dark:border-zinc-700",
   };
   const cls =
-    colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+    colors[status] || "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
   return (
     <span
       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
@@ -191,7 +191,7 @@ export default function TrainingComparisonPage() {
             { label: "Compare Training Jobs" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
           Training Job Comparison
         </h1>
         <p className="text-zinc-500 mt-1">
@@ -205,13 +205,13 @@ export default function TrainingComparisonPage() {
         {jobs.map((job, i) => (
           <div
             key={job.id}
-            className={`rounded-lg border p-4 ${i === 0 ? "border-violet-800 bg-violet-900/10" : "border-emerald-800 bg-emerald-900/10"}`}
+            className={`rounded-lg border p-4 ${i === 0 ? "border-violet-200 dark:border-violet-800 bg-violet-50/10 dark:bg-violet-900/10" : "border-emerald-200 dark:border-emerald-800 bg-emerald-50/10 dark:bg-emerald-900/10"}`}
           >
             <div className="flex items-center gap-2 mb-1">
               <JobColumn job={job} />
               <StatusBadge status={job.status} />
             </div>
-            <p className="text-xs text-zinc-600 font-mono mt-1">
+            <p className="text-xs text-zinc-400 dark:text-zinc-600 font-mono mt-1">
               {job.id.slice(0, 8)}
             </p>
           </div>
@@ -219,8 +219,8 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Final Loss Overlay */}
-      <div className="rounded-lg border border-zinc-800 p-4 mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-3">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3">
           Final Training Loss
         </h3>
         <MetricsOverlay jobs={jobs} />
@@ -237,8 +237,8 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Configuration */}
-      <div className="rounded-lg border border-zinc-800 p-4 mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3 uppercase tracking-wider">
           Configuration
         </h3>
         <ComparisonRow
@@ -263,8 +263,8 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Hyperparameters */}
-      <div className="rounded-lg border border-zinc-800 p-4 mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3 uppercase tracking-wider">
           Hyperparameters
         </h3>
         <ComparisonRow
@@ -334,8 +334,8 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Cost & Timing */}
-      <div className="rounded-lg border border-zinc-800 p-4 mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3 uppercase tracking-wider">
           Cost & Timing
         </h3>
         <ComparisonRow
@@ -377,8 +377,8 @@ export default function TrainingComparisonPage() {
       </div>
 
       {/* Training Results */}
-      <div className="rounded-lg border border-zinc-800 p-4 mb-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3 uppercase tracking-wider">
           Training Results
         </h3>
         <ComparisonRow

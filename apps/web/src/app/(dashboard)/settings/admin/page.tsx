@@ -38,8 +38,8 @@ function NumberField({
   suffix?: string;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-800 p-4">
-      <label className="block text-sm text-white font-medium mb-1">
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+      <label className="block text-sm text-zinc-900 dark:text-white font-medium mb-1">
         {label}
       </label>
       <p className="text-xs text-zinc-500 mb-2">{description}</p>
@@ -51,7 +51,7 @@ function NumberField({
           onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
           step={step ?? 1}
           min={min ?? 0}
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white font-mono"
+          className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white font-mono"
         />
         {suffix && <span className="text-sm text-zinc-500">{suffix}</span>}
       </div>
@@ -136,7 +136,7 @@ export default function AdminConfigPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
             Admin Configuration
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
@@ -149,7 +149,7 @@ export default function AdminConfigPage() {
             <button
               onClick={handleReset}
               disabled={resetConfig.isPending}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:border-zinc-600 transition disabled:opacity-50"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition disabled:opacity-50"
             >
               Reset to Defaults
             </button>
@@ -166,7 +166,7 @@ export default function AdminConfigPage() {
 
       {/* GPU Rates */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-1">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">
           GPU Hourly Rates
         </h2>
         <p className="text-xs text-zinc-500 mb-4">
@@ -176,7 +176,7 @@ export default function AdminConfigPage() {
           {Object.entries(form.gpu_rates).map(([gpuClass, rate]) => (
             <div
               key={gpuClass}
-              className="rounded-lg border border-zinc-800 p-3"
+              className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3"
             >
               <label className="block text-xs text-zinc-500 mb-1">
                 {GPU_LABELS[gpuClass] || gpuClass.toUpperCase()}
@@ -191,9 +191,9 @@ export default function AdminConfigPage() {
                   }
                   step={0.1}
                   min={0}
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-white font-mono"
+                  className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2 py-1.5 text-sm text-zinc-900 dark:text-white font-mono"
                 />
-                <span className="text-xs text-zinc-600">/hr</span>
+                <span className="text-xs text-zinc-400 dark:text-zinc-600">/hr</span>
               </div>
             </div>
           ))}
@@ -202,7 +202,7 @@ export default function AdminConfigPage() {
 
       {/* Training */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-1">Training</h2>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">Training</h2>
         <p className="text-xs text-zinc-500 mb-4">
           Controls for training cost approval and document processing.
         </p>
@@ -229,7 +229,7 @@ export default function AdminConfigPage() {
 
       {/* Inference */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-1">Inference</h2>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">Inference</h2>
         <p className="text-xs text-zinc-500 mb-4">
           Pricing and limits for the inference API.
         </p>
@@ -276,7 +276,7 @@ export default function AdminConfigPage() {
 
       {/* Rate Limits */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-1">Rate Limits</h2>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-1">Rate Limits</h2>
         <p className="text-xs text-zinc-500 mb-4">
           Default rate limits applied to newly created API keys.
         </p>

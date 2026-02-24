@@ -82,7 +82,7 @@ export default function UsagePage() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-white mb-6">Usage</h1>
+      <h1 className="text-xl font-bold text-zinc-900 dark:text-white mb-6">Usage</h1>
 
       {isLoading ? (
         <p className="text-zinc-500">Loading usage data...</p>
@@ -90,66 +90,66 @@ export default function UsagePage() {
         <>
           {/* Summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="rounded-lg border border-zinc-800 p-4">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
               <p className="text-xs text-zinc-500 uppercase tracking-wider">
                 Total Requests
               </p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
                 {formatNumber(totalRequests)}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">Last 30 days</p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Last 30 days</p>
             </div>
-            <div className="rounded-lg border border-zinc-800 p-4">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
               <p className="text-xs text-zinc-500 uppercase tracking-wider">
                 Prompt Tokens
               </p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
                 {formatNumber(totalPromptTokens)}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">Last 30 days</p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Last 30 days</p>
             </div>
-            <div className="rounded-lg border border-zinc-800 p-4">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
               <p className="text-xs text-zinc-500 uppercase tracking-wider">
                 Completion Tokens
               </p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
                 {formatNumber(totalCompletionTokens)}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">Last 30 days</p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Last 30 days</p>
             </div>
-            <div className="rounded-lg border border-zinc-800 p-4">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
               <p className="text-xs text-zinc-500 uppercase tracking-wider">
                 Inference Cost
               </p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
                 {formatCost(totalInferenceCost)}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">Last 30 days</p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Last 30 days</p>
             </div>
           </div>
 
           {/* Overall billing totals */}
           {dashUsage && (
-            <div className="rounded-lg border border-zinc-800 p-6 mb-8">
-              <h2 className="text-sm font-medium text-zinc-400 mb-4">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
+              <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
                 Billing Period Totals
               </h2>
               <div className="grid grid-cols-3 gap-6">
                 <div>
                   <p className="text-xs text-zinc-500">Total Cost</p>
-                  <p className="text-lg font-semibold text-white">
+                  <p className="text-lg font-semibold text-zinc-900 dark:text-white">
                     ${dashUsage.total_cost_usd.toFixed(2)}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-500">Total Tokens In</p>
-                  <p className="text-lg font-semibold text-white">
+                  <p className="text-lg font-semibold text-zinc-900 dark:text-white">
                     {formatNumber(dashUsage.total_tokens_in)}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-500">Total Tokens Out</p>
-                  <p className="text-lg font-semibold text-white">
+                  <p className="text-lg font-semibold text-zinc-900 dark:text-white">
                     {formatNumber(dashUsage.total_tokens_out)}
                   </p>
                 </div>
@@ -160,7 +160,7 @@ export default function UsagePage() {
           {/* Charts */}
           {inferenceUsage && inferenceUsage.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              <div className="rounded-lg border border-zinc-800 p-6">
+              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
                 <BarChart
                   data={inferenceUsage.map((d) => ({
                     key: d.date,
@@ -172,16 +172,16 @@ export default function UsagePage() {
                   label="Requests / Day"
                 />
                 <div className="flex justify-between mt-2">
-                  <span className="text-xs text-zinc-600">
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">
                     {inferenceUsage[0]?.date}
                   </span>
-                  <span className="text-xs text-zinc-600">
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">
                     {inferenceUsage[inferenceUsage.length - 1]?.date}
                   </span>
                 </div>
               </div>
 
-              <div className="rounded-lg border border-zinc-800 p-6">
+              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
                 <BarChart
                   data={inferenceUsage.map((d) => ({
                     key: d.date,
@@ -195,19 +195,19 @@ export default function UsagePage() {
                   label="Tokens / Day"
                 />
                 <div className="flex justify-between mt-2">
-                  <span className="text-xs text-zinc-600">
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">
                     {inferenceUsage[0]?.date}
                   </span>
-                  <span className="text-xs text-zinc-600">
+                  <span className="text-xs text-zinc-400 dark:text-zinc-600">
                     {inferenceUsage[inferenceUsage.length - 1]?.date}
                   </span>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-zinc-800 p-8 text-center mb-8">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center mb-8">
               <p className="text-zinc-500">No inference usage data yet.</p>
-              <p className="text-xs text-zinc-600 mt-1">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
                 Deploy a model and send inference requests to see usage data
                 here.
               </p>
@@ -217,13 +217,13 @@ export default function UsagePage() {
           {/* Daily breakdown table */}
           {inferenceUsage && inferenceUsage.length > 0 && (
             <div>
-              <h2 className="text-sm font-medium text-zinc-400 mb-3">
+              <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3">
                 Daily Breakdown
               </h2>
-              <div className="rounded-lg border border-zinc-800 overflow-hidden">
+              <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-zinc-800">
+                    <tr className="border-b border-zinc-200 dark:border-zinc-800">
                       <th className="px-4 py-2 text-left text-xs font-medium text-zinc-500">
                         Date
                       </th>
@@ -245,19 +245,19 @@ export default function UsagePage() {
                     {[...inferenceUsage].reverse().map((day) => (
                       <tr
                         key={day.date}
-                        className="border-b border-zinc-800/50 last:border-b-0"
+                        className="border-b border-zinc-100 dark:border-zinc-800/50 last:border-b-0"
                       >
-                        <td className="px-4 py-2 text-zinc-300">{day.date}</td>
-                        <td className="px-4 py-2 text-right text-zinc-400">
+                        <td className="px-4 py-2 text-zinc-700 dark:text-zinc-300">{day.date}</td>
+                        <td className="px-4 py-2 text-right text-zinc-600 dark:text-zinc-400">
                           {day.request_count.toLocaleString()}
                         </td>
-                        <td className="px-4 py-2 text-right text-zinc-400">
+                        <td className="px-4 py-2 text-right text-zinc-600 dark:text-zinc-400">
                           {day.prompt_tokens.toLocaleString()}
                         </td>
-                        <td className="px-4 py-2 text-right text-zinc-400">
+                        <td className="px-4 py-2 text-right text-zinc-600 dark:text-zinc-400">
                           {day.completion_tokens.toLocaleString()}
                         </td>
-                        <td className="px-4 py-2 text-right text-zinc-400">
+                        <td className="px-4 py-2 text-right text-zinc-600 dark:text-zinc-400">
                           {formatCost(day.cost_usd)}
                         </td>
                       </tr>

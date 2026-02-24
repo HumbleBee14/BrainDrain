@@ -32,22 +32,22 @@ function PairCard({
   return (
     <div
       className={`rounded-lg border p-4 ${
-        isShortResponse ? "border-yellow-700/50" : "border-zinc-800"
+        isShortResponse ? "border-yellow-300 dark:border-yellow-700/50" : "border-zinc-200 dark:border-zinc-800"
       }`}
     >
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-zinc-600">Pair #{index + 1}</span>
+        <span className="text-xs text-zinc-400 dark:text-zinc-600">Pair #{index + 1}</span>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-600">{msgCount} messages</span>
+          <span className="text-xs text-zinc-400 dark:text-zinc-600">{msgCount} messages</span>
           {assistantMsg && (
             <span
-              className={`text-xs ${isShortResponse ? "text-yellow-500" : "text-zinc-600"}`}
+              className={`text-xs ${isShortResponse ? "text-yellow-600 dark:text-yellow-500" : "text-zinc-400 dark:text-zinc-600"}`}
             >
               {responseLen} chars
             </span>
           )}
           {isShortResponse && (
-            <span className="text-xs text-yellow-500 font-medium">Short</span>
+            <span className="text-xs text-yellow-600 dark:text-yellow-500 font-medium">Short</span>
           )}
         </div>
       </div>
@@ -56,7 +56,7 @@ function PairCard({
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
             System
           </p>
-          <p className="text-sm text-zinc-400 bg-zinc-900 rounded p-2">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 rounded p-2">
             {systemMsg.content}
           </p>
         </div>
@@ -66,7 +66,7 @@ function PairCard({
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
             Instruction
           </p>
-          <p className="text-sm text-white bg-zinc-900 rounded p-2">
+          <p className="text-sm text-zinc-900 dark:text-white bg-zinc-50 dark:bg-zinc-900 rounded p-2">
             {userMsg.content}
           </p>
         </div>
@@ -76,7 +76,7 @@ function PairCard({
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">
             Response
           </p>
-          <p className="text-sm text-zinc-300 bg-zinc-900 rounded p-2 whitespace-pre-wrap">
+          <p className="text-sm text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 rounded p-2 whitespace-pre-wrap">
             {assistantMsg.content}
           </p>
         </div>
@@ -124,7 +124,7 @@ export default function DatasetReviewPage() {
         <p className="text-zinc-500">No dataset selected</p>
         <Link
           href={`/projects/${params.id}`}
-          className="text-sm text-white underline hover:no-underline"
+          className="text-sm text-zinc-900 dark:text-white underline hover:no-underline"
         >
           Back to Project
         </Link>
@@ -152,19 +152,19 @@ export default function DatasetReviewPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
             {dataset?.name || "Dataset"}
           </h1>
           {dataset && (
             <span
               className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
                 dataset.status === "approved"
-                  ? "border-emerald-700 bg-emerald-900/30 text-emerald-400"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
                   : dataset.status === "review_pending"
-                    ? "border-yellow-700 bg-yellow-900/30 text-yellow-400"
+                    ? "border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
                     : dataset.status === "archived"
-                      ? "border-red-700 bg-red-900/30 text-red-400"
-                      : "border-zinc-700 bg-zinc-800 text-zinc-400"
+                      ? "border-red-200 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-900/30 dark:text-red-400"
+                      : "border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
               }`}
             >
               {dataset.status}
@@ -201,7 +201,7 @@ export default function DatasetReviewPage() {
           </p>
         )}
         {(approveDataset.isError || rejectDataset.isError) && (
-          <p className="text-sm text-red-400 mt-2">
+          <p className="text-sm text-red-600 dark:text-red-400 mt-2">
             {approveDataset.error?.message || rejectDataset.error?.message}
           </p>
         )}
@@ -213,11 +213,11 @@ export default function DatasetReviewPage() {
         Object.keys(dataset.stats).length > 0 && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
             {Object.entries(dataset.stats).map(([key, value]) => (
-              <div key={key} className="rounded-lg border border-zinc-800 p-4">
+              <div key={key} className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
                 <p className="text-xs text-zinc-500 uppercase tracking-wider">
                   {key.replace(/_/g, " ")}
                 </p>
-                <p className="text-white mt-1 text-lg font-semibold">
+                <p className="text-zinc-900 dark:text-white mt-1 text-lg font-semibold">
                   {typeof value === "number"
                     ? value.toLocaleString()
                     : String(value)}
@@ -229,7 +229,7 @@ export default function DatasetReviewPage() {
 
       {/* Preview pairs */}
       <div>
-        <h2 className="text-lg font-semibold text-white mb-4">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
           Preview {preview && `(${preview.length} samples)`}
         </h2>
         {preview && preview.length > 0 ? (
@@ -244,7 +244,7 @@ export default function DatasetReviewPage() {
               <div className="mt-6 text-center">
                 <button
                   onClick={() => setMaxRows((prev) => prev + 20)}
-                  className="rounded-lg border border-zinc-700 px-6 py-2 text-sm text-zinc-400 hover:border-zinc-500 hover:text-white transition"
+                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-6 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-500 hover:text-zinc-900 dark:hover:text-white transition"
                 >
                   Load More
                 </button>
@@ -252,7 +252,7 @@ export default function DatasetReviewPage() {
             )}
           </>
         ) : (
-          <div className="rounded-lg border border-dashed border-zinc-700 p-8 text-center">
+          <div className="rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center">
             <p className="text-zinc-500">No preview data available yet</p>
           </div>
         )}

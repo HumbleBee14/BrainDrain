@@ -48,9 +48,9 @@ function ChatPanel({
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const borderColor =
-    color === "violet" ? "border-violet-800" : "border-emerald-800";
+    color === "violet" ? "border-violet-200 dark:border-violet-800" : "border-emerald-200 dark:border-emerald-800";
   const headerBg =
-    color === "violet" ? "bg-violet-900/20" : "bg-emerald-900/20";
+    color === "violet" ? "bg-violet-100/20 dark:bg-violet-900/20" : "bg-emerald-100/20 dark:bg-emerald-900/20";
   const dotColor = color === "violet" ? "bg-violet-500" : "bg-emerald-500";
 
   return (
@@ -59,14 +59,14 @@ function ChatPanel({
       <div className={`${headerBg} px-4 py-3 shrink-0`}>
         <div className="flex items-center gap-2 mb-2">
           <span className={`w-2 h-2 rounded-full ${dotColor}`} />
-          <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400 uppercase tracking-wider">
             {label}
           </span>
         </div>
         <select
           value={state.modelId}
           onChange={(e) => onModelChange(e.target.value)}
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
+          className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-zinc-500"
         >
           <option value="">Select a model...</option>
           {deployedModels.map((m) => (
@@ -85,11 +85,11 @@ function ChatPanel({
       <div className="flex-1 min-h-0 overflow-y-auto">
         {!state.modelId ? (
           <div className="flex items-center justify-center h-full p-8">
-            <p className="text-zinc-600 text-sm">Select a deployed model</p>
+            <p className="text-zinc-400 dark:text-zinc-600 text-sm">Select a deployed model</p>
           </div>
         ) : state.messages.length === 0 ? (
           <div className="flex items-center justify-center h-full p-8">
-            <p className="text-zinc-600 text-sm">
+            <p className="text-zinc-400 dark:text-zinc-600 text-sm">
               Waiting for messages...
             </p>
           </div>
@@ -103,8 +103,8 @@ function ChatPanel({
                 <div
                   className={`max-w-[90%] rounded-lg px-3 py-2 text-sm ${
                     msg.role === "user"
-                      ? "bg-zinc-700 text-white"
-                      : "bg-zinc-800/50 text-zinc-200"
+                      ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                      : "bg-zinc-100/50 dark:bg-zinc-800/50 text-zinc-800 dark:text-zinc-200"
                   }`}
                 >
                   <p className="whitespace-pre-wrap break-words">
@@ -116,7 +116,7 @@ function ChatPanel({
             {state.isLoading &&
               state.messages[state.messages.length - 1]?.role !== "assistant" && (
                 <div className="flex justify-start">
-                  <div className="bg-zinc-800/50 rounded-lg px-3 py-2 text-sm text-zinc-500 animate-pulse">
+                  <div className="bg-zinc-100/50 dark:bg-zinc-800/50 rounded-lg px-3 py-2 text-sm text-zinc-500 animate-pulse">
                     Generating...
                   </div>
                 </div>
@@ -392,7 +392,7 @@ export default function ABPlaygroundPage() {
         />
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white">A/B Playground</h1>
+            <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">A/B Playground</h1>
             <p className="text-sm text-zinc-500 mt-0.5">
               Compare two models side-by-side with the same prompt
             </p>
@@ -401,14 +401,14 @@ export default function ABPlaygroundPage() {
             {(panelA.messages.length > 0 || panelB.messages.length > 0) && (
               <button
                 onClick={handleClear}
-                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 transition"
+                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
               >
                 Clear All
               </button>
             )}
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 transition"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
             >
               {showSettings ? "Hide Settings" : "Settings"}
             </button>
@@ -418,9 +418,9 @@ export default function ABPlaygroundPage() {
 
       {/* No deployed models message */}
       {deployedModels.length === 0 && (
-        <div className="rounded-lg border border-zinc-800 p-8 text-center mb-4 shrink-0">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center mb-4 shrink-0">
           <p className="text-zinc-500 mb-1">No deployed models found.</p>
-          <p className="text-xs text-zinc-600">
+          <p className="text-xs text-zinc-400 dark:text-zinc-600">
             Deploy at least one model from the project page to use the A/B
             playground.
           </p>
@@ -429,7 +429,7 @@ export default function ABPlaygroundPage() {
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="rounded-lg border border-zinc-800 p-4 mb-4 shrink-0 space-y-3">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4 shrink-0 space-y-3">
           <div>
             <label className="block text-xs text-zinc-500 mb-1">
               System Prompt (shared)
@@ -438,7 +438,7 @@ export default function ABPlaygroundPage() {
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               rows={2}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white resize-none"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white resize-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -508,7 +508,7 @@ export default function ABPlaygroundPage() {
               : "Select at least one model to start"
           }
           rows={2}
-          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-white resize-none focus:border-blue-500 focus:outline-none transition disabled:opacity-50"
+          className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm text-zinc-900 dark:text-white resize-none focus:border-blue-500 focus:outline-none transition disabled:opacity-50"
           disabled={!canSend}
         />
         <button

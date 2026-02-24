@@ -214,7 +214,7 @@ export default function ProjectDetailPage() {
         <p className="text-zinc-500">Project not found</p>
         <Link
           href="/projects"
-          className="text-sm text-white underline hover:no-underline"
+          className="text-sm text-zinc-900 dark:text-white underline hover:no-underline"
         >
           Back to Projects
         </Link>
@@ -240,7 +240,7 @@ export default function ProjectDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">{project.name}</h1>
           <StatusBadge status={project.status} />
         </div>
         {project.description && (
@@ -252,12 +252,12 @@ export default function ProjectDetailPage() {
       {status && (
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
               Pipeline Status
             </h2>
             <Link
               href={`/projects/${params.id}/lineage`}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 hover:text-white transition"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-white transition"
             >
               Data Lineage
             </Link>
@@ -374,7 +374,7 @@ export default function ProjectDetailPage() {
       {/* Upload area */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Documents{" "}
             {allDocuments.length > 0 &&
               `(${documents.length}${documents.length !== allDocuments.length ? ` of ${allDocuments.length}` : ""})`}
@@ -387,12 +387,12 @@ export default function ProjectDetailPage() {
               value={docSearch}
               onChange={(e) => setDocSearch(e.target.value)}
               placeholder="Search documents..."
-              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white placeholder:text-zinc-600"
+              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             />
             <select
               value={docStatusFilter}
               onChange={(e) => setDocStatusFilter(e.target.value)}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white"
             >
               <option value="all">All statuses</option>
               <option value="uploaded">Uploaded</option>
@@ -405,8 +405,8 @@ export default function ProjectDetailPage() {
         <div
           className={`rounded-lg border-2 border-dashed p-8 text-center transition ${
             isDragging
-              ? "border-blue-500 bg-blue-900/10"
-              : "border-zinc-700 hover:border-zinc-600"
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/10"
+              : "border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-600"
           }`}
           onDragOver={(e) => {
             e.preventDefault();
@@ -416,7 +416,7 @@ export default function ProjectDetailPage() {
           onDrop={handleDrop}
         >
           {uploadDocs.isPending ? (
-            <p className="text-zinc-400">Uploading...</p>
+            <p className="text-zinc-600 dark:text-zinc-400">Uploading...</p>
           ) : (
             <>
               <p className="text-zinc-500 mb-2">
@@ -424,10 +424,10 @@ export default function ProjectDetailPage() {
                   ? "Drop files here"
                   : "Drag and drop files here or click to upload"}
               </p>
-              <p className="text-xs text-zinc-600">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600">
                 Supports PDF, DOCX, TXT, CSV, JSON, JSONL, MD (max 500 MB)
               </p>
-              <label className="mt-4 inline-block cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700 transition">
+              <label className="mt-4 inline-block cursor-pointer rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 transition">
                 Choose Files
                 <input
                   ref={fileInputRef}
@@ -456,7 +456,7 @@ export default function ProjectDetailPage() {
 
         {/* Document list */}
         {documents.length > 0 && (
-          <div className="mt-4 rounded-lg border border-zinc-800 divide-y divide-zinc-800">
+          <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 divide-y divide-zinc-200 dark:divide-zinc-800">
             {documents.map((doc) => (
               <DocumentRow key={doc.id} doc={doc} />
             ))}
@@ -467,19 +467,19 @@ export default function ProjectDetailPage() {
       {/* Datasets section */}
       {datasets.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
             Datasets ({datasetsData?.total ?? datasets.length})
           </h2>
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {datasets.map((ds) => (
               <Link
                 key={ds.id}
                 href={`/projects/${params.id}/dataset?datasetId=${ds.id}`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 hover:bg-zinc-900/50 transition"
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
               >
                 <div>
-                  <p className="text-sm text-white">{ds.name}</p>
-                  <p className="text-xs text-zinc-600">
+                  <p className="text-sm text-zinc-900 dark:text-white">{ds.name}</p>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
                     {ds.pair_count != null
                       ? `${ds.pair_count} pairs`
                       : "Generating..."}
@@ -497,7 +497,7 @@ export default function ProjectDetailPage() {
       {/* Training Jobs section */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Training Jobs{" "}
             {allTrainingJobs.length > 0 &&
               `(${trainingJobs.length}${trainingJobs.length !== allTrainingJobs.length ? ` of ${allTrainingJobs.length}` : ""})`}
@@ -531,7 +531,7 @@ export default function ProjectDetailPage() {
             <select
               value={jobStatusFilter}
               onChange={(e) => setJobStatusFilter(e.target.value)}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-white"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white"
             >
               <option value="all">All statuses</option>
               <option value="pending">Pending</option>
@@ -545,7 +545,7 @@ export default function ProjectDetailPage() {
 
         {/* Training form */}
         {showTrainForm && (
-          <div className="rounded-lg border border-zinc-800 p-4 mb-4 space-y-3">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4 space-y-3">
             {/* Hyperparameter presets */}
             <div>
               <label className="block text-xs text-zinc-500 mb-2">
@@ -596,7 +596,7 @@ export default function ProjectDetailPage() {
                         gpu_class: preset.gpu_class,
                       })
                     }
-                    className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-500 hover:text-white transition"
+                    className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-500 hover:text-zinc-900 dark:hover:text-white transition"
                     title={preset.desc}
                   >
                     {preset.label}
@@ -614,7 +614,7 @@ export default function ProjectDetailPage() {
                   onChange={(e) =>
                     setTrainForm({ ...trainForm, dataset_id: e.target.value })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
                 >
                   <option value="">Select dataset...</option>
                   {approvedDatasets.map((ds) => (
@@ -633,7 +633,7 @@ export default function ProjectDetailPage() {
                   onChange={(e) =>
                     setTrainForm({ ...trainForm, base_model: e.target.value })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
                 >
                   <option value="unsloth/Llama-3.2-1B-Instruct">
                     Llama 3.2 1B Instruct
@@ -666,7 +666,7 @@ export default function ProjectDetailPage() {
                         .value as CreateTrainingJobInput["method"],
                     })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
                 >
                   <option value="qlora">QLoRA (4-bit, fastest)</option>
                   <option value="lora">LoRA (16-bit)</option>
@@ -683,7 +683,7 @@ export default function ProjectDetailPage() {
                       mode: e.target.value as CreateTrainingJobInput["mode"],
                     })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
                 >
                   <option value="quick">Quick (SFT only)</option>
                   <option value="aligned">Aligned (SFT + DPO)</option>
@@ -703,7 +703,7 @@ export default function ProjectDetailPage() {
                       gpu_class: e.target.value || undefined,
                     })
                   }
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
                 >
                   <option value="">Auto (default)</option>
                   <option value="t4">T4 (budget, small models)</option>
@@ -717,9 +717,9 @@ export default function ProjectDetailPage() {
             </div>
             {/* Cost estimate breakdown */}
             {costEstimate && (
-              <div className="rounded-lg border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
-                <p className="text-zinc-400 font-medium mb-1">Estimated Cost</p>
-                <p className="text-white text-lg font-semibold">
+              <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/50 p-3 text-sm">
+                <p className="text-zinc-600 dark:text-zinc-400 font-medium mb-1">Estimated Cost</p>
+                <p className="text-zinc-900 dark:text-white text-lg font-semibold">
                   ${costEstimate.cost_estimate.toFixed(2)}
                 </p>
                 <div className="mt-1 text-xs text-zinc-500 space-y-0.5">
@@ -762,7 +762,7 @@ export default function ProjectDetailPage() {
               </button>
               <button
                 onClick={() => setShowTrainForm(false)}
-                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:border-zinc-600 transition"
+                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
               >
                 Cancel
               </button>
@@ -777,11 +777,11 @@ export default function ProjectDetailPage() {
 
         {/* Training jobs list */}
         {trainingJobs.length > 0 && (
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {trainingJobs.map((job) => (
               <div
                 key={job.id}
-                className="flex items-center border-b border-zinc-800 last:border-b-0"
+                className="flex items-center border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
               >
                 {allTrainingJobs.length >= 2 && (
                   <label
@@ -798,19 +798,19 @@ export default function ProjectDetailPage() {
                             : [...prev, job.id].slice(-2),
                         )
                       }
-                      className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-900 text-violet-500 focus:ring-violet-500 focus:ring-offset-0"
+                      className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-violet-500 focus:ring-violet-500 focus:ring-offset-0"
                     />
                   </label>
                 )}
                 <Link
                   href={`/projects/${params.id}/training/${job.id}`}
-                  className="flex-1 flex items-center justify-between py-3 px-4 hover:bg-zinc-900/50 transition"
+                  className="flex-1 flex items-center justify-between py-3 px-4 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
                 >
                   <div>
-                    <p className="text-sm text-white">
+                    <p className="text-sm text-zinc-900 dark:text-white">
                       {job.base_model.split("/").pop()} &mdash; {job.mode}
                     </p>
-                    <p className="text-xs text-zinc-600">
+                    <p className="text-xs text-zinc-400 dark:text-zinc-600">
                       {job.method.toUpperCase()}
                       {job.cost_estimate != null &&
                         ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
@@ -839,7 +839,7 @@ export default function ProjectDetailPage() {
         )}
 
         {trainingJobs.length === 0 && !showTrainForm && (
-          <p className="text-sm text-zinc-600">
+          <p className="text-sm text-zinc-400 dark:text-zinc-600">
             {allTrainingJobs.length > 0 && jobStatusFilter !== "all"
               ? "No training jobs match the current filter."
               : hasApprovedDatasets
@@ -853,7 +853,7 @@ export default function ProjectDetailPage() {
       {models.length > 0 && (
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
               Models ({modelsData?.total ?? models.length})
             </h2>
             {models.filter((m) => m.deployment_status === "active").length >=
@@ -866,16 +866,16 @@ export default function ProjectDetailPage() {
               </Link>
             )}
           </div>
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {models.map((model) => (
               <Link
                 key={model.id}
                 href={`/projects/${params.id}/models/${model.id}`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 hover:bg-zinc-900/50 transition"
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
               >
                 <div>
-                  <p className="text-sm text-white">{model.name}</p>
-                  <p className="text-xs text-zinc-600">
+                  <p className="text-sm text-zinc-900 dark:text-white">{model.name}</p>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
                     v{model.version} &middot;{" "}
                     {model.base_model.split("/").pop()}
                   </p>
@@ -889,37 +889,37 @@ export default function ProjectDetailPage() {
 
       {/* Info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Task Type
           </p>
-          <p className="text-white mt-1">{project.task_type || "Not set"}</p>
+          <p className="text-zinc-900 dark:text-white mt-1">{project.task_type || "Not set"}</p>
         </div>
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Created
           </p>
-          <p className="text-white mt-1">
+          <p className="text-zinc-900 dark:text-white mt-1">
             {new Date(project.created_at).toLocaleDateString()}
           </p>
         </div>
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Updated
           </p>
-          <p className="text-white mt-1">
+          <p className="text-zinc-900 dark:text-white mt-1">
             {new Date(project.updated_at).toLocaleDateString()}
           </p>
         </div>
       </div>
 
       {/* Danger zone */}
-      <div className="rounded-lg border border-zinc-800 p-6">
-        <h3 className="text-sm font-medium text-zinc-400 mb-4">Danger Zone</h3>
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">Danger Zone</h3>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-white">Delete this project</p>
-            <p className="text-xs text-zinc-600">
+            <p className="text-sm text-zinc-900 dark:text-white">Delete this project</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-600">
               This action cannot be undone.
             </p>
           </div>
@@ -929,7 +929,7 @@ export default function ProjectDetailPage() {
             className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
               confirmDelete
                 ? "bg-red-600 text-white hover:bg-red-500"
-                : "border border-red-800 text-red-400 hover:bg-red-900/30"
+                : "border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
             } disabled:opacity-50`}
           >
             {deleteProject.isPending

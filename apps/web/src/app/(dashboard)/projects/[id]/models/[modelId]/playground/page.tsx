@@ -173,11 +173,11 @@ export default function PlaygroundPage() {
               { label: "Playground" },
             ]}
           />
-          <h1 className="text-2xl font-bold text-white">Playground</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Playground</h1>
         </div>
-        <div className="rounded-lg border border-zinc-800 p-8 text-center">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center">
           <p className="text-zinc-500 mb-2">Model is not deployed.</p>
-          <p className="text-xs text-zinc-600 mb-4">
+          <p className="text-xs text-zinc-400 dark:text-zinc-600 mb-4">
             Deploy the model first to use the playground.
           </p>
           <Link
@@ -207,10 +207,10 @@ export default function PlaygroundPage() {
           ]}
         />
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-white">Playground</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Playground</h1>
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 transition"
+            className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
           >
             {showSettings ? "Hide Settings" : "Settings"}
           </button>
@@ -219,7 +219,7 @@ export default function PlaygroundPage() {
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="rounded-lg border border-zinc-800 p-4 mb-4 shrink-0 space-y-3">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4 shrink-0 space-y-3">
           <div>
             <label className="block text-xs text-zinc-500 mb-1">
               System Prompt
@@ -228,7 +228,7 @@ export default function PlaygroundPage() {
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
               rows={2}
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white resize-none"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white resize-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -265,12 +265,12 @@ export default function PlaygroundPage() {
       )}
 
       {/* Messages area */}
-      <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-zinc-800 mb-4">
+      <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800 mb-4">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <p className="text-zinc-500">Start a conversation</p>
-              <p className="text-xs text-zinc-600 mt-1">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
                 Using {model?.base_model.split("/").pop()} (fine-tuned)
               </p>
             </div>
@@ -286,7 +286,7 @@ export default function PlaygroundPage() {
                   className={`max-w-[80%] rounded-lg px-4 py-3 text-sm ${
                     msg.role === "user"
                       ? "bg-blue-600 text-white"
-                      : "bg-zinc-800 text-zinc-200"
+                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200"
                   }`}
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
@@ -296,7 +296,7 @@ export default function PlaygroundPage() {
             {isLoading &&
               messages[messages.length - 1]?.role !== "assistant" && (
                 <div className="flex justify-start">
-                  <div className="bg-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-400 animate-pulse">
+                  <div className="bg-zinc-100 dark:bg-zinc-800 rounded-lg px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400 animate-pulse">
                     Generating...
                   </div>
                 </div>
@@ -317,7 +317,7 @@ export default function PlaygroundPage() {
           onKeyDown={handleKeyDown}
           placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
           rows={2}
-          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-white resize-none focus:border-blue-500 focus:outline-none transition"
+          className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm text-zinc-900 dark:text-white resize-none focus:border-blue-500 focus:outline-none transition"
           disabled={isLoading}
         />
         <button
@@ -336,7 +336,7 @@ export default function PlaygroundPage() {
             setMessages([]);
             setError(null);
           }}
-          className="text-xs text-zinc-600 mt-2 hover:text-zinc-400 transition self-center"
+          className="text-xs text-zinc-400 dark:text-zinc-600 mt-2 hover:text-zinc-600 dark:hover:text-zinc-400 transition self-center"
         >
           Clear conversation
         </button>

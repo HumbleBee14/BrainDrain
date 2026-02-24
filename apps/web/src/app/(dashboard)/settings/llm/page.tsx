@@ -148,33 +148,33 @@ export default function LlmSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-white mb-2">LLM Provider</h1>
-      <p className="text-zinc-400 mb-8">
+      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">LLM Provider</h1>
+      <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Configure which LLM provider is used for synthetic data generation,
         evaluation judging, and training reward scoring. If not configured, the
         platform&apos;s default provider is used.
       </p>
 
       {isLoading ? (
-        <div className="border border-zinc-800 rounded-lg p-8 text-center text-zinc-500">
+        <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-8 text-center text-zinc-500">
           Loading settings...
         </div>
       ) : (
         <>
           {/* Current Status */}
-          <div className="border border-zinc-800 rounded-lg p-4 mb-6">
+          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 mb-6">
             <div className="flex items-center gap-3">
               <div
                 className={`w-2.5 h-2.5 rounded-full ${
                   settings?.is_configured ? "bg-emerald-500" : "bg-zinc-600"
                 }`}
               />
-              <span className="text-sm text-white">
+              <span className="text-sm text-zinc-900 dark:text-white">
                 {settings?.is_configured ? (
                   <>
                     Custom provider configured
                     {settings.provider && (
-                      <span className="text-zinc-400">
+                      <span className="text-zinc-600 dark:text-zinc-400">
                         {" "}
                         &mdash;{" "}
                         {PROVIDERS.find((p) => p.id === settings.provider)
@@ -188,7 +188,7 @@ export default function LlmSettingsPage() {
                     )}
                   </>
                 ) : (
-                  <span className="text-zinc-400">
+                  <span className="text-zinc-600 dark:text-zinc-400">
                     Using platform defaults &mdash; configure your own provider
                     below
                   </span>
@@ -198,9 +198,9 @@ export default function LlmSettingsPage() {
           </div>
 
           {/* Configuration Form */}
-          <div className="border border-zinc-800 rounded-lg">
-            <div className="p-4 border-b border-zinc-800">
-              <h2 className="text-lg font-semibold text-white">
+          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg">
+            <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
                 Configuration
               </h2>
             </div>
@@ -208,13 +208,13 @@ export default function LlmSettingsPage() {
             <div className="p-6 space-y-6">
               {/* Provider */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   Provider
                 </label>
                 <select
                   value={form.provider}
                   onChange={(e) => handleProviderChange(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
                   {PROVIDERS.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -226,7 +226,7 @@ export default function LlmSettingsPage() {
 
               {/* API Base URL */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   API Base URL
                 </label>
                 <input
@@ -234,7 +234,7 @@ export default function LlmSettingsPage() {
                   value={form.api_base_url}
                   onChange={(e) => updateField("api_base_url", e.target.value)}
                   placeholder="https://api.openai.com/v1"
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
+                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
                 />
                 <p className="text-xs text-zinc-500 mt-1">
                   Must be an OpenAI-compatible API endpoint.
@@ -243,7 +243,7 @@ export default function LlmSettingsPage() {
 
               {/* API Key */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   API Key
                 </label>
                 <div className="relative">
@@ -256,12 +256,12 @@ export default function LlmSettingsPage() {
                         ? `Current: ${settings.api_key_masked} (leave blank to keep)`
                         : "sk-..."
                     }
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 pr-16 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 pr-16 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
                   />
                   <button
                     type="button"
                     onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-zinc-200 transition"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 transition"
                   >
                     {showApiKey ? "Hide" : "Show"}
                   </button>
@@ -274,7 +274,7 @@ export default function LlmSettingsPage() {
 
               {/* Model */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   Model
                 </label>
                 {selectedProvider && selectedProvider.models.length > 0 ? (
@@ -290,7 +290,7 @@ export default function LlmSettingsPage() {
                           updateField("model", e.target.value);
                         }
                       }}
-                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {selectedProvider.models.map((m) => (
                         <option key={m} value={m}>
@@ -309,7 +309,7 @@ export default function LlmSettingsPage() {
                         value={form.model}
                         onChange={(e) => updateField("model", e.target.value)}
                         placeholder="model-name"
-                        className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
+                        className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
                       />
                     )}
                   </div>
@@ -319,14 +319,14 @@ export default function LlmSettingsPage() {
                     value={form.model}
                     onChange={(e) => updateField("model", e.target.value)}
                     placeholder="model-name"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
+                    className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
                   />
                 )}
               </div>
 
               {/* Max Tokens */}
               <div>
-                <label className="block text-sm text-zinc-400 mb-2">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   Max Tokens
                 </label>
                 <input
@@ -337,7 +337,7 @@ export default function LlmSettingsPage() {
                   }
                   min={100}
                   max={128000}
-                  className="w-48 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                  className="w-48 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 />
                 <p className="text-xs text-zinc-500 mt-1">
                   Maximum tokens per LLM call for data generation and evaluation
@@ -347,7 +347,7 @@ export default function LlmSettingsPage() {
             </div>
 
             {/* Actions */}
-            <div className="px-6 py-4 border-t border-zinc-800 flex items-center gap-3">
+            <div className="px-6 py-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
               <button
                 onClick={handleSave}
                 disabled={!hasChanges || updateSettings.isPending}
@@ -360,7 +360,7 @@ export default function LlmSettingsPage() {
                 <>
                   {showDeleteConfirm ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-zinc-400">
+                      <span className="text-sm text-zinc-600 dark:text-zinc-400">
                         Reset to platform defaults?
                       </span>
                       <button
@@ -372,7 +372,7 @@ export default function LlmSettingsPage() {
                       </button>
                       <button
                         onClick={() => setShowDeleteConfirm(false)}
-                        className="text-zinc-400 hover:text-zinc-200 text-sm transition"
+                        className="text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 text-sm transition"
                       >
                         Cancel
                       </button>
@@ -405,28 +405,28 @@ export default function LlmSettingsPage() {
           </div>
 
           {/* How It Works */}
-          <div className="border border-zinc-800 rounded-lg mt-6 p-6">
-            <h3 className="text-sm font-semibold text-white mb-3">
+          <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg mt-6 p-6">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-3">
               How it works
             </h3>
-            <ul className="space-y-2 text-sm text-zinc-400">
+            <ul className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
               <li className="flex items-start gap-2">
-                <span className="text-zinc-600 mt-0.5">1.</span>
+                <span className="text-zinc-400 dark:text-zinc-600 mt-0.5">1.</span>
                 When configured, your LLM provider is used for synthetic data
                 generation, evaluation judging, and training reward scoring.
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-zinc-600 mt-0.5">2.</span>
+                <span className="text-zinc-400 dark:text-zinc-600 mt-0.5">2.</span>
                 API calls are made directly from the workers to your provider
                 &mdash; the platform never proxies or stores your LLM traffic.
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-zinc-600 mt-0.5">3.</span>
+                <span className="text-zinc-400 dark:text-zinc-600 mt-0.5">3.</span>
                 If no custom provider is configured, the platform&apos;s default
                 LLM provider is used (usage may be subject to platform billing).
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-zinc-600 mt-0.5">4.</span>
+                <span className="text-zinc-400 dark:text-zinc-600 mt-0.5">4.</span>
                 Any OpenAI-compatible API works (OpenAI, Groq, Together AI,
                 Ollama, vLLM, etc.).
               </li>

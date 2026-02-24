@@ -64,7 +64,7 @@ export default function NewProjectPage() {
             { label: "New Project" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-white">Create Project</h1>
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Create Project</h1>
         <p className="text-zinc-500 mt-1">
           A project groups your documents, datasets, and fine-tuned models.
         </p>
@@ -74,7 +74,7 @@ export default function NewProjectPage() {
         <div>
           <label
             htmlFor="name"
-            className="block text-sm font-medium text-zinc-300 mb-1"
+            className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
           >
             Project Name
           </label>
@@ -86,7 +86,7 @@ export default function NewProjectPage() {
             onChange={(e) => setName(e.target.value)}
             onBlur={() => clearFieldError("name")}
             placeholder="e.g. Customer Support Bot"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
           />
           {errors.name && (
             <p className="text-sm text-red-400 mt-1">{errors.name}</p>
@@ -96,10 +96,10 @@ export default function NewProjectPage() {
         <div>
           <label
             htmlFor="description"
-            className="block text-sm font-medium text-zinc-300 mb-1"
+            className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
           >
             Description
-            <span className="text-zinc-600 font-normal ml-1">(optional)</span>
+            <span className="text-zinc-400 dark:text-zinc-600 font-normal ml-1">(optional)</span>
           </label>
           <textarea
             id="description"
@@ -108,7 +108,7 @@ export default function NewProjectPage() {
             onChange={(e) => setDescription(e.target.value)}
             onBlur={() => clearFieldError("description")}
             placeholder="What is this model for?"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 resize-none"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 resize-none"
           />
           {errors.description && (
             <p className="text-sm text-red-400 mt-1">{errors.description}</p>
@@ -118,16 +118,16 @@ export default function NewProjectPage() {
         <div>
           <label
             htmlFor="task_type"
-            className="block text-sm font-medium text-zinc-300 mb-1"
+            className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
           >
             Task Type
-            <span className="text-zinc-600 font-normal ml-1">(optional)</span>
+            <span className="text-zinc-400 dark:text-zinc-600 font-normal ml-1">(optional)</span>
           </label>
           <select
             id="task_type"
             value={taskType}
             onChange={(e) => setTaskType(e.target.value)}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-white focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
+            className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-2 text-zinc-900 dark:text-white focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500"
           >
             <option value="">Select a task type</option>
             {TASK_TYPES.map((t) => (
@@ -142,13 +142,13 @@ export default function NewProjectPage() {
           <button
             type="submit"
             disabled={createProject.isPending}
-            className="rounded-lg bg-white px-6 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-white px-6 py-2 text-sm font-semibold dark:text-zinc-950 dark:hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {createProject.isPending ? "Creating..." : "Create Project"}
           </button>
           <Link
             href="/projects"
-            className="text-sm text-zinc-500 hover:text-zinc-300 transition"
+            className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition"
           >
             Cancel
           </Link>

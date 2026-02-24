@@ -26,13 +26,19 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function DeploymentBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    undeployed: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    deploying: "bg-blue-900/50 text-blue-400 border-blue-800 animate-pulse",
-    active: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    inactive: "bg-amber-900/50 text-amber-400 border-amber-800",
+    undeployed:
+      "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700",
+    deploying:
+      "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:border-blue-800 animate-pulse",
+    active:
+      "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800",
+    inactive:
+      "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/50 dark:text-amber-400 dark:border-amber-800",
   };
 
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+  const cls =
+    colors[status] ||
+    "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
 
   return (
     <span
@@ -45,13 +51,19 @@ function DeploymentBadge({ status }: { status: string }) {
 
 function ExportStatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    processing: "bg-blue-900/50 text-blue-400 border-blue-800 animate-pulse",
-    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
+    pending:
+      "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700",
+    processing:
+      "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:border-blue-800 animate-pulse",
+    completed:
+      "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800",
+    failed:
+      "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/50 dark:text-red-400 dark:border-red-800",
   };
 
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+  const cls =
+    colors[status] ||
+    "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
 
   return (
     <span
@@ -64,12 +76,17 @@ function ExportStatusBadge({ status }: { status: string }) {
 
 function EvalStatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    running: "bg-blue-900/50 text-blue-400 border-blue-800 animate-pulse",
-    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
+    running:
+      "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:border-blue-800 animate-pulse",
+    completed:
+      "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800",
+    failed:
+      "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/50 dark:text-red-400 dark:border-red-800",
   };
 
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+  const cls =
+    colors[status] ||
+    "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
 
   return (
     <span
@@ -165,7 +182,7 @@ export default function ModelDetailPage() {
         <p className="text-zinc-500">Model not found</p>
         <Link
           href={`/projects/${params.id}`}
-          className="text-sm text-white underline hover:no-underline"
+          className="text-sm text-zinc-900 dark:text-white underline hover:no-underline"
         >
           Back to Project
         </Link>
@@ -203,7 +220,7 @@ export default function ModelDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-white">{model.name}</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">{model.name}</h1>
           <DeploymentBadge status={model.deployment_status} />
         </div>
         <p className="text-zinc-500 mt-1">
@@ -213,25 +230,25 @@ export default function ModelDetailPage() {
 
       {/* Model info grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Base Model
           </p>
-          <p className="text-white mt-1 text-sm">
+          <p className="text-zinc-900 dark:text-white mt-1 text-sm">
             {model.base_model.split("/").pop()}
           </p>
         </div>
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Version
           </p>
-          <p className="text-white mt-1 text-sm">v{model.version}</p>
+          <p className="text-zinc-900 dark:text-white mt-1 text-sm">v{model.version}</p>
         </div>
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider">
             Created
           </p>
-          <p className="text-white mt-1 text-sm">
+          <p className="text-zinc-900 dark:text-white mt-1 text-sm">
             {new Date(model.created_at).toLocaleDateString()}
           </p>
         </div>
@@ -240,37 +257,37 @@ export default function ModelDetailPage() {
       {/* Version History */}
       {versions && versions.length > 1 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
             Version History ({versions.length} versions)
           </h2>
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {versions.map((v) => {
               const isCurrent = v.id === model.id;
               const isActive = v.deployment_status === "active";
               return (
                 <div
                   key={v.id}
-                  className={`flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 ${
-                    isCurrent ? "bg-zinc-900/50" : ""
+                  className={`flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 ${
+                    isCurrent ? "bg-zinc-50/50 dark:bg-zinc-900/50" : ""
                   }`}
                 >
                   <div>
                     <div className="flex items-center gap-2">
-                      <p className="text-sm text-white font-medium">
+                      <p className="text-sm text-zinc-900 dark:text-white font-medium">
                         v{v.version}
                       </p>
                       {isCurrent && (
-                        <span className="text-xs text-zinc-500 bg-zinc-800 rounded px-1.5 py-0.5">
+                        <span className="text-xs text-zinc-500 bg-zinc-100 dark:bg-zinc-800 rounded px-1.5 py-0.5">
                           current
                         </span>
                       )}
                       {isActive && (
-                        <span className="text-xs text-emerald-400 bg-emerald-900/50 border border-emerald-800 rounded-full px-2 py-0.5">
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800 rounded-full px-2 py-0.5">
                           deployed
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-zinc-600 mt-0.5">
+                    <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-0.5">
                       {v.name} &middot;{" "}
                       {new Date(v.created_at).toLocaleDateString()}
                       {v.eval_scores &&
@@ -286,7 +303,7 @@ export default function ModelDetailPage() {
                       <button
                         onClick={() => rollbackModel.mutate(v.id)}
                         disabled={rollbackModel.isPending}
-                        className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-900/30 transition disabled:opacity-50"
+                        className="rounded-lg border border-amber-200 dark:border-amber-800 px-3 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition disabled:opacity-50"
                       >
                         {rollbackModel.isPending
                           ? "Rolling back..."
@@ -299,7 +316,7 @@ export default function ModelDetailPage() {
             })}
           </div>
           {rollbackModel.isError && (
-            <p className="text-sm text-red-400 mt-2">
+            <p className="text-sm text-red-600 dark:text-red-400 mt-2">
               {rollbackModel.error.message}
             </p>
           )}
@@ -312,7 +329,7 @@ export default function ModelDetailPage() {
         Object.keys(model.eval_scores).length > 0 && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white">
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
                 Evaluation Scores
               </h2>
               <Link
@@ -324,8 +341,8 @@ export default function ModelDetailPage() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               {typeof model.eval_scores.overall === "number" && (
-                <div className="rounded-lg border border-zinc-800 p-4 text-center">
-                  <p className="text-2xl font-bold text-white">
+                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 text-center">
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-white">
                     {model.eval_scores.overall as number}/100
                   </p>
                   <p className="text-xs text-zinc-500 mt-1">Overall</p>
@@ -337,18 +354,18 @@ export default function ModelDetailPage() {
 
       {/* Deployment section */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">Deployment</h2>
-        <div className="rounded-lg border border-zinc-800 p-6">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Deployment</h2>
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-white">
+              <p className="text-sm text-zinc-900 dark:text-white">
                 {isActive
                   ? "Model is actively serving requests"
                   : isDeploying
                     ? "Model is being deployed..."
                     : "Model is not deployed"}
               </p>
-              <p className="text-xs text-zinc-600 mt-1">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
                 {isActive
                   ? "Inference API is available. Create API keys to start using it."
                   : "Deploy the model to make it available for inference."}
@@ -359,7 +376,7 @@ export default function ModelDetailPage() {
                 <button
                   onClick={() => undeployModel.mutate()}
                   disabled={undeployModel.isPending}
-                  className="rounded-lg border border-red-800 px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 transition disabled:opacity-50"
+                  className="rounded-lg border border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition disabled:opacity-50"
                 >
                   {undeployModel.isPending ? "Undeploying..." : "Undeploy"}
                 </button>
@@ -377,12 +394,12 @@ export default function ModelDetailPage() {
             </div>
           </div>
           {deployModel.isError && (
-            <p className="text-sm text-red-400 mt-3">
+            <p className="text-sm text-red-600 dark:text-red-400 mt-3">
               {deployModel.error.message}
             </p>
           )}
           {undeployModel.isError && (
-            <p className="text-sm text-red-400 mt-3">
+            <p className="text-sm text-red-600 dark:text-red-400 mt-3">
               {undeployModel.error.message}
             </p>
           )}
@@ -392,10 +409,10 @@ export default function ModelDetailPage() {
       {/* API Keys section */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">API Keys</h2>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">API Keys</h2>
           <button
             onClick={() => setShowKeyForm(!showKeyForm)}
-            className="rounded-lg bg-zinc-800 px-4 py-2 text-sm text-white hover:bg-zinc-700 transition"
+            className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
           >
             Create Key
           </button>
@@ -403,12 +420,12 @@ export default function ModelDetailPage() {
 
         {/* Created key display (only shown once) */}
         {createdKey && (
-          <div className="rounded-lg border border-emerald-800 bg-emerald-900/20 p-4 mb-4">
-            <p className="text-sm text-emerald-400 mb-2">
+          <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-4 mb-4">
+            <p className="text-sm text-emerald-600 dark:text-emerald-400 mb-2">
               API key created. Copy it now — it won&apos;t be shown again.
             </p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 rounded bg-zinc-900 px-3 py-2 text-sm text-white font-mono break-all">
+              <code className="flex-1 rounded bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white font-mono break-all">
                 {createdKey}
               </code>
               <button
@@ -429,13 +446,13 @@ export default function ModelDetailPage() {
 
         {/* Create key form */}
         {showKeyForm && (
-          <div className="rounded-lg border border-zinc-800 p-4 mb-4">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4">
             <div className="flex gap-2">
               <input
                 value={keyName}
                 onChange={(e) => setKeyName(e.target.value)}
                 placeholder="Key name (e.g., production, testing)"
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+                className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
               />
               <button
                 onClick={handleCreateKey}
@@ -446,13 +463,13 @@ export default function ModelDetailPage() {
               </button>
               <button
                 onClick={() => setShowKeyForm(false)}
-                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:border-zinc-600 transition"
+                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
               >
                 Cancel
               </button>
             </div>
             {createApiKey.isError && (
-              <p className="text-sm text-red-400 mt-2">
+              <p className="text-sm text-red-600 dark:text-red-400 mt-2">
                 {createApiKey.error.message}
               </p>
             )}
@@ -461,15 +478,15 @@ export default function ModelDetailPage() {
 
         {/* Keys list */}
         {keys.length > 0 ? (
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {keys.map((k) => (
               <div
                 key={k.id}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0"
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
               >
                 <div>
-                  <p className="text-sm text-white">{k.name}</p>
-                  <p className="text-xs text-zinc-600">
+                  <p className="text-sm text-zinc-900 dark:text-white">{k.name}</p>
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
                     <code className="text-zinc-500">{k.key_prefix}...</code>
                     {" \u00b7 "}
                     {k.rate_limit} req/min
@@ -484,26 +501,26 @@ export default function ModelDetailPage() {
                     <button
                       onClick={() => revokeApiKey.mutate(k.id)}
                       disabled={revokeApiKey.isPending}
-                      className="text-xs text-red-400 hover:text-red-300 transition"
+                      className="text-xs text-red-600 dark:text-red-400 hover:text-red-500 dark:hover:text-red-300 transition"
                     >
                       Revoke
                     </button>
                   ) : (
-                    <span className="text-xs text-zinc-600">Revoked</span>
+                    <span className="text-xs text-zinc-400 dark:text-zinc-600">Revoked</span>
                   )}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-zinc-600">No API keys yet.</p>
+          <p className="text-sm text-zinc-400 dark:text-zinc-600">No API keys yet.</p>
         )}
       </div>
 
       {/* Evaluations section */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Evaluations{" "}
             {evaluations.length > 0 &&
               `(${evalsData?.total ?? evaluations.length})`}
@@ -517,18 +534,18 @@ export default function ModelDetailPage() {
         </div>
 
         {evaluations.length > 0 ? (
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {evaluations.map((ev) => (
               <Link
                 key={ev.id}
                 href={`/projects/${params.id}/models/${params.modelId}/evaluation`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0 hover:bg-zinc-900/50 transition"
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
               >
                 <div>
-                  <p className="text-sm text-white">
+                  <p className="text-sm text-zinc-900 dark:text-white">
                     Evaluation {new Date(ev.created_at).toLocaleString()}
                   </p>
-                  <p className="text-xs text-zinc-600">
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
                     {ev.scores?.overall != null &&
                       `Score: ${ev.scores.overall}/100 \u00b7 `}
                     {ev.completed_at
@@ -541,7 +558,7 @@ export default function ModelDetailPage() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-zinc-600">
+          <p className="text-sm text-zinc-400 dark:text-zinc-600">
             No evaluations yet. Run one to measure model quality.
           </p>
         )}
@@ -549,13 +566,13 @@ export default function ModelDetailPage() {
 
       {/* GGUF Export section */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">GGUF Export</h2>
-        <div className="rounded-lg border border-zinc-800 p-6 mb-4">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">GGUF Export</h2>
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 mb-4">
           <div className="flex items-center gap-3">
             <select
               value={exportQuantType}
               onChange={(e) => setExportQuantType(e.target.value)}
-              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
             >
               <option value="Q4_K_M">Q4_K_M (smallest)</option>
               <option value="Q5_K_M">Q5_K_M (balanced)</option>
@@ -572,32 +589,32 @@ export default function ModelDetailPage() {
               {createExport.isPending ? "Starting..." : "Export GGUF"}
             </button>
           </div>
-          <p className="text-xs text-zinc-600 mt-2">
+          <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-2">
             Merge LoRA adapter into base model and export as quantized GGUF for
             local inference (llama.cpp, Ollama, LM Studio).
           </p>
           {createExport.isError && (
-            <p className="text-sm text-red-400 mt-2">
+            <p className="text-sm text-red-600 dark:text-red-400 mt-2">
               {createExport.error.message}
             </p>
           )}
           {downloadError && (
-            <p className="text-sm text-red-400 mt-2">{downloadError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-2">{downloadError}</p>
           )}
         </div>
 
         {exports && exports.length > 0 && (
-          <div className="rounded-lg border border-zinc-800">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {exports.map((exp) => (
               <div
                 key={exp.id}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0"
+                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
               >
                 <div>
-                  <p className="text-sm text-white">
+                  <p className="text-sm text-zinc-900 dark:text-white">
                     {exp.quant_type} &middot; {exp.format.toUpperCase()}
                   </p>
-                  <p className="text-xs text-zinc-600">
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
                     {exp.status === "completed" && exp.file_size_bytes
                       ? `${(exp.file_size_bytes / 1024 / 1024 / 1024).toFixed(1)} GB \u00b7 `
                       : ""}
@@ -639,8 +656,8 @@ export default function ModelDetailPage() {
 
       {/* Quick links */}
       {isActive && (
-        <div className="rounded-lg border border-zinc-800 p-6">
-          <h3 className="text-sm font-medium text-zinc-400 mb-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
+          <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
             Quick Links
           </h3>
           <div className="flex gap-3">
@@ -652,7 +669,7 @@ export default function ModelDetailPage() {
             </Link>
             <Link
               href={`/projects/${params.id}/models/${params.modelId}/evaluation`}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:border-zinc-600 transition"
+              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
             >
               View Evaluation
             </Link>

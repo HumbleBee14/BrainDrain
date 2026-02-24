@@ -130,7 +130,7 @@ export default function AuditLogPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Audit Log</h1>
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Audit Log</h1>
           <p className="text-sm text-zinc-500 mt-1">
             {data
               ? `${data.total.toLocaleString()} total events`
@@ -140,7 +140,7 @@ export default function AuditLogPage() {
         <button
           onClick={handleExportCsv}
           disabled={!data?.data?.length}
-          className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Export CSV
         </button>
@@ -153,7 +153,7 @@ export default function AuditLogPage() {
           placeholder="Search actions, resources, actors..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 min-w-[200px] bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className="flex-1 min-w-[200px] bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
         />
         <select
           value={resourceTypeFilter}
@@ -161,7 +161,7 @@ export default function AuditLogPage() {
             setResourceTypeFilter(e.target.value);
             setPage(0);
           }}
-          className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
         >
           {RESOURCE_TYPES.map((rt) => (
             <option key={rt.id} value={rt.id}>
@@ -176,7 +176,7 @@ export default function AuditLogPage() {
               setActionFilter(e.target.value);
               setPage(0);
             }}
-            className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
           >
             <option value="">All Actions</option>
             {uniqueActions.map((a) => (
@@ -189,7 +189,7 @@ export default function AuditLogPage() {
         {hasFilters && (
           <button
             onClick={resetFilters}
-            className="text-sm text-zinc-400 hover:text-white transition px-2"
+            className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition px-2"
           >
             Clear filters
           </button>
@@ -197,7 +197,7 @@ export default function AuditLogPage() {
       </div>
 
       {/* Table */}
-      <div className="border border-zinc-800 rounded-lg overflow-hidden">
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center text-zinc-500">
             Loading audit logs...
@@ -212,7 +212,7 @@ export default function AuditLogPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 bg-zinc-900/50">
+                <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
                   <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
                     Time
                   </th>
@@ -230,11 +230,11 @@ export default function AuditLogPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/50">
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/50">
                 {filteredData.map((log) => (
                   <tr
                     key={log.id}
-                    className="hover:bg-zinc-900/30 transition-colors"
+                    className="hover:bg-zinc-50 dark:hover:bg-zinc-900/30 transition-colors"
                   >
                     <td
                       className="px-4 py-3 text-zinc-500 whitespace-nowrap"
@@ -246,16 +246,16 @@ export default function AuditLogPage() {
                       <ActionBadge action={log.action} />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="text-zinc-400">
+                      <span className="text-zinc-600 dark:text-zinc-400">
                         {log.resource_type.replace(/_/g, " ")}
                       </span>
                       {log.resource_id && (
-                        <span className="text-zinc-600 text-xs ml-1.5 font-mono">
+                        <span className="text-zinc-400 dark:text-zinc-600 text-xs ml-1.5 font-mono">
                           {log.resource_id.slice(0, 8)}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-zinc-400 whitespace-nowrap font-mono text-xs">
+                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap font-mono text-xs">
                       {log.actor_id.length > 20
                         ? `${log.actor_id.slice(0, 20)}...`
                         : log.actor_id}
@@ -274,7 +274,7 @@ export default function AuditLogPage() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-200 dark:border-zinc-800">
             <span className="text-sm text-zinc-500">
               Page {page + 1} of {totalPages}
             </span>
@@ -282,14 +282,14 @@ export default function AuditLogPage() {
               <button
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={page === 0}
-                className="px-3 py-1 text-sm rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 text-sm rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Previous
               </button>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
-                className="px-3 py-1 text-sm rounded-md bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1 text-sm rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Next
               </button>
@@ -302,18 +302,18 @@ export default function AuditLogPage() {
 }
 
 function ActionBadge({ action }: { action: string }) {
-  let color = "bg-zinc-800 text-zinc-400";
+  let color = "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400";
 
   if (action.startsWith("create") || action.startsWith("approve")) {
-    color = "bg-emerald-500/10 text-emerald-400";
+    color = "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400";
   } else if (action.startsWith("delete") || action.startsWith("revoke")) {
-    color = "bg-red-500/10 text-red-400";
+    color = "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400";
   } else if (action.startsWith("update") || action.startsWith("deploy")) {
-    color = "bg-blue-500/10 text-blue-400";
+    color = "bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400";
   } else if (action.includes("reject") || action.includes("cancel")) {
-    color = "bg-amber-500/10 text-amber-400";
+    color = "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400";
   } else if (action.includes("notification") || action.includes("webhook")) {
-    color = "bg-violet-500/10 text-violet-400";
+    color = "bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400";
   }
 
   return (
@@ -331,7 +331,7 @@ function MetadataPreview({ metadata }: { metadata: Record<string, unknown> }) {
 
   return (
     <span
-      className="text-xs text-zinc-600"
+      className="text-xs text-zinc-400 dark:text-zinc-600"
       title={JSON.stringify(metadata, null, 2)}
     >
       {entries

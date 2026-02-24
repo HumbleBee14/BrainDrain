@@ -31,27 +31,27 @@ export default function AcceptInvitePage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-      <div className="border border-zinc-800 rounded-lg p-8 max-w-md w-full text-center">
-        <h1 className="text-2xl font-bold text-white mb-4">Team Invitation</h1>
+    <div className="min-h-screen bg-white dark:bg-zinc-950 flex items-center justify-center">
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-8 max-w-md w-full text-center">
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-4">Team Invitation</h1>
         {status === "success" ? (
           <div>
             <p className="text-emerald-400 mb-2">Invitation accepted!</p>
-            <p className="text-zinc-400 text-sm">Redirecting to dashboard...</p>
+            <p className="text-zinc-600 dark:text-zinc-400 text-sm">Redirecting to dashboard...</p>
           </div>
         ) : status === "error" ? (
           <div>
             <p className="text-red-400 mb-4">{error}</p>
             <button
               onClick={() => setStatus("idle")}
-              className="text-zinc-400 hover:text-white text-sm transition"
+              className="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white text-sm transition"
             >
               Try again
             </button>
           </div>
         ) : (
           <div>
-            <p className="text-zinc-400 mb-6">
+            <p className="text-zinc-600 dark:text-zinc-400 mb-6">
               You&apos;ve been invited to join a team. Click below to accept.
             </p>
             <button

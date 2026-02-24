@@ -14,17 +14,25 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    pending: "bg-zinc-800 text-zinc-400 border-zinc-700",
-    cost_approval: "bg-amber-900/50 text-amber-400 border-amber-800",
-    provisioning: "bg-blue-900/50 text-blue-400 border-blue-800",
+    pending:
+      "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700",
+    cost_approval:
+      "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/50 dark:text-amber-400 dark:border-amber-800",
+    provisioning:
+      "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:border-blue-800",
     training:
-      "bg-violet-900/50 text-violet-400 border-violet-800 animate-pulse",
-    completed: "bg-emerald-900/50 text-emerald-400 border-emerald-800",
-    failed: "bg-red-900/50 text-red-400 border-red-800",
-    cancelled: "bg-zinc-800 text-zinc-500 border-zinc-700",
+      "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/50 dark:text-violet-400 dark:border-violet-800 animate-pulse",
+    completed:
+      "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800",
+    failed:
+      "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/50 dark:text-red-400 dark:border-red-800",
+    cancelled:
+      "bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-500 dark:border-zinc-700",
   };
 
-  const cls = colors[status] || "bg-zinc-800 text-zinc-400 border-zinc-700";
+  const cls =
+    colors[status] ||
+    "bg-zinc-100 text-zinc-600 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
 
   return (
     <span
@@ -48,7 +56,7 @@ function MetricsChart({
 
   if (metrics.length === 0) {
     return (
-      <div className="flex items-center justify-center h-40 text-zinc-600 text-sm">
+      <div className="flex items-center justify-center h-40 text-zinc-400 dark:text-zinc-600 text-sm">
         Waiting for training metrics...
       </div>
     );
@@ -65,14 +73,14 @@ function MetricsChart({
           return (
             <div
               key={i}
-              className="bg-violet-500/80 hover:bg-violet-400 transition rounded-t flex-1 min-w-[3px]"
+              className="bg-violet-500 dark:bg-violet-500/80 hover:bg-violet-400 transition rounded-t flex-1 min-w-[3px]"
               style={{ height: `${height}%` }}
               title={`Step ${m.step}: loss=${m.loss.toFixed(4)}`}
             />
           );
         })}
       </div>
-      <div className="flex justify-between text-xs text-zinc-600">
+      <div className="flex justify-between text-xs text-zinc-400 dark:text-zinc-600">
         <span>Step {displayMetrics[0]?.step ?? 0}</span>
         <span>
           Loss:{" "}
@@ -136,7 +144,7 @@ export default function TrainingJobDetailPage() {
         <p className="text-zinc-500">Training job not found</p>
         <Link
           href={`/projects/${params.id}`}
-          className="text-sm text-white underline hover:no-underline"
+          className="text-sm text-zinc-900 dark:text-white underline hover:no-underline"
         >
           Back to Project
         </Link>
@@ -156,13 +164,13 @@ export default function TrainingJobDetailPage() {
           ]}
         />
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">
             {job.base_model.split("/").pop()}
           </h1>
           <StatusBadge status={job.status} />
           {isActiveTraining && connected && (
-            <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-pulse" />
               Live
             </span>
           )}
@@ -176,13 +184,13 @@ export default function TrainingJobDetailPage() {
 
       {/* Cost approval banner */}
       {job.status === "cost_approval" && (
-        <div className="mb-6 rounded-lg border border-amber-800 bg-amber-900/20 p-4">
+        <div className="mb-6 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-amber-400">
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
                 Cost Approval Required
               </p>
-              <p className="text-sm text-amber-300/70 mt-0.5">
+              <p className="text-sm text-amber-600 dark:text-amber-300/70 mt-0.5">
                 Estimated cost of ${job.cost_estimate?.toFixed(2) ?? "?"}{" "}
                 exceeds the approval threshold. Approve to start training or
                 cancel.
@@ -199,7 +207,7 @@ export default function TrainingJobDetailPage() {
               <button
                 onClick={() => cancelJob.mutate(params.jobId)}
                 disabled={cancelJob.isPending}
-                className="rounded-lg bg-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-600 transition disabled:opacity-50"
+                className="rounded-lg bg-zinc-200 dark:bg-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition disabled:opacity-50"
               >
                 {cancelJob.isPending ? "Cancelling..." : "Reject"}
               </button>
@@ -223,12 +231,12 @@ export default function TrainingJobDetailPage() {
           return (
             <div className="mb-6">
               <div className="flex justify-between text-sm mb-1.5">
-                <span className="text-zinc-400">
+                <span className="text-zinc-600 dark:text-zinc-400">
                   Epoch {currentEpoch.toFixed(2)} / {String(totalEpochs)}
                 </span>
-                <span className="text-zinc-400">{pct.toFixed(0)}%</span>
+                <span className="text-zinc-600 dark:text-zinc-400">{pct.toFixed(0)}%</span>
               </div>
-              <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-violet-500 transition-all duration-500"
                   style={{ width: `${pct}%` }}
@@ -240,8 +248,8 @@ export default function TrainingJobDetailPage() {
 
       {/* Real-time loss chart */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">Training Loss</h2>
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Training Loss</h2>
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <MetricsChart metrics={chartMetrics} />
         </div>
       </div>
@@ -249,12 +257,12 @@ export default function TrainingJobDetailPage() {
       {/* Live metrics table */}
       {streamedMetrics.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold text-white mb-4">Metrics Log</h2>
-          <div className="rounded-lg border border-zinc-800 overflow-hidden">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Metrics Log</h2>
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900/50">
+                  <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50">
                     <th className="text-left text-zinc-500 px-4 py-2 font-medium">
                       Step
                     </th>
@@ -282,21 +290,21 @@ export default function TrainingJobDetailPage() {
                     .map((m, i) => (
                       <tr
                         key={i}
-                        className="border-b border-zinc-800/50 last:border-b-0"
+                        className="border-b border-zinc-200/50 dark:border-zinc-800/50 last:border-b-0"
                       >
-                        <td className="px-4 py-1.5 text-white font-mono">
+                        <td className="px-4 py-1.5 text-zinc-900 dark:text-white font-mono">
                           {m.step}
                         </td>
-                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                        <td className="px-4 py-1.5 text-zinc-600 dark:text-zinc-400 font-mono">
                           {Number(m.epoch).toFixed(2)}
                         </td>
-                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                        <td className="px-4 py-1.5 text-zinc-600 dark:text-zinc-400 font-mono">
                           {Number(m.loss).toFixed(4)}
                         </td>
-                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                        <td className="px-4 py-1.5 text-zinc-600 dark:text-zinc-400 font-mono">
                           {Number(m.learning_rate).toExponential(2)}
                         </td>
-                        <td className="px-4 py-1.5 text-zinc-400 font-mono">
+                        <td className="px-4 py-1.5 text-zinc-600 dark:text-zinc-400 font-mono">
                           {Number(m.grad_norm).toFixed(2)}
                         </td>
                         <td className="px-4 py-1.5 text-zinc-500">{m.phase}</td>
@@ -311,27 +319,27 @@ export default function TrainingJobDetailPage() {
 
       {/* Job details grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
             Configuration
           </p>
           <div className="space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-zinc-500">Base Model</span>
-              <span className="text-white">{job.base_model}</span>
+              <span className="text-zinc-900 dark:text-white">{job.base_model}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-zinc-500">Method</span>
-              <span className="text-white">{job.method.toUpperCase()}</span>
+              <span className="text-zinc-900 dark:text-white">{job.method.toUpperCase()}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-zinc-500">Mode</span>
-              <span className="text-white">{job.mode}</span>
+              <span className="text-zinc-900 dark:text-white">{job.mode}</span>
             </div>
             {job.gpu_class && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">GPU Class</span>
-                <span className="text-white">
+                <span className="text-zinc-900 dark:text-white">
                   {job.gpu_class.toUpperCase()}
                 </span>
               </div>
@@ -339,7 +347,7 @@ export default function TrainingJobDetailPage() {
           </div>
         </div>
 
-        <div className="rounded-lg border border-zinc-800 p-4">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
           <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
             Timing & Cost
           </p>
@@ -347,7 +355,7 @@ export default function TrainingJobDetailPage() {
             {job.started_at && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Started</span>
-                <span className="text-white">
+                <span className="text-zinc-900 dark:text-white">
                   {new Date(job.started_at).toLocaleString()}
                 </span>
               </div>
@@ -355,7 +363,7 @@ export default function TrainingJobDetailPage() {
             {job.completed_at && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Completed</span>
-                <span className="text-white">
+                <span className="text-zinc-900 dark:text-white">
                   {new Date(job.completed_at).toLocaleString()}
                 </span>
               </div>
@@ -363,7 +371,7 @@ export default function TrainingJobDetailPage() {
             {job.started_at && job.completed_at && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Duration</span>
-                <span className="text-white">
+                <span className="text-zinc-900 dark:text-white">
                   {(() => {
                     const ms =
                       new Date(job.completed_at).getTime() -
@@ -379,7 +387,7 @@ export default function TrainingJobDetailPage() {
             {job.cost_estimate != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Estimated Cost</span>
-                <span className="text-white">
+                <span className="text-zinc-900 dark:text-white">
                   ${job.cost_estimate.toFixed(2)}
                 </span>
               </div>
@@ -387,7 +395,7 @@ export default function TrainingJobDetailPage() {
             {job.actual_cost != null && (
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Actual Cost</span>
-                <span className="text-white font-medium">
+                <span className="text-zinc-900 dark:text-white font-medium">
                   ${job.actual_cost.toFixed(2)}
                 </span>
               </div>
@@ -404,7 +412,7 @@ export default function TrainingJobDetailPage() {
                   const isOver = diff > 0;
                   return (
                     <span
-                      className={isOver ? "text-amber-400" : "text-emerald-400"}
+                      className={isOver ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}
                     >
                       {isOver ? "+" : ""}${diff.toFixed(2)} ({isOver ? "+" : ""}
                       {pct.toFixed(0)}%)
@@ -419,11 +427,11 @@ export default function TrainingJobDetailPage() {
 
       {/* Hyperparameters */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
           Hyperparameters
         </h2>
-        <div className="rounded-lg border border-zinc-800 p-4">
-          <pre className="text-sm text-zinc-400 font-mono overflow-x-auto">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+          <pre className="text-sm text-zinc-600 dark:text-zinc-400 font-mono overflow-x-auto">
             {JSON.stringify(job.hyperparams, null, 2)}
           </pre>
         </div>
@@ -431,9 +439,9 @@ export default function TrainingJobDetailPage() {
 
       {/* Error message */}
       {job.error_message && (
-        <div className="mb-8 rounded-lg border border-red-900/50 bg-red-900/10 p-4">
-          <p className="text-sm font-medium text-red-400 mb-1">Error</p>
-          <p className="text-sm text-red-300/80 font-mono">
+        <div className="mb-8 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-4">
+          <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-1">Error</p>
+          <p className="text-sm text-red-600 dark:text-red-300/80 font-mono">
             {job.error_message}
           </p>
         </div>

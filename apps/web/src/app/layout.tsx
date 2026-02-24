@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Inter } from "next/font/google";
-import { Toaster } from "sonner";
 import { Providers } from "./providers";
+import { ThemeAwareToaster } from "@/components/theme-aware-toaster";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -21,20 +21,10 @@ export default function RootLayout({
 }) {
   return (
     <ClerkProvider>
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <body className={inter.className}>
           <Providers>{children}</Providers>
-          <Toaster
-            theme="dark"
-            position="bottom-right"
-            toastOptions={{
-              style: {
-                background: "#18181b",
-                border: "1px solid #27272a",
-                color: "#fafafa",
-              },
-            }}
-          />
+          <ThemeAwareToaster />
         </body>
       </html>
     </ClerkProvider>

@@ -44,30 +44,30 @@ function buildLineage(
 
 const STATUS_COLORS: Record<string, string> = {
   // Documents
-  uploaded: "bg-zinc-700 text-zinc-300",
-  parsing: "bg-blue-900/50 text-blue-400",
-  parsed: "bg-emerald-900/50 text-emerald-400",
+  uploaded: "bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300",
+  parsing: "bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400",
+  parsed: "bg-emerald-50 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400",
   // Datasets
-  generating: "bg-blue-900/50 text-blue-400",
-  review_pending: "bg-amber-900/50 text-amber-400",
-  approved: "bg-emerald-900/50 text-emerald-400",
+  generating: "bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400",
+  review_pending: "bg-amber-50 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400",
+  approved: "bg-emerald-50 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400",
   // Training Jobs
-  pending: "bg-zinc-700 text-zinc-300",
-  cost_approval: "bg-amber-900/50 text-amber-400",
-  training: "bg-violet-900/50 text-violet-400",
-  completed: "bg-emerald-900/50 text-emerald-400",
+  pending: "bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300",
+  cost_approval: "bg-amber-50 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400",
+  training: "bg-violet-50 dark:bg-violet-900/50 text-violet-700 dark:text-violet-400",
+  completed: "bg-emerald-50 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400",
   // Models
-  undeployed: "bg-zinc-700 text-zinc-300",
-  deploying: "bg-blue-900/50 text-blue-400",
-  active: "bg-emerald-900/50 text-emerald-400",
+  undeployed: "bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300",
+  deploying: "bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400",
+  active: "bg-emerald-50 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400",
   // General
-  failed: "bg-red-900/50 text-red-400",
-  cancelled: "bg-zinc-800 text-zinc-500",
-  archived: "bg-zinc-800 text-zinc-500",
+  failed: "bg-red-50 dark:bg-red-900/50 text-red-700 dark:text-red-400",
+  cancelled: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500",
+  archived: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500",
 };
 
 function StatusDot({ status }: { status: string }) {
-  const cls = STATUS_COLORS[status] ?? "bg-zinc-700 text-zinc-400";
+  const cls = STATUS_COLORS[status] ?? "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400";
   return (
     <span
       className={`inline-block w-2 h-2 rounded-full ${cls.split(" ")[0].replace("/50", "")}`}
@@ -77,7 +77,7 @@ function StatusDot({ status }: { status: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_COLORS[status] ?? "bg-zinc-800 text-zinc-400";
+  const cls = STATUS_COLORS[status] ?? "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400";
   return (
     <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${cls}`}>
       {status.replace(/_/g, " ")}
@@ -89,7 +89,7 @@ function Connector({ active }: { active?: boolean }) {
   return (
     <div className="flex items-center justify-center py-1">
       <div
-        className={`w-0.5 h-6 ${active ? "bg-emerald-700" : "bg-zinc-700"}`}
+        className={`w-0.5 h-6 ${active ? "bg-emerald-700" : "bg-zinc-300 dark:bg-zinc-700"}`}
       />
     </div>
   );
@@ -99,10 +99,10 @@ function HorizontalConnector({ active }: { active?: boolean }) {
   return (
     <div className="flex items-center px-2">
       <div
-        className={`h-0.5 w-6 ${active ? "bg-emerald-700" : "bg-zinc-700"}`}
+        className={`h-0.5 w-6 ${active ? "bg-emerald-700" : "bg-zinc-300 dark:bg-zinc-700"}`}
       />
       <div
-        className={`w-0 h-0 border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent ${active ? "border-l-emerald-700" : "border-l-zinc-700"}`}
+        className={`w-0 h-0 border-t-4 border-b-4 border-l-4 border-t-transparent border-b-transparent ${active ? "border-l-emerald-700" : "border-l-zinc-300 dark:border-l-zinc-700"}`}
       />
     </div>
   );
@@ -120,10 +120,10 @@ function StageHeader({
   return (
     <div className="flex items-center gap-2 mb-3">
       <div className={`w-3 h-3 rounded-sm ${color}`} />
-      <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider">
+      <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
         {label}
       </h3>
-      <span className="text-xs text-zinc-600">({count})</span>
+      <span className="text-xs text-zinc-400 dark:text-zinc-600">({count})</span>
     </div>
   );
 }
@@ -176,14 +176,14 @@ export default function LineagePage() {
             { label: "Data Lineage" },
           ]}
         />
-        <h1 className="text-2xl font-bold text-white">Data Lineage</h1>
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Data Lineage</h1>
         <p className="text-sm text-zinc-500 mt-1">
           Trace data flow from documents through training to deployed models
         </p>
       </div>
 
       {!hasData ? (
-        <div className="rounded-lg border border-zinc-800 p-8 text-center">
+        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center">
           <p className="text-zinc-500">
             No pipeline data yet. Upload documents to get started.
           </p>
@@ -191,7 +191,7 @@ export default function LineagePage() {
       ) : (
         <div className="space-y-2">
           {/* Stage 1: Documents */}
-          <div className="rounded-lg border border-zinc-800 p-4">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
             <StageHeader
               label="Documents"
               count={documents.length}
@@ -201,10 +201,10 @@ export default function LineagePage() {
               {documents.map((doc) => (
                 <div
                   key={doc.id}
-                  className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs"
+                  className="flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-1.5 text-xs"
                 >
                   <StatusDot status={doc.status} />
-                  <span className="text-zinc-300 max-w-[200px] truncate">
+                  <span className="text-zinc-700 dark:text-zinc-300 max-w-[200px] truncate">
                     {doc.filename}
                   </span>
                   <StatusBadge status={doc.status} />
@@ -216,14 +216,14 @@ export default function LineagePage() {
           <Connector active={datasets.length > 0} />
 
           {/* Stage 2: Datasets */}
-          <div className="rounded-lg border border-zinc-800 p-4">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
             <StageHeader
               label="Datasets"
               count={datasets.length}
               color="bg-amber-500"
             />
             {datasets.length === 0 ? (
-              <p className="text-xs text-zinc-600">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600">
                 No datasets generated yet.
               </p>
             ) : (
@@ -235,12 +235,12 @@ export default function LineagePage() {
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/projects/${params.id}/dataset?datasetId=${ds.id}`}
-                          className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-600 transition"
+                          className="flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-400 dark:hover:border-zinc-600 transition"
                         >
                           <StatusDot status={ds.status} />
-                          <span className="text-zinc-300">{ds.name}</span>
+                          <span className="text-zinc-700 dark:text-zinc-300">{ds.name}</span>
                           {ds.pair_count != null && (
-                            <span className="text-zinc-600">
+                            <span className="text-zinc-400 dark:text-zinc-600">
                               {ds.pair_count} pairs
                             </span>
                           )}
@@ -254,10 +254,10 @@ export default function LineagePage() {
                                 <Link
                                   key={job.id}
                                   href={`/projects/${params.id}/training/${job.id}`}
-                                  className="flex items-center gap-1 rounded-md border border-violet-800/50 bg-violet-900/10 px-2 py-1 text-[10px] hover:border-violet-700 transition"
+                                  className="flex items-center gap-1 rounded-md border border-violet-200/50 dark:border-violet-800/50 bg-violet-50/10 dark:bg-violet-900/10 px-2 py-1 text-[10px] hover:border-violet-300 dark:hover:border-violet-700 transition"
                                 >
                                   <StatusDot status={job.status} />
-                                  <span className="text-violet-300">
+                                  <span className="text-violet-700 dark:text-violet-300">
                                     {job.base_model.split("/").pop()}
                                   </span>
                                   <span className="text-violet-500">
@@ -284,7 +284,7 @@ export default function LineagePage() {
             (j) => !datasets.some((ds) => ds.id === j.dataset_id),
           ).length > 0 && (
             <>
-              <div className="rounded-lg border border-dashed border-zinc-700 p-4">
+              <div className="rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 p-4">
                 <StageHeader
                   label="Unlinked Training Jobs"
                   count={
@@ -303,10 +303,10 @@ export default function LineagePage() {
                       <Link
                         key={job.id}
                         href={`/projects/${params.id}/training/${job.id}`}
-                        className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-600 transition"
+                        className="flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-400 dark:hover:border-zinc-600 transition"
                       >
                         <StatusDot status={job.status} />
-                        <span className="text-zinc-300">
+                        <span className="text-zinc-700 dark:text-zinc-300">
                           {job.base_model.split("/").pop()}
                         </span>
                         <StatusBadge status={job.status} />
@@ -319,14 +319,14 @@ export default function LineagePage() {
           )}
 
           {/* Stage 4: Models */}
-          <div className="rounded-lg border border-zinc-800 p-4">
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
             <StageHeader
               label="Models"
               count={models.length}
               color="bg-emerald-500"
             />
             {models.length === 0 ? (
-              <p className="text-xs text-zinc-600">
+              <p className="text-xs text-zinc-400 dark:text-zinc-600">
                 No models produced yet.
               </p>
             ) : (
@@ -343,14 +343,14 @@ export default function LineagePage() {
                     <div key={model.id} className="flex items-start gap-2">
                       <Link
                         href={`/projects/${params.id}/models/${model.id}`}
-                        className="flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-600 transition"
+                        className="flex items-center gap-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-1.5 text-xs hover:border-zinc-400 dark:hover:border-zinc-600 transition"
                       >
                         <StatusDot status={model.deployment_status} />
-                        <span className="text-zinc-300">{model.name}</span>
-                        <span className="text-zinc-600">v{model.version}</span>
+                        <span className="text-zinc-700 dark:text-zinc-300">{model.name}</span>
+                        <span className="text-zinc-400 dark:text-zinc-600">v{model.version}</span>
                         <StatusBadge status={model.deployment_status} />
                       </Link>
-                      <div className="text-[10px] text-zinc-600 pt-1">
+                      <div className="text-[10px] text-zinc-400 dark:text-zinc-600 pt-1">
                         {parentJob && (
                           <span>
                             from{" "}
@@ -377,7 +377,7 @@ export default function LineagePage() {
           </div>
 
           {/* Legend */}
-          <div className="flex flex-wrap gap-4 mt-6 pt-4 border-t border-zinc-800">
+          <div className="flex flex-wrap gap-4 mt-6 pt-4 border-t border-zinc-200 dark:border-zinc-800">
             {[
               { label: "Pending", cls: "bg-zinc-600" },
               { label: "In Progress", cls: "bg-blue-500" },

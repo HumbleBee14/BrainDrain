@@ -54,14 +54,14 @@ export default function TeamSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-white mb-2">Team Settings</h1>
-      <p className="text-zinc-400 mb-8">
+      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Team Settings</h1>
+      <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Manage your team members and invitations.
       </p>
 
       {/* Invite Form */}
-      <div className="border border-zinc-800 rounded-lg p-6 mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6 mb-8">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
           Invite Team Member
         </h2>
         <div className="flex gap-3">
@@ -70,13 +70,13 @@ export default function TeamSettingsPage() {
             placeholder="Email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             onKeyDown={(e) => e.key === "Enter" && handleInvite()}
           />
           <select
             value={role}
             onChange={(e) => setRole(e.target.value)}
-            className="bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
           >
             <option value="viewer">Viewer</option>
             <option value="member">Member</option>
@@ -98,9 +98,9 @@ export default function TeamSettingsPage() {
       </div>
 
       {/* Team Members */}
-      <div className="border border-zinc-800 rounded-lg mb-8">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-lg font-semibold text-white">
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg mb-8">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Team Members{" "}
             {members && (
               <span className="text-zinc-500 font-normal">
@@ -118,21 +118,21 @@ export default function TeamSettingsPage() {
             No team members yet.
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800">
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {members?.map((member) => (
               <div
                 key={member.id}
                 className="flex items-center justify-between p-4"
               >
                 <div>
-                  <p className="text-white text-sm">{member.email}</p>
+                  <p className="text-zinc-900 dark:text-white text-sm">{member.email}</p>
                   <p className="text-zinc-500 text-xs">
                     Joined {new Date(member.joined_at).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
                   {member.role === "owner" ? (
-                    <span className="text-xs bg-amber-500/10 text-amber-400 px-2 py-1 rounded">
+                    <span className="text-xs bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 px-2 py-1 rounded">
                       Owner
                     </span>
                   ) : (
@@ -144,7 +144,7 @@ export default function TeamSettingsPage() {
                           role: e.target.value,
                         })
                       }
-                      className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+                      className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300"
                     >
                       <option value="viewer">Viewer</option>
                       <option value="member">Member</option>
@@ -171,9 +171,9 @@ export default function TeamSettingsPage() {
       </div>
 
       {/* Pending Invitations */}
-      <div className="border border-zinc-800 rounded-lg">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-lg font-semibold text-white">
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
             Pending Invitations{" "}
             {invitations && (
               <span className="text-zinc-500 font-normal">
@@ -191,7 +191,7 @@ export default function TeamSettingsPage() {
             No pending invitations.
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800">
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {invitations
               ?.filter((i) => i.status === "pending")
               .map((invitation) => (
@@ -200,7 +200,7 @@ export default function TeamSettingsPage() {
                   className="flex items-center justify-between p-4"
                 >
                   <div>
-                    <p className="text-white text-sm">{invitation.email}</p>
+                    <p className="text-zinc-900 dark:text-white text-sm">{invitation.email}</p>
                     <p className="text-zinc-500 text-xs">
                       Role: {invitation.role} &middot; Expires{" "}
                       {new Date(invitation.expires_at).toLocaleDateString()}

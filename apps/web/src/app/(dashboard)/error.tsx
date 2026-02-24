@@ -16,11 +16,11 @@ export default function DashboardError({
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-8 max-w-md text-center">
-        <h2 className="text-lg font-semibold text-white mb-2">
+      <div className="rounded-lg border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/5 p-8 max-w-md text-center">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-2">
           Something went wrong
         </h2>
-        <p className="text-sm text-zinc-400 mb-4">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
           {error.message || "An unexpected error occurred. Our team has been notified."}
         </p>
         {error.digest && (
@@ -30,7 +30,7 @@ export default function DashboardError({
         )}
         <button
           onClick={reset}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-zinc-800 text-white hover:bg-zinc-700 transition"
+          className="px-4 py-2 text-sm font-medium rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
         >
           Try again
         </button>

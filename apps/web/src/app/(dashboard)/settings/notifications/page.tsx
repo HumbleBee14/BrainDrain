@@ -155,15 +155,15 @@ export default function NotificationsSettingsPage() {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-white mb-2">Notifications</h1>
-      <p className="text-zinc-400 mb-8">
+      <h1 className="text-2xl font-bold text-zinc-900 dark:text-white mb-2">Notifications</h1>
+      <p className="text-zinc-600 dark:text-zinc-400 mb-8">
         Choose which events trigger notifications and how they are delivered.
       </p>
 
       {/* Preference Toggles */}
-      <div className="border border-zinc-800 rounded-lg mb-8">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-lg font-semibold text-white">Preferences</h2>
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg mb-8">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Preferences</h2>
         </div>
 
         {prefsLoading ? (
@@ -171,7 +171,7 @@ export default function NotificationsSettingsPage() {
         ) : (
           <>
             {/* Table Header */}
-            <div className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-800">
+            <div className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
               <span className="text-xs text-zinc-500 uppercase tracking-wide">
                 Event
               </span>
@@ -189,9 +189,9 @@ export default function NotificationsSettingsPage() {
             {EVENT_TYPES.map((et) => (
               <div
                 key={et.id}
-                className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-800 last:border-b-0"
+                className="grid grid-cols-[1fr,repeat(2,100px)] gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
               >
-                <span className="text-sm text-white">{et.label}</span>
+                <span className="text-sm text-zinc-900 dark:text-white">{et.label}</span>
                 {CHANNELS.map((ch) => (
                   <div key={ch.id} className="flex justify-center">
                     <button
@@ -220,8 +220,8 @@ export default function NotificationsSettingsPage() {
 
             {/* Webhook URL */}
             {hasWebhookEnabled && (
-              <div className="px-4 py-4 border-t border-zinc-800">
-                <label className="block text-sm text-zinc-400 mb-2">
+              <div className="px-4 py-4 border-t border-zinc-200 dark:border-zinc-800">
+                <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
                   Webhook URL
                 </label>
                 <div className="flex gap-2">
@@ -233,7 +233,7 @@ export default function NotificationsSettingsPage() {
                       setWebhookUrl(e.target.value);
                       setHasChanges(true);
                     }}
-                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                    className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                   />
                   {(() => {
                     const webhookPref = preferences?.find(
@@ -244,7 +244,7 @@ export default function NotificationsSettingsPage() {
                       <button
                         onClick={() => testWebhook.mutate(webhookPref.id)}
                         disabled={testWebhook.isPending}
-                        className="rounded-md bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-600 transition disabled:opacity-50 whitespace-nowrap"
+                        className="rounded-md bg-zinc-200 dark:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition disabled:opacity-50 whitespace-nowrap"
                       >
                         {testWebhook.isPending ? "Testing..." : "Test Webhook"}
                       </button>
@@ -255,7 +255,7 @@ export default function NotificationsSettingsPage() {
             )}
 
             {/* Save Button */}
-            <div className="px-4 py-4 border-t border-zinc-800 flex items-center gap-3">
+            <div className="px-4 py-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
               <button
                 onClick={handleSave}
                 disabled={!hasChanges || updatePreferences.isPending}
@@ -277,9 +277,9 @@ export default function NotificationsSettingsPage() {
       </div>
 
       {/* Delivery History */}
-      <div className="border border-zinc-800 rounded-lg">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-lg font-semibold text-white">Delivery History</h2>
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Delivery History</h2>
         </div>
 
         {deliveriesLoading ? (
@@ -292,7 +292,7 @@ export default function NotificationsSettingsPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800">
+                <tr className="border-b border-zinc-200 dark:border-zinc-800">
                   <th className="px-4 py-3 text-left text-xs text-zinc-500 uppercase tracking-wide font-medium">
                     Event
                   </th>
@@ -313,7 +313,7 @@ export default function NotificationsSettingsPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800">
+              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
                 {deliveries.data.map(
                   (d: {
                     id: string;
@@ -326,10 +326,10 @@ export default function NotificationsSettingsPage() {
                     sent_at: string | null;
                   }) => (
                     <tr key={d.id}>
-                      <td className="px-4 py-3 text-white whitespace-nowrap">
+                      <td className="px-4 py-3 text-zinc-900 dark:text-white whitespace-nowrap">
                         {formatEventType(d.event_type)}
                       </td>
-                      <td className="px-4 py-3 text-zinc-400 capitalize whitespace-nowrap">
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400 capitalize whitespace-nowrap">
                         {d.channel}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
@@ -345,7 +345,7 @@ export default function NotificationsSettingsPage() {
                           )}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-zinc-400 whitespace-nowrap">
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
                         {d.attempts}
                       </td>
                       <td className="px-4 py-3 text-zinc-500 whitespace-nowrap text-xs">
@@ -387,16 +387,16 @@ function StatusBadge({ status }: { status: string }) {
   let classes = "text-xs px-2 py-0.5 rounded ";
   switch (status) {
     case "sent":
-      classes += "bg-emerald-500/10 text-emerald-400";
+      classes += "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400";
       break;
     case "failed":
-      classes += "bg-red-500/10 text-red-400";
+      classes += "bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400";
       break;
     case "pending":
-      classes += "bg-amber-500/10 text-amber-400";
+      classes += "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400";
       break;
     default:
-      classes += "bg-zinc-700 text-zinc-400";
+      classes += "bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400";
   }
   return <span className={classes}>{status}</span>;
 }

@@ -22,10 +22,10 @@ export default function DashboardPage() {
       <OnboardingBanner />
 
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Dashboard</h1>
         <Link
           href="/projects/new"
-          className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-zinc-200 transition"
+          className="rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200 px-4 py-2 text-sm font-semibold transition"
         >
           New Project
         </Link>
@@ -57,7 +57,7 @@ export default function DashboardPage() {
 
       {/* Usage Summary + Cost Chart */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        <div className="border border-zinc-800 rounded-lg p-6">
+        <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
           <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
             Usage
           </h2>
@@ -66,26 +66,26 @@ export default function DashboardPage() {
           ) : (
             <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-zinc-400 text-sm">Total Cost</span>
-                <span className="text-white font-semibold">
+                <span className="text-zinc-600 dark:text-zinc-400 text-sm">Total Cost</span>
+                <span className="text-zinc-900 dark:text-white font-semibold">
                   ${(usage?.total_cost_usd ?? 0).toFixed(2)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-400 text-sm">Tokens In</span>
-                <span className="text-white font-semibold">
+                <span className="text-zinc-600 dark:text-zinc-400 text-sm">Tokens In</span>
+                <span className="text-zinc-900 dark:text-white font-semibold">
                   {(usage?.total_tokens_in ?? 0).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-400 text-sm">Tokens Out</span>
-                <span className="text-white font-semibold">
+                <span className="text-zinc-600 dark:text-zinc-400 text-sm">Tokens Out</span>
+                <span className="text-zinc-900 dark:text-white font-semibold">
                   {(usage?.total_tokens_out ?? 0).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-400 text-sm">Total Events</span>
-                <span className="text-white font-semibold">
+                <span className="text-zinc-600 dark:text-zinc-400 text-sm">Total Events</span>
+                <span className="text-zinc-900 dark:text-white font-semibold">
                   {(usage?.total_events ?? 0).toLocaleString()}
                 </span>
               </div>
@@ -94,7 +94,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Cost Chart */}
-        <div className="border border-zinc-800 rounded-lg p-6">
+        <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
           <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
             Daily Cost
           </h2>
@@ -113,14 +113,14 @@ export default function DashboardPage() {
                     className="flex-1 flex flex-col items-center justify-end h-full group relative"
                   >
                     <div
-                      className="w-full bg-emerald-500/80 rounded-t min-h-[2px] transition-all"
+                      className="w-full bg-emerald-500 dark:bg-emerald-500/80 rounded-t min-h-[2px] transition-all"
                       style={{ height: `${Math.max(heightPct, 1)}%` }}
                     />
-                    <span className="text-[10px] text-zinc-600 mt-1 truncate w-full text-center">
+                    <span className="text-[10px] text-zinc-400 dark:text-zinc-600 mt-1 truncate w-full text-center">
                       {day.date.slice(5)}
                     </span>
                     {/* Tooltip */}
-                    <div className="absolute bottom-full mb-1 hidden group-hover:block bg-zinc-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                    <div className="absolute bottom-full mb-1 hidden group-hover:block bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
                       {day.date}: ${day.cost_usd.toFixed(2)}
                     </div>
                   </div>
@@ -151,9 +151,9 @@ export default function DashboardPage() {
       </div>
 
       {/* Recent Activity */}
-      <div className="border border-zinc-800 rounded-lg">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
+      <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Recent Activity</h2>
         </div>
         {activityLoading ? (
           <div className="p-8 text-center text-zinc-500">Loading...</div>
@@ -162,7 +162,7 @@ export default function DashboardPage() {
             No activity yet. Create a project to get started.
           </div>
         ) : (
-          <div className="divide-y divide-zinc-800">
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
             {activity.slice(0, 10).map((entry) => (
               <div
                 key={entry.id}
@@ -171,16 +171,16 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-3 min-w-0">
                   <ActivityIcon action={entry.action} />
                   <div className="min-w-0">
-                    <p className="text-sm text-white truncate">
+                    <p className="text-sm text-zinc-900 dark:text-white truncate">
                       <span className="font-medium">
                         {formatAction(entry.action)}
                       </span>{" "}
-                      <span className="text-zinc-400">
+                      <span className="text-zinc-600 dark:text-zinc-400">
                         {entry.resource_type}
                       </span>
                     </p>
                     {entry.resource_id && (
-                      <p className="text-xs text-zinc-600 truncate">
+                      <p className="text-xs text-zinc-400 dark:text-zinc-600 truncate">
                         {entry.resource_id}
                       </p>
                     )}
@@ -208,11 +208,11 @@ function StatCard({
   loading: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-800 p-6">
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
       <p className="text-sm text-zinc-500">{label}</p>
-      <p className="text-3xl font-bold text-white mt-1">
+      <p className="text-3xl font-bold text-zinc-900 dark:text-white mt-1">
         {loading ? (
-          <span className="text-zinc-700">--</span>
+          <span className="text-zinc-300 dark:text-zinc-700">--</span>
         ) : (
           (value ?? 0).toLocaleString()
         )}
@@ -222,7 +222,7 @@ function StatCard({
 }
 
 function ActivityIcon({ action }: { action: string }) {
-  let color = "bg-zinc-700";
+  let color = "bg-zinc-200 dark:bg-zinc-700";
   if (action.startsWith("create")) color = "bg-emerald-500/20";
   else if (action.startsWith("delete")) color = "bg-red-500/20";
   else if (action.startsWith("update")) color = "bg-blue-500/20";
