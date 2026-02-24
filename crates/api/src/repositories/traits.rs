@@ -654,6 +654,15 @@ pub trait NotificationRepository: Send + Sync {
         tenant_id: Uuid,
         preference_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>>;
+
+    /// Fetch deliveries eligible for processing by the background worker.
+    /// Returns pending deliveries and failed deliveries under the retry limit,
+    /// ordered oldest-first for fair scheduling.
+    fn list_pending_deliveries(
+        &self,
+        max_attempts: i32,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
 }
 
 /// Contract for model export database operations.

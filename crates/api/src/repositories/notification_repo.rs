@@ -226,4 +226,27 @@ impl NotificationRepository for PgNotificationRepo {
             Ok(pref)
         })
     }
+
+    fn list_pending_deliveries(
+        &self,
+        max_attempts: i32,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>> {
+        Box::pin(async move {
+            let deliveries = sqlx::query_as::<_, NotificationDelivery>(
+                r#"
+                SELECT * FROM notification_deliveries
+                WHERE (status = 'pending' OR (status = 'failed' AND attempts < $1))
+                ORDER BY created_at ASC
+                LIMIT $2
+                "#,
+            )
+            .bind(max_attempts)
+            .bind(limit)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(deliveries)
+        })
+    }
 }

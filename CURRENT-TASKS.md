@@ -14,10 +14,21 @@ All Phase B tasks completed.
 ## Phase C: Core Engineering (Major Features)
 
 ### C2. Notification Delivery Worker
-- **Status**: Pending
+- **Status**: Done
 - **Why**: Preferences/delivery tracking exist but nothing actually sends emails/webhooks
-- **Scope**: Add background worker that processes `notification_deliveries` table
-- **Files**: Backend worker/service
+- **What was done**: Built poll-based background worker following the BillingBatcher lifecycle pattern:
+  - Added `list_pending_deliveries(max_attempts, limit)` to `NotificationRepository` trait + `PgNotificationRepo` — fetches pending and failed-retryable deliveries across all tenants
+  - Created `DeliveryWorker` service with `Mutex<Option<ShutdownHandle>>` pattern for idempotent graceful shutdown
+  - Background `tokio::spawn` poll loop with configurable interval (10s default)
+  - Processes pending deliveries: fetches preference → validates channel → dispatches webhook
+  - SSRF protection on every dispatch (DNS can change between attempts)
+  - Exponential backoff timeout: 10s base, capped at 30s (10, 20, 30, 30, 30)
+  - Max 5 delivery attempts before permanent failure
+  - Batch size of 50 deliveries per poll cycle
+  - Email channel stubbed with structured logging (ready for email provider trait)
+  - Graceful shutdown: processes one final batch before exiting, integrated via `tokio::join!` with billing batcher
+  - 3 unit tests: private IP detection, public IP allowance, exponential backoff cap verification
+- **Files**: `delivery_worker.rs` (new), `traits.rs`, `notification_repo.rs`, `app_state.rs`, `main.rs`, `services/mod.rs`
 
 ### C3. Training Job Comparison UI
 - **Status**: Done
