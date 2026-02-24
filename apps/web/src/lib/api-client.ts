@@ -789,4 +789,34 @@ export const api = {
     deleteLlm: (token: string) =>
       request<void>("/api/v1/settings/llm", { token, method: "DELETE" }),
   },
+
+  auditLogs: {
+    list: (
+      token: string,
+      params: {
+        offset?: number;
+        limit?: number;
+        action?: string;
+        resource_type?: string;
+      } = {},
+    ) => {
+      const qs = new URLSearchParams();
+      if (params.offset) qs.set("offset", String(params.offset));
+      if (params.limit) qs.set("limit", String(params.limit));
+      if (params.action) qs.set("action", params.action);
+      if (params.resource_type) qs.set("resource_type", params.resource_type);
+      const query = qs.toString();
+      return request<
+        PaginatedResponse<{
+          id: string;
+          actor_id: string;
+          action: string;
+          resource_type: string;
+          resource_id: string | null;
+          metadata: Record<string, unknown>;
+          created_at: string;
+        }>
+      >(`/api/v1/audit-logs${query ? `?${query}` : ""}`, { token });
+    },
+  },
 };

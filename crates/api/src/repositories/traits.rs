@@ -472,6 +472,22 @@ pub trait AuditLogRepository: Send + Sync {
         resource_type: &str,
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn list_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>>;
+
+    fn count_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for team member database operations.

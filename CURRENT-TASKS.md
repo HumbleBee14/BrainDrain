@@ -13,12 +13,6 @@ All Phase B tasks completed.
 
 ## Phase C: Core Engineering (Major Features)
 
-### C1. Streaming Inference (SSE)
-- **Status**: Pending
-- **Why**: Inference endpoint accepts `stream` param but ignores it; standard for LLM APIs
-- **Scope**: Implement SSE streaming in inference route, proxy to vLLM streaming
-- **Files**: Backend route + vLLM client
-
 ### C2. Notification Delivery Worker
 - **Status**: Pending
 - **Why**: Preferences/delivery tracking exist but nothing actually sends emails/webhooks
@@ -32,10 +26,17 @@ All Phase B tasks completed.
 - **Files**: Frontend page + possibly new API endpoint
 
 ### C4. Audit Log Viewer Page
-- **Status**: Pending
+- **Status**: Done
 - **Why**: Backend stores full audit events; only last 10 shown on dashboard
-- **Scope**: New dedicated page with search, filter, pagination, export
-- **Files**: Frontend page (backend route already exists)
+- **What was done**: Built dedicated audit log viewer with full filtering capabilities:
+  - Added `action` filter parameter to `AuditLogFilterParams` DTO
+  - Added `list_filtered()` and `count_filtered()` to `AuditLogRepository` trait + `PgAuditLogRepo` with composable SQL WHERE clauses using `$N::text IS NULL OR column = $N` pattern
+  - Updated `GET /audit-logs` route to route between exact resource, filtered, and unfiltered query paths
+  - Added `auditLogs.list()` API client method with dynamic query string builder
+  - Added `useAuditLogs` hook with reactive query key params
+  - Built `/settings/audit-log` page with: text search (client-side across action/resource/actor), resource type dropdown filter, action dropdown filter (populated from current data), paginated table (25 per page), CSV export, relative timestamps with full-time tooltips, color-coded action badges (create=green, delete=red, update=blue, reject=amber, notification=violet), metadata preview column, clear filters button
+  - Added "Audit Log" tab to settings layout
+- **Files**: `audit_log.rs` (DTO), `audit_log_repo.rs`, `traits.rs`, `audit_logs.rs` (route), `api-client.ts`, `use-audit-logs.ts`, `settings/audit-log/page.tsx`, `settings/layout.tsx`
 
 ### C5. Data Lineage / Provenance Graph
 - **Status**: Pending
@@ -76,6 +77,10 @@ All Phase B tasks completed.
 ---
 
 ## Completed Tasks
+
+### C1. Streaming Inference (SSE)
+- **Status**: Done (was already implemented)
+- **Why**: Discovered during code audit that full SSE streaming already exists in `inference.rs`. The route reads `stream` param, sets `text/event-stream` headers, forwards vLLM SSE chunks via `Body::from_stream()`, captures token usage from final chunk for billing, and spawns async billing with conservative fallback on early disconnect. The playground frontend already uses `stream: true` with proper SSE parsing.
 
 ### B4. Webhook Testing & Retry
 - **Status**: Done

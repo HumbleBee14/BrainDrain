@@ -40,6 +40,7 @@ pub struct AuditLogFilterParams {
     pub offset: i64,
     #[serde(default = "default_limit")]
     pub limit: i64,
+    pub action: Option<String>,
     pub resource_type: Option<String>,
     pub resource_id: Option<Uuid>,
 }

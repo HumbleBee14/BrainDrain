@@ -9,6 +9,7 @@ const tabs = [
   { label: "Billing", href: "/settings/billing" },
   { label: "Usage", href: "/settings/usage" },
   { label: "Notifications", href: "/settings/notifications" },
+  { label: "Audit Log", href: "/settings/audit-log" },
 ];
 
 export default function SettingsLayout({
