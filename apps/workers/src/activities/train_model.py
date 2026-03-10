@@ -16,6 +16,7 @@ LLMJudge protocol for scoring, and Redis streams for real-time metrics.
 import json
 import logging
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -749,20 +750,41 @@ def _build_callback_class():
                 super().__init__()
             self.job_id = job_id
             self.phase = phase
+            self._start_time: float | None = None
+            self._start_step: int = 0
 
         def on_log(self, args, state, control, logs=None, **kwargs):
             if logs is None:
                 return
 
+            now = time.monotonic()
+            current_step = state.global_step
+            max_steps = state.max_steps or 0
+
+            # Compute ETA from steps/second since training began
+            eta_seconds: int | None = None
+            steps_per_second: float = 0.0
+            if self._start_time is not None and current_step > self._start_step:
+                elapsed = now - self._start_time
+                done_steps = current_step - self._start_step
+                steps_per_second = done_steps / max(elapsed, 0.001)
+                remaining = max(0, max_steps - current_step)
+                if steps_per_second > 0 and remaining > 0:
+                    eta_seconds = int(remaining / steps_per_second)
+
             metrics = {
-                "step": str(state.global_step),
+                "step": str(current_step),
+                "total_steps": str(max_steps),
                 "epoch": str(round(state.epoch or 0, 2)),
                 "loss": str(logs.get("loss", 0)),
                 "learning_rate": str(logs.get("learning_rate", 0)),
                 "grad_norm": str(logs.get("grad_norm", 0)),
                 "phase": self.phase,
+                "steps_per_second": str(round(steps_per_second, 3)),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
+            if eta_seconds is not None:
+                metrics["eta_seconds"] = str(eta_seconds)
 
             gpu = _get_gpu_metrics()
             if gpu:
@@ -775,16 +797,19 @@ def _build_callback_class():
                 logger.warning("Failed to stream metrics: %s", e)
 
             try:
-                activity.heartbeat(f"step={state.global_step}")
+                activity.heartbeat(f"step={current_step}/{max_steps}")
             except Exception:
                 pass
 
         def on_train_begin(self, args, state, control, **kwargs):
+            self._start_time = time.monotonic()
+            self._start_step = state.global_step
             _stream_metric(
                 self.job_id,
                 {
                     "event": "train_begin",
                     "phase": self.phase,
+                    "total_steps": str(state.max_steps or 0),
                     "timestamp": datetime.now(UTC).isoformat(),
                 },
             )
