@@ -190,4 +190,63 @@ impl NotificationRepository for PgNotificationRepo {
             Ok(())
         })
     }
+
+    fn get_delivery(
+        &self,
+        tenant_id: Uuid,
+        delivery_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationDelivery>>> {
+        Box::pin(async move {
+            let delivery = sqlx::query_as::<_, NotificationDelivery>(
+                "SELECT * FROM notification_deliveries WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(delivery_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(delivery)
+        })
+    }
+
+    fn get_preference(
+        &self,
+        tenant_id: Uuid,
+        preference_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>> {
+        Box::pin(async move {
+            let pref = sqlx::query_as::<_, NotificationPreference>(
+                "SELECT * FROM notification_preferences WHERE id = $1 AND tenant_id = $2",
+            )
+            .bind(preference_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(pref)
+        })
+    }
+
+    fn list_pending_deliveries(
+        &self,
+        max_attempts: i32,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>> {
+        Box::pin(async move {
+            let deliveries = sqlx::query_as::<_, NotificationDelivery>(
+                r#"
+                SELECT * FROM notification_deliveries
+                WHERE (status = 'pending' OR (status = 'failed' AND attempts < $1))
+                ORDER BY created_at ASC
+                LIMIT $2
+                "#,
+            )
+            .bind(max_attempts)
+            .bind(limit)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(deliveries)
+        })
+    }
 }

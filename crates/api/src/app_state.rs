@@ -28,6 +28,7 @@ use crate::repositories::traits::{
 use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
+use crate::services::delivery_worker::DeliveryWorker;
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -66,6 +67,7 @@ struct AppStateInner {
     pub billing_provider: Arc<dyn BillingProvider>,
     pub vllm_circuit_breaker: CircuitBreaker,
     pub billing_batcher: Arc<BillingBatcher>,
+    pub delivery_worker: Arc<DeliveryWorker>,
 }
 
 impl AppState {
@@ -188,7 +190,24 @@ impl AppState {
             Duration::from_secs(5),
         ));
 
-        tracing::info!("Infrastructure hardening initialized (circuit breaker + billing batcher)");
+        // Webhook HTTP client: redirects disabled to prevent SSRF bypass via redirect to internal IPs.
+        // Separate from the shared http_client since Stripe/Clerk/vLLM may need redirect support.
+        let webhook_http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+
+        // Notification delivery worker (polls every 10s for pending webhook deliveries)
+        let delivery_worker = Arc::new(DeliveryWorker::new(
+            Arc::clone(&notification_repo),
+            webhook_http_client,
+            Duration::from_secs(10),
+        ));
+
+        tracing::info!(
+            "Infrastructure hardening initialized (circuit breaker + billing batcher + delivery worker)"
+        );
 
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -216,6 +235,7 @@ impl AppState {
                 billing_provider,
                 vllm_circuit_breaker,
                 billing_batcher,
+                delivery_worker,
             }),
         })
     }
@@ -319,5 +339,10 @@ impl AppState {
     /// Get a cloneable handle for explicit shutdown of the billing batcher.
     pub fn billing_batcher_handle(&self) -> Arc<BillingBatcher> {
         Arc::clone(&self.inner.billing_batcher)
+    }
+
+    /// Get a cloneable handle for explicit shutdown of the delivery worker.
+    pub fn delivery_worker_handle(&self) -> Arc<DeliveryWorker> {
+        Arc::clone(&self.inner.delivery_worker)
     }
 }

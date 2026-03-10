@@ -23,7 +23,7 @@ export function useUpdatePreferences() {
           enabled: boolean;
           config?: Record<string, unknown>;
         }>;
-      }
+      },
     ) => api.notifications.updatePreferences(token, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
@@ -35,5 +35,31 @@ export function useDeliveryHistory(offset = 0, limit = 20) {
   return useAuthedQuery({
     queryKey: ["notifications", "deliveries", offset, limit],
     queryFn: (token) => api.notifications.getDeliveries(token, offset, limit),
+  });
+}
+
+export function useTestWebhook() {
+  const queryClient = useQueryClient();
+  return useAuthedMutation({
+    mutationFn: (token: string, preferenceId: string) =>
+      api.notifications.testWebhook(token, preferenceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "deliveries"],
+      });
+    },
+  });
+}
+
+export function useRetryDelivery() {
+  const queryClient = useQueryClient();
+  return useAuthedMutation({
+    mutationFn: (token: string, deliveryId: string) =>
+      api.notifications.retryDelivery(token, deliveryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["notifications", "deliveries"],
+      });
+    },
   });
 }

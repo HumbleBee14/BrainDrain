@@ -175,6 +175,32 @@ impl ProjectRepository for PgProjectRepo {
         })
     }
 
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        status: &str,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>> {
+        let status = status.to_string();
+        Box::pin(async move {
+            let project = sqlx::query_as::<_, Project>(
+                r#"
+                UPDATE projects
+                SET status = $3, updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+                RETURNING *
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(&status)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(project)
+        })
+    }
+
     fn delete(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
         Box::pin(async move {
             let result = sqlx::query(

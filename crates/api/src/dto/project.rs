@@ -28,6 +28,13 @@ pub struct UpdateProjectRequest {
     pub task_type: Option<String>,
 }
 
+/// Request body for updating a project's status.
+#[derive(Debug, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct UpdateProjectStatusRequest {
+    pub status: ProjectStatus,
+}
+
 /// API response for a project.
 #[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]

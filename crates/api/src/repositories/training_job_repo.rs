@@ -234,6 +234,52 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         })
     }
 
+    fn set_cost_approval(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                UPDATE training_jobs
+                SET status = 'cost_approval', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+                RETURNING *
+                "#,
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(job)
+        })
+    }
+
+    fn approve_cost(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        Box::pin(async move {
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                UPDATE training_jobs
+                SET status = 'pending', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND status = 'cost_approval'
+                RETURNING *
+                "#,
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .fetch_optional(&self.db)
+            .await?;
+
+            Ok(job)
+        })
+    }
+
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let count = sqlx::query_scalar::<_, i64>(

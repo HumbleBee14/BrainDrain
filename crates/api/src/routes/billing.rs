@@ -48,8 +48,8 @@ pub async fn list_billing_events(
     Query(pagination): Query<PaginationParams>,
 ) -> AppResult<Json<PaginatedResponse<BillingEventResponse>>> {
     require_role(&user, TeamRole::Admin)?;
-    let offset = pagination.offset;
-    let limit = pagination.limit.min(100);
+    let offset = pagination.offset();
+    let limit = pagination.limit();
 
     let repo = state.billing_event_repo();
     let (events, total) = tokio::try_join!(

@@ -148,6 +148,7 @@ async def main() -> None:
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
     from src.activities.train_model import (
         EvaluateHoldoutActivity,
+        FinalizeIterativeTrainingActivity,
         StartTrainingActivity,
         TrainSftRoundActivity,
     )
@@ -166,6 +167,7 @@ async def main() -> None:
         StartTrainingActivity(infra, gpu_provider=gpu_provider),
         TrainSftRoundActivity(infra),
         EvaluateHoldoutActivity(infra),
+        FinalizeIterativeTrainingActivity(infra),
         RunEvaluationActivity(infra),
         DeployModelActivity(infra),
         ExportGgufActivity(infra),

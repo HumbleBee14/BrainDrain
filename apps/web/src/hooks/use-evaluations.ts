@@ -8,6 +8,7 @@ import {
   type PaginatedResponse,
   type CreateEvaluationInput,
 } from "@/lib/api-client";
+import { useStatusStream } from "@/hooks/use-status-stream";
 
 export function useEvaluations(modelId: string, offset = 0, limit = 20) {
   const { getToken } = useAuth();
@@ -25,8 +26,9 @@ export function useEvaluations(modelId: string, offset = 0, limit = 20) {
 
 export function useEvaluation(id: string, enabled = true) {
   const { getToken } = useAuth();
+  const queryClient = useQueryClient();
 
-  return useQuery<Evaluation>({
+  const query = useQuery<Evaluation>({
     queryKey: ["evaluations", "detail", id],
     queryFn: async () => {
       const token = await getToken();
@@ -34,12 +36,19 @@ export function useEvaluation(id: string, enabled = true) {
       return api.evaluations.get(token, id);
     },
     enabled: !!id && enabled,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return false;
-      return data.status === "running" ? 5000 : false;
-    },
   });
+
+  const isActive = query.data?.status === "running";
+
+  useStatusStream<Evaluation>(
+    id ? `/api/v1/evaluations/${id}/status/stream` : null,
+    !!id && enabled && isActive,
+    (data) => {
+      queryClient.setQueryData(["evaluations", "detail", id], data);
+    },
+  );
+
+  return query;
 }
 
 export function useCreateEvaluation(modelId: string) {

@@ -58,11 +58,12 @@ async fn main() -> anyhow::Result<()> {
     let http_metrics = middleware::HttpMetrics::new(&config);
     let ip_rate_limiter = middleware::IpRateLimiter::new(state.redis(), &config);
 
-    // Grab billing batcher handle before moving state into the router
+    // Grab background worker handles before moving state into the router
     let billing_batcher = state.billing_batcher_handle();
+    let delivery_worker = state.delivery_worker_handle();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
-    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → handler
+    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → handler
     let mut app = routes::router();
 
     // Mount Swagger UI docs in non-production environments
@@ -73,6 +74,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = app
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            error::inject_request_id_into_errors,
+        ))
         .layer(propagate_request_id)
         .layer(axum::middleware::from_fn_with_state(
             http_metrics,
@@ -103,9 +107,9 @@ async fn main() -> anyhow::Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await?;
 
-    // Flush remaining billing events after server stops accepting requests
-    tracing::info!("Flushing billing batcher...");
-    billing_batcher.shutdown().await;
+    // Shut down background workers after server stops accepting requests
+    tracing::info!("Shutting down background workers...");
+    tokio::join!(billing_batcher.shutdown(), delivery_worker.shutdown());
 
     tracing::info!("Server shutdown complete");
     Ok(())

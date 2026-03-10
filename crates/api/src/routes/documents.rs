@@ -144,8 +144,8 @@ pub async fn list_documents(
         state.document_repo(),
         user.tenant_id,
         project_id,
-        params.offset,
-        params.limit,
+        params.offset(),
+        params.limit(),
     )
     .await?;
     Ok(Json(result))

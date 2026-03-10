@@ -18,8 +18,9 @@ interface WsMessage {
   };
 }
 
-const WS_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
-  .replace(/^http/, "ws");
+const WS_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+).replace(/^http/, "ws");
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const RECONNECT_BASE_MS = 1_000;

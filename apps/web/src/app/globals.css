@@ -1,3 +1,174 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Light mode defaults */
+  body {
+    @apply bg-white text-zinc-950;
+  }
+
+  /* Dark mode */
+  .dark body {
+    @apply bg-zinc-950 text-zinc-50;
+  }
+}
+
+@layer components {
+  /* Shared input styles */
+  .input-base {
+    @apply w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900
+      placeholder:text-zinc-400
+      focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500
+      dark:border-zinc-700 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-600
+      dark:focus:border-zinc-500;
+  }
+
+  /* Shared card styles */
+  .card {
+    @apply rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-transparent;
+  }
+
+  /* Primary button (CTA) */
+  .btn-primary {
+    @apply rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white
+      hover:bg-zinc-800 transition disabled:opacity-50 disabled:cursor-not-allowed
+      dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200;
+  }
+
+  /* Accent button (emerald) */
+  .btn-accent {
+    @apply rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white
+      hover:bg-emerald-500 transition disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Secondary/ghost button */
+  .btn-secondary {
+    @apply rounded-lg border border-zinc-300 px-4 py-2 text-sm text-zinc-600
+      hover:border-zinc-400 hover:text-zinc-900 transition disabled:opacity-50 disabled:cursor-not-allowed
+      dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-white;
+  }
+
+  /* Danger button */
+  .btn-danger {
+    @apply rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-600
+      hover:bg-red-50 transition disabled:opacity-50 disabled:cursor-not-allowed
+      dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/30;
+  }
+
+  .btn-danger-solid {
+    @apply rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white
+      hover:bg-red-500 transition disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Info button (blue) */
+  .btn-info {
+    @apply rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white
+      hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Violet button */
+  .btn-violet {
+    @apply rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white
+      hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Ghost/subtle button */
+  .btn-ghost {
+    @apply rounded-lg bg-zinc-100 px-4 py-2 text-sm text-zinc-700
+      hover:bg-zinc-200 transition disabled:opacity-50 disabled:cursor-not-allowed
+      dark:bg-zinc-800 dark:text-white dark:hover:bg-zinc-700;
+  }
+
+  /* Status badge base */
+  .badge {
+    @apply inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  /* Semantic badge variants */
+  .badge-neutral {
+    @apply bg-zinc-100 text-zinc-600 border-zinc-200
+      dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700;
+  }
+
+  .badge-success {
+    @apply bg-emerald-50 text-emerald-700 border-emerald-200
+      dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-800;
+  }
+
+  .badge-warning {
+    @apply bg-amber-50 text-amber-700 border-amber-200
+      dark:bg-amber-900/50 dark:text-amber-400 dark:border-amber-800;
+  }
+
+  .badge-error {
+    @apply bg-red-50 text-red-700 border-red-200
+      dark:bg-red-900/50 dark:text-red-400 dark:border-red-800;
+  }
+
+  .badge-info {
+    @apply bg-blue-50 text-blue-700 border-blue-200
+      dark:bg-blue-900/50 dark:text-blue-400 dark:border-blue-800;
+  }
+
+  .badge-violet {
+    @apply bg-violet-50 text-violet-700 border-violet-200
+      dark:bg-violet-900/50 dark:text-violet-400 dark:border-violet-800;
+  }
+
+  /* Table styles */
+  .table-header {
+    @apply border-b border-zinc-200 bg-zinc-50
+      dark:border-zinc-800 dark:bg-zinc-900/50;
+  }
+
+  .table-th {
+    @apply text-left text-xs font-medium text-zinc-500 uppercase tracking-wide px-4 py-2
+      dark:text-zinc-500;
+  }
+
+  .table-row {
+    @apply border-b border-zinc-100 last:border-b-0
+      dark:border-zinc-800/50;
+  }
+
+  /* Section heading */
+  .section-heading {
+    @apply text-lg font-semibold text-zinc-900 dark:text-white;
+  }
+
+  .page-heading {
+    @apply text-2xl font-bold text-zinc-900 dark:text-white;
+  }
+
+  /* Text helpers */
+  .text-primary {
+    @apply text-zinc-900 dark:text-white;
+  }
+
+  .text-sub {
+    @apply text-zinc-600 dark:text-zinc-400;
+  }
+
+  .text-hint {
+    @apply text-zinc-500 dark:text-zinc-500;
+  }
+
+  .text-dim {
+    @apply text-zinc-400 dark:text-zinc-600;
+  }
+
+  /* Divider */
+  .divider {
+    @apply border-zinc-200 dark:border-zinc-800;
+  }
+
+  /* Skeleton loading */
+  .skeleton {
+    @apply bg-zinc-200 dark:bg-zinc-800;
+  }
+
+  .skeleton-muted {
+    @apply bg-zinc-100 dark:bg-zinc-800/50;
+  }
+}

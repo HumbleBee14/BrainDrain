@@ -1,5 +1,9 @@
+use std::convert::Infallible;
+use std::time::Duration;
+
 use axum::extract::{Path, State};
-use axum::routing::post;
+use axum::response::sse::{Event, Sse};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
 
@@ -18,9 +22,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/models/{model_id}/deploy", post(deploy_model))
         .route("/models/{model_id}/undeploy", post(undeploy_model))
+        .route("/models/{model_id}/deployment", get(get_deployment_status))
         .route(
-            "/models/{model_id}/deployment",
-            axum::routing::get(get_deployment_status),
+            "/models/{model_id}/deployment/stream",
+            get(stream_deployment_status),
         )
 }
 
@@ -127,4 +132,64 @@ pub async fn get_deployment_status(
 ) -> AppResult<Json<DeploymentStatusResponse>> {
     let status = DeploymentService::status(state.model_repo(), user.tenant_id, model_id).await?;
     Ok(Json(status))
+}
+
+/// GET /api/v1/models/:model_id/deployment/stream
+///
+/// SSE endpoint that pushes deployment status changes.
+pub async fn stream_deployment_status(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(model_id): Path<Uuid>,
+) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
+    use platform_shared::enums::DeploymentStatus;
+
+    let initial = DeploymentService::status(state.model_repo(), user.tenant_id, model_id).await?;
+    let tenant_id = user.tenant_id;
+
+    let stream = async_stream::stream! {
+        let mut last_status = initial.deployment_status;
+
+        if let Ok(json) = serde_json::to_string(&initial) {
+            yield Ok(Event::default().data(json).event("status"));
+        }
+
+        let terminal = |s: DeploymentStatus| matches!(
+            s,
+            DeploymentStatus::Active | DeploymentStatus::Undeployed | DeploymentStatus::Inactive
+        );
+
+        if terminal(last_status) {
+            return;
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            match DeploymentService::status(state.model_repo(), tenant_id, model_id).await {
+                Ok(status) => {
+                    if status.deployment_status != last_status {
+                        last_status = status.deployment_status;
+                        if let Ok(json) = serde_json::to_string(&status) {
+                            yield Ok(Event::default().data(json).event("status"));
+                        }
+                        if terminal(last_status) {
+                            return;
+                        }
+                    } else {
+                        yield Ok(Event::default().comment("heartbeat"));
+                    }
+                }
+                Err(_) => {
+                    yield Ok(Event::default().comment("heartbeat"));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    ))
 }

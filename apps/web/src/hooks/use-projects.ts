@@ -1,7 +1,12 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { api, type Project, type CreateProjectInput, type PaginatedResponse } from "@/lib/api-client";
+import {
+  api,
+  type Project,
+  type CreateProjectInput,
+  type PaginatedResponse,
+} from "@/lib/api-client";
 import { useAuthedQuery, useAuthedMutation } from "@/hooks/use-authed-query";
 
 export function useProjects(offset = 0, limit = 20) {

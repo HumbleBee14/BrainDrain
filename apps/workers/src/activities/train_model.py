@@ -26,6 +26,7 @@ from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import (
     EvaluateHoldoutInput,
     EvaluateHoldoutOutput,
+    FinalizeIterativeTrainingInput,
     StartTrainingInput,
     StartTrainingOutput,
     TrainSftRoundInput,
@@ -100,11 +101,21 @@ class StartTrainingActivity:
             model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
             project_id = await _get_project_id(db, job_id)
 
+            # Auto-increment version for the same base_model within this project
+            max_version = await db.fetchval(
+                """SELECT COALESCE(MAX(version), 0) FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
+                project_id,
+                input.tenant_id,
+                input.base_model,
+            )
+            next_version = (max_version or 0) + 1
+
             await db.execute(
                 """INSERT INTO models
                 (tenant_id, project_id, training_job_id, name, base_model,
-                 adapter_path, adapter_size_bytes)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                 adapter_path, adapter_size_bytes, version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
                 input.tenant_id,
                 project_id,
                 job_id,
@@ -112,6 +123,7 @@ class StartTrainingActivity:
                 input.base_model,
                 result.adapter_path,
                 result.adapter_size_bytes,
+                next_version,
             )
 
             logger.info("Training completed for job %s, model: %s", job_id, model_name)
@@ -148,6 +160,14 @@ class TrainSftRoundActivity:
         iteration = input.iteration
 
         _get_metrics_collector(self.infra.settings)
+
+        # Mark training as started on the first iteration
+        if iteration == 0:
+            await self.infra.db.execute(
+                "UPDATE training_jobs SET status = $1, started_at = NOW() WHERE id = $2",
+                TrainingJobStatus.TRAINING,
+                job_id,
+            )
 
         with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
             tmpdir_path = Path(tmpdir)
@@ -248,6 +268,7 @@ class EvaluateHoldoutActivity:
 
     Loads the adapter from the iteration checkpoint and evaluates
     on the validation split. Returns eval_loss for early stopping decisions.
+    Streams progress metrics to Redis for real-time UI visibility.
     """
 
     def __init__(self, infra: InfraContainer):
@@ -257,8 +278,21 @@ class EvaluateHoldoutActivity:
     async def run(self, input: EvaluateHoldoutInput) -> EvaluateHoldoutOutput:
         engine = get_engine(self.infra.settings)
         hp = input.hyperparams
+        job_id = input.training_job_id
+        iteration = input.iteration
 
-        job_prefix = input.training_job_id[:8]
+        _get_sync_redis(self.infra.settings)
+
+        _stream_metric(
+            job_id,
+            {
+                "event": "eval_begin",
+                "phase": f"eval_iter_{iteration}",
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+
+        job_prefix = job_id[:8]
         with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
             tmpdir_path = Path(tmpdir)
 
@@ -268,6 +302,16 @@ class EvaluateHoldoutActivity:
             _download_dataset(val_s3_path, val_local, self.infra.s3, self.infra.s3_bucket)
             val_dataset = _load_chatml_dataset(val_local)
             logger.info("Loaded validation set: %d examples", len(val_dataset))
+
+            _stream_metric(
+                job_id,
+                {
+                    "event": "eval_dataset_loaded",
+                    "phase": f"eval_iter_{iteration}",
+                    "val_examples": str(len(val_dataset)),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
 
             # Load model + adapter from this iteration's checkpoint
             max_seq_length = hp.get("max_seq_length", 2048)
@@ -296,23 +340,122 @@ class EvaluateHoldoutActivity:
             _download_adapter(input.adapter_path, adapter_dir, self.infra.s3, self.infra.s3_bucket)
             model.load_adapter(str(adapter_dir), adapter_name="default")
 
+            try:
+                activity.heartbeat(f"eval_iter_{iteration}_running")
+            except Exception:
+                pass
+
             # Evaluate
             eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
 
+            _stream_metric(
+                job_id,
+                {
+                    "event": "eval_end",
+                    "phase": f"eval_iter_{iteration}",
+                    "eval_loss": str(round(eval_loss, 6)),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
+            )
+
             logger.info(
                 "Holdout eval iteration %d for job %s: eval_loss=%.4f",
-                input.iteration,
-                input.training_job_id,
+                iteration,
+                job_id,
                 eval_loss,
             )
 
             return EvaluateHoldoutOutput(
                 eval_loss=eval_loss,
                 metrics={
-                    "iteration": input.iteration,
+                    "iteration": iteration,
                     "eval_loss": eval_loss,
                 },
             )
+
+
+class FinalizeIterativeTrainingActivity:
+    """DB lifecycle for iterative training completion.
+
+    Updates training job status, calculates actual cost from per-iteration
+    runtimes, and creates the model record. Mirrors the post-training logic
+    in StartTrainingActivity but for the iterative workflow path.
+    """
+
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="finalize_iterative_training")
+    async def run(self, input: FinalizeIterativeTrainingInput) -> None:
+        db = self.infra.db
+        job_id = input.training_job_id
+
+        # Calculate actual cost from aggregate iteration runtimes
+        gpu_rates = {
+            "t4": 0.80,
+            "a10g": 1.20,
+            "l40s": 1.80,
+            "a10040gb": 2.00,
+            "a10080gb": 3.00,
+            "h100": 4.50,
+        }
+        gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
+        total_runtime = 0.0
+        for val in input.metrics.values():
+            if isinstance(val, dict):
+                for rk, rv in val.items():
+                    if rk.endswith("train_runtime") and isinstance(rv, (int, float)):
+                        total_runtime += rv
+        runtime_hours = total_runtime / 3600.0
+        actual_cost = round(runtime_hours * gpu_rate, 2)
+        input.metrics["estimated_cost"] = actual_cost
+
+        await db.execute(
+            """UPDATE training_jobs
+            SET status = $1,
+                metrics = $3,
+                actual_cost = $4,
+                completed_at = NOW()
+            WHERE id = $2""",
+            TrainingJobStatus.COMPLETED,
+            job_id,
+            json.dumps(input.metrics),
+            actual_cost,
+        )
+
+        model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
+        project_id = await _get_project_id(db, job_id)
+
+        max_version = await db.fetchval(
+            """SELECT COALESCE(MAX(version), 0) FROM models
+            WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
+            project_id,
+            input.tenant_id,
+            input.base_model,
+        )
+        next_version = (max_version or 0) + 1
+
+        await db.execute(
+            """INSERT INTO models
+            (tenant_id, project_id, training_job_id, name, base_model,
+             adapter_path, adapter_size_bytes, version)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+            input.tenant_id,
+            project_id,
+            job_id,
+            model_name,
+            input.base_model,
+            input.adapter_path,
+            input.adapter_size_bytes,
+            next_version,
+        )
+
+        logger.info(
+            "Iterative training finalized for job %s, model: %s (cost: $%.2f)",
+            job_id,
+            model_name,
+            actual_cost,
+        )
 
 
 def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
@@ -397,6 +540,24 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             bucket=infra.s3_bucket,
             llm_config=llm_config,
         )
+
+        # Calculate actual cost from runtime
+        gpu_rates = {
+            "t4": 0.80,
+            "a10g": 1.20,
+            "l40s": 1.80,
+            "a10040gb": 2.00,
+            "a10080gb": 3.00,
+            "h100": 4.50,
+        }
+        gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
+        total_runtime = sum(
+            v
+            for k, v in metrics.items()
+            if k.endswith("train_runtime") and isinstance(v, (int, float))
+        )
+        runtime_hours = total_runtime / 3600.0
+        metrics["estimated_cost"] = round(runtime_hours * gpu_rate, 2)
 
         # Save adapter via engine protocol
         adapter_dir = tmpdir_path / "adapter"

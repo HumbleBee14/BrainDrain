@@ -9,11 +9,13 @@ function formatFileSize(bytes: number): string {
 
 export function DocumentRow({ doc }: { doc: Document }) {
   return (
-    <div className="flex items-center justify-between py-3 px-4 border-b border-zinc-800 last:border-b-0">
+    <div className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0">
       <div className="flex items-center gap-3 min-w-0">
         <div className="min-w-0">
-          <p className="text-sm text-white truncate">{doc.filename}</p>
-          <p className="text-xs text-zinc-600">
+          <p className="text-sm text-zinc-900 dark:text-white truncate">
+            {doc.filename}
+          </p>
+          <p className="text-xs text-zinc-400 dark:text-zinc-600">
             {formatFileSize(doc.file_size)}
             {doc.language && ` \u00b7 ${doc.language}`}
             {doc.page_count && ` \u00b7 ${doc.page_count} pages`}

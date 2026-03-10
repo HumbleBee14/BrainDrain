@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use platform_db::models::Model;
 use platform_shared::enums::DeploymentStatus;
 use platform_shared::types::EvaluationScores;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
@@ -20,6 +20,14 @@ pub struct ModelResponse {
     pub version: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Request body for model rollback.
+#[derive(Debug, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct RollbackModelRequest {
+    /// The ID of the target version to roll back to (deploy).
+    pub target_version_id: String,
 }
 
 impl From<Model> for ModelResponse {

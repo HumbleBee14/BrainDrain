@@ -30,6 +30,7 @@ export type { TrainingMetrics } from "./TrainingMetrics";
 // API responses (from crates/api/src/dto/)
 export type { ApiKeyResponse } from "./ApiKeyResponse";
 export type { BillingEventResponse } from "./BillingEventResponse";
+export type { CostEstimateResponse } from "./CostEstimateResponse";
 export type { CreateApiKeyRequest } from "./CreateApiKeyRequest";
 export type { CreateApiKeyResponse } from "./CreateApiKeyResponse";
 export type { CreateEvaluationRequest } from "./CreateEvaluationRequest";
@@ -58,6 +59,11 @@ export type { UploadResponse } from "./UploadResponse";
 // Settings (from crates/api/src/dto/tenant_settings.rs)
 export type { LlmSettingsResponse } from "./LlmSettingsResponse";
 export type { UpdateLlmSettingsRequest } from "./UpdateLlmSettingsRequest";
+export type { AdminConfigResponse } from "./AdminConfigResponse";
+export type { UpdateAdminConfigRequest } from "./UpdateAdminConfigRequest";
+
+// Model versioning (from crates/api/src/dto/model.rs)
+export type { RollbackModelRequest } from "./RollbackModelRequest";
 
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {

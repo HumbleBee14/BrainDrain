@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::dto::export::{ExportResponse, VALID_QUANT_TYPES};
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{ExportRepository, ModelRepository};
-use crate::temporal::WorkflowOrchestrator;
+use crate::temporal::{TraceContext, WorkflowOrchestrator};
 
 /// Business logic for GGUF model export operations.
 pub struct ExportService;
@@ -17,6 +17,7 @@ impl ExportService {
         tenant_id: Uuid,
         model_id: Uuid,
         quant_type: &str,
+        trace_ctx: TraceContext,
     ) -> AppResult<ExportResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Export workflows are not available (orchestrator not configured)".to_string(),
@@ -72,6 +73,7 @@ impl ExportService {
                 &adapter_path,
                 &model.base_model,
                 quant_type,
+                trace_ctx,
             )
             .await
         {

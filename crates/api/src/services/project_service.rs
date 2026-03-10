@@ -1,3 +1,4 @@
+use platform_shared::enums::ProjectStatus;
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
@@ -156,6 +157,79 @@ impl ProjectService {
 
         Ok(())
     }
+
+    /// Update a project's status with state machine validation.
+    ///
+    /// Only allows valid transitions:
+    /// - Created → Ingesting, Archived
+    /// - Ingesting → Refining, Created (rollback on failure)
+    /// - Refining → Training, Ingesting (rollback on failure)
+    /// - Training → Evaluating, Refining (rollback on failure)
+    /// - Evaluating → Deployed, Training (rollback on failure)
+    /// - Deployed → Archived, Evaluating (re-evaluate)
+    /// - Archived → Created (un-archive)
+    pub async fn update_status(
+        repo: &dyn ProjectRepository,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        new_status: ProjectStatus,
+    ) -> AppResult<ProjectResponse> {
+        let project = repo
+            .get_by_id(tenant_id, project_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Project not found".to_string(),
+            })?;
+
+        let current: ProjectStatus = project.status.parse().unwrap_or(ProjectStatus::Created);
+
+        if !is_valid_transition(current, new_status) {
+            return Err(AppError::BadRequest {
+                message: format!("Invalid status transition: {} → {}", current, new_status),
+            });
+        }
+
+        let updated = repo
+            .update_status(tenant_id, project_id, &new_status.to_string())
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Project not found".to_string(),
+            })?;
+
+        tracing::info!(
+            project_id = %project_id,
+            old_status = %current,
+            new_status = %new_status,
+            "Project status updated"
+        );
+
+        Ok(updated.into())
+    }
+}
+
+/// Validate project status transitions.
+fn is_valid_transition(from: ProjectStatus, to: ProjectStatus) -> bool {
+    matches!(
+        (from, to),
+        // Forward pipeline progression
+        (ProjectStatus::Created, ProjectStatus::Ingesting)
+            | (ProjectStatus::Ingesting, ProjectStatus::Refining)
+            | (ProjectStatus::Refining, ProjectStatus::Training)
+            | (ProjectStatus::Training, ProjectStatus::Evaluating)
+            | (ProjectStatus::Evaluating, ProjectStatus::Deployed)
+            // Rollback on failure (go back one step)
+            | (ProjectStatus::Ingesting, ProjectStatus::Created)
+            | (ProjectStatus::Refining, ProjectStatus::Ingesting)
+            | (ProjectStatus::Training, ProjectStatus::Refining)
+            | (ProjectStatus::Evaluating, ProjectStatus::Training)
+            // Re-evaluate a deployed model
+            | (ProjectStatus::Deployed, ProjectStatus::Evaluating)
+            // Archive from any active state
+            | (ProjectStatus::Created, ProjectStatus::Archived)
+            | (ProjectStatus::Deployed, ProjectStatus::Archived)
+            // Un-archive
+            | (ProjectStatus::Archived, ProjectStatus::Created)
+    )
 }
 
 #[cfg(test)]
@@ -259,5 +333,87 @@ mod tests {
         };
         assert!(matches!(err, AppError::NotFound { .. }));
         assert_eq!(err.to_string(), "Project not found");
+    }
+
+    // ── State machine transitions ──
+
+    #[test]
+    fn forward_pipeline_transitions_are_valid() {
+        let forward = [
+            (ProjectStatus::Created, ProjectStatus::Ingesting),
+            (ProjectStatus::Ingesting, ProjectStatus::Refining),
+            (ProjectStatus::Refining, ProjectStatus::Training),
+            (ProjectStatus::Training, ProjectStatus::Evaluating),
+            (ProjectStatus::Evaluating, ProjectStatus::Deployed),
+        ];
+        for (from, to) in forward {
+            assert!(
+                is_valid_transition(from, to),
+                "Expected {from} → {to} to be valid",
+            );
+        }
+    }
+
+    #[test]
+    fn rollback_transitions_are_valid() {
+        let rollbacks = [
+            (ProjectStatus::Ingesting, ProjectStatus::Created),
+            (ProjectStatus::Refining, ProjectStatus::Ingesting),
+            (ProjectStatus::Training, ProjectStatus::Refining),
+            (ProjectStatus::Evaluating, ProjectStatus::Training),
+        ];
+        for (from, to) in rollbacks {
+            assert!(
+                is_valid_transition(from, to),
+                "Expected rollback {from} → {to} to be valid",
+            );
+        }
+    }
+
+    #[test]
+    fn archive_transitions_are_valid() {
+        assert!(is_valid_transition(
+            ProjectStatus::Created,
+            ProjectStatus::Archived
+        ));
+        assert!(is_valid_transition(
+            ProjectStatus::Deployed,
+            ProjectStatus::Archived
+        ));
+        assert!(is_valid_transition(
+            ProjectStatus::Archived,
+            ProjectStatus::Created
+        ));
+    }
+
+    #[test]
+    fn invalid_transitions_are_rejected() {
+        let invalid = [
+            (ProjectStatus::Created, ProjectStatus::Training),
+            (ProjectStatus::Created, ProjectStatus::Deployed),
+            (ProjectStatus::Deployed, ProjectStatus::Created),
+            (ProjectStatus::Training, ProjectStatus::Deployed),
+            (ProjectStatus::Archived, ProjectStatus::Deployed),
+        ];
+        for (from, to) in invalid {
+            assert!(
+                !is_valid_transition(from, to),
+                "Expected {from} → {to} to be invalid",
+            );
+        }
+    }
+
+    #[test]
+    fn same_status_transition_is_invalid() {
+        for status in [
+            ProjectStatus::Created,
+            ProjectStatus::Training,
+            ProjectStatus::Deployed,
+        ] {
+            assert!(
+                !is_valid_transition(status, status),
+                "Expected {status} → {status} to be invalid",
+            );
+        }
     }
 }

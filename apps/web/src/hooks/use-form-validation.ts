@@ -19,7 +19,7 @@ interface UseFormValidationResult<T> {
 }
 
 export function useFormValidation<T>(
-  schema: ZodSchema<T>
+  schema: ZodSchema<T>,
 ): UseFormValidationResult<T> {
   const [errors, setErrors] = useState<Partial<Record<keyof T, string>>>({});
 
@@ -41,7 +41,7 @@ export function useFormValidation<T>(
       setErrors(fieldErrors);
       return null;
     },
-    [schema]
+    [schema],
   );
 
   const validateField = useCallback(
@@ -63,8 +63,7 @@ export function useFormValidation<T>(
           });
           return null;
         }
-        fieldError =
-          (result.error as ZodError).issues[0]?.message || "Invalid";
+        fieldError = (result.error as ZodError).issues[0]?.message || "Invalid";
       } else {
         // Fallback: parse full object and filter for our field's error
         const result = schema.safeParse({ [field]: value });
@@ -77,7 +76,7 @@ export function useFormValidation<T>(
           return null;
         }
         const issue = (result.error as ZodError).issues.find(
-          (i) => i.path[0] === field
+          (i) => i.path[0] === field,
         );
         fieldError = issue?.message || "Invalid";
       }
@@ -85,7 +84,7 @@ export function useFormValidation<T>(
       setErrors((prev) => ({ ...prev, [field]: fieldError }));
       return fieldError;
     },
-    [schema]
+    [schema],
   );
 
   const clearErrors = useCallback(() => setErrors({}), []);
@@ -97,7 +96,7 @@ export function useFormValidation<T>(
         delete next[field];
         return next;
       }),
-    []
+    [],
   );
 
   return {

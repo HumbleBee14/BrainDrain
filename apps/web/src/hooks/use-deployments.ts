@@ -2,12 +2,18 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type Model, type DeploymentStatusResponse } from "@/lib/api-client";
+import {
+  api,
+  type Model,
+  type DeploymentStatusResponse,
+} from "@/lib/api-client";
+import { useStatusStream } from "@/hooks/use-status-stream";
 
 export function useDeploymentStatus(modelId: string, enabled = true) {
   const { getToken } = useAuth();
+  const queryClient = useQueryClient();
 
-  return useQuery<DeploymentStatusResponse>({
+  const query = useQuery<DeploymentStatusResponse>({
     queryKey: ["deployment-status", modelId],
     queryFn: async () => {
       const token = await getToken();
@@ -15,12 +21,19 @@ export function useDeploymentStatus(modelId: string, enabled = true) {
       return api.deployments.status(token, modelId);
     },
     enabled: !!modelId && enabled,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return false;
-      return data.deployment_status === "deploying" ? 3000 : false;
-    },
   });
+
+  const isActive = query.data?.deployment_status === "deploying";
+
+  useStatusStream<DeploymentStatusResponse>(
+    modelId ? `/api/v1/models/${modelId}/deployment/stream` : null,
+    !!modelId && enabled && isActive,
+    (data) => {
+      queryClient.setQueryData(["deployment-status", modelId], data);
+    },
+  );
+
+  return query;
 }
 
 export function useDeployModel(modelId: string) {
@@ -37,7 +50,9 @@ export function useDeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
+      queryClient.invalidateQueries({
+        queryKey: ["models", "detail", modelId],
+      });
     },
   });
 }
@@ -56,7 +71,9 @@ export function useUndeployModel(modelId: string) {
       queryClient.invalidateQueries({
         queryKey: ["deployment-status", modelId],
       });
-      queryClient.invalidateQueries({ queryKey: ["models", "detail", modelId] });
+      queryClient.invalidateQueries({
+        queryKey: ["models", "detail", modelId],
+      });
     },
   });
 }
