@@ -15,8 +15,6 @@ use crate::error::{AppError, AppResult};
 use crate::services::billing_batcher;
 use crate::services::token_estimator;
 
-/// Hard cap on max_tokens to prevent GPU abuse.
-const MAX_TOKENS_LIMIT: i64 = 8192;
 
 /// Inference routes — OpenAI-compatible API.
 /// These are mounted at `/v1/` (not `/api/v1/`) and use API key auth.
@@ -129,8 +127,8 @@ pub async fn chat_completions(
         )))?
         .to_string();
 
-    // Cap max_tokens to prevent GPU abuse
-    let max_tokens = body.max_tokens.min(MAX_TOKENS_LIMIT);
+    // Cap max_tokens to prevent GPU abuse (configurable via INFERENCE_MAX_TOKENS)
+    let max_tokens = body.max_tokens.min(state.config().inference_max_tokens);
 
     let is_streaming = body.stream.unwrap_or(false);
 

@@ -57,6 +57,18 @@ class WorkerSettings(BaseSettings):
     circuit_breaker_fail_max: int = 5
     circuit_breaker_reset_timeout: int = 30
 
+    # Activity timeouts — override for slower hardware or very large models
+    # Set via APP_TIMEOUT_* env vars
+    timeout_parse_minutes: int = 10           # per-document parse
+    timeout_chunk_minutes: int = 10           # text chunking
+    timeout_generate_pairs_minutes: int = 30  # synthetic pair generation
+    timeout_build_dataset_minutes: int = 15   # dataset assembly
+    timeout_train_hours: int = 6              # single training run (SFT/DPO/GRPO)
+    timeout_train_iterative_hours: int = 4    # one round of iterative training
+    timeout_holdout_eval_hours: int = 1       # holdout validation during training
+    timeout_eval_hours: int = 1               # full evaluation suite
+    timeout_export_hours: int = 2             # GGUF export + quantize
+
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 
     @field_validator("temporal_address")

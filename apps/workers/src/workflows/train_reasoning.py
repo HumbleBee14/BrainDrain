@@ -8,11 +8,12 @@ Future: if retry isolation between SFT and GRPO becomes critical,
 split into two activities here without changing the dispatcher.
 """
 
-from datetime import timedelta
+
 
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.stubs import StartTrainingInput, StartTrainingOutput
 
 
@@ -50,8 +51,8 @@ class TrainReasoningWorkflow:
                 gpu_class=gpu_class,
             ),
             task_queue="ml-pipeline-gpu",
-            start_to_close_timeout=timedelta(hours=6),
-            heartbeat_timeout=timedelta(minutes=5),
+            start_to_close_timeout=timeouts.train_activity(),
+            heartbeat_timeout=timeouts.train_heartbeat(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=1),
         )
 

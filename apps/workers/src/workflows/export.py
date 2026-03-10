@@ -3,11 +3,12 @@
 Triggered by POST /api/v1/models/{model_id}/exports.
 """
 
-from datetime import timedelta
+
 
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.export_gguf import ExportGgufInput, ExportGgufOutput
 
 
@@ -39,8 +40,8 @@ class ExportWorkflow:
                 base_model=base_model,
                 quant_type=quant_type,
             ),
-            start_to_close_timeout=timedelta(hours=2),
-            heartbeat_timeout=timedelta(minutes=15),
+            start_to_close_timeout=timeouts.export_activity(),
+            heartbeat_timeout=timeouts.export_heartbeat(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
         )
 
