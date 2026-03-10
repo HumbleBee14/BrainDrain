@@ -7,13 +7,16 @@ Provides:
   - Strategy registry: Quick (SFT), Aligned (SFT→DPO), Reasoning (SFT→GRPO)
 
 Services depend on Protocols, not concrete implementations.
-Swapping from Unsloth to HuggingFace PEFT or another library
-requires only a new TrainingEngine implementation.
+Swapping from Unsloth to another library requires only a new TrainingEngine
+class registered via register_engine() and selected via APP_TRAINING_ENGINE.
 """
 
 import logging
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from src.config import WorkerSettings
 
 logger = logging.getLogger("platform.training.engine")
 
@@ -52,6 +55,10 @@ class TrainingEngine(Protocol):
 
     def save_adapter(self, model: Any, tokenizer: Any, output_dir: Path) -> None:
         """Save adapter weights and tokenizer to disk."""
+        ...
+
+    def prepare_for_inference(self, model: Any) -> Any:
+        """Prepare model for inference (e.g. kernel swap). Default: identity."""
         ...
 
 
@@ -112,6 +119,44 @@ class UnslothEngine:
         model.save_pretrained(str(output_dir))
         tokenizer.save_pretrained(str(output_dir))
 
+    def prepare_for_inference(self, model: Any) -> Any:
+        from unsloth import FastLanguageModel
+
+        FastLanguageModel.for_inference(model)
+        return model
+
+
+# -- Engine Registry --
+
+_ENGINE_REGISTRY: dict[str, type] = {
+    "unsloth": UnslothEngine,
+}
+
+
+def register_engine(name: str, cls: type) -> None:
+    """Register a custom TrainingEngine implementation.
+
+    Example:
+        from src.activities.training_engine import register_engine
+        register_engine("my_engine", MyCustomEngine)
+    Then set APP_TRAINING_ENGINE=my_engine in the environment.
+    """
+    _ENGINE_REGISTRY[name] = cls
+
+
+def get_engine(settings: "WorkerSettings | None" = None) -> TrainingEngine:
+    """Instantiate the configured TrainingEngine.
+
+    The engine is selected by settings.training_engine (default: 'unsloth').
+    Set APP_TRAINING_ENGINE env var to select a different registered engine.
+    """
+    name = settings.training_engine if settings else "unsloth"
+    cls = _ENGINE_REGISTRY.get(name)
+    if cls is None:
+        available = list(_ENGINE_REGISTRY)
+        raise ValueError(f"Unknown training_engine '{name}'. Available: {available}")
+    return cls()
+
 
 # -- TrainingStrategy Protocol --
 
@@ -166,6 +211,3 @@ def get_strategy(mode: str) -> TrainingStrategy:
     return cls()
 
 
-def get_engine() -> UnslothEngine:
-    """Get the default training engine. Swap this to change ML backend."""
-    return UnslothEngine()

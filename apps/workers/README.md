@@ -73,10 +73,56 @@ uv run python -m src.worker
 
 All prefixed with `APP_` (configurable via pydantic-settings).
 
+### Backend Selection
+
+Every processing component uses a **Protocol → Registry → Factory** pattern.
+Swap any backend with a single env var — no code changes required.
+
+| Variable | Default | Options | What it controls |
+|---|---|---|---|
+| `APP_PDF_BACKEND` | `pymupdf` | `pymupdf`, `docling` | PDF extraction library |
+| `APP_LANGUAGE_DETECTOR_BACKEND` | `langdetect` | `langdetect`, `null` | Language detection |
+| `APP_TRAINING_ENGINE` | `unsloth` | `unsloth` + custom | Model loading & LoRA |
+| `APP_METRICS_BACKEND` | `redis` | `redis`, `log`, `null` | Training metrics sink |
+| `APP_EVAL_MODEL_LOADER` | `unsloth` | `unsloth` + custom | Eval model loading |
+
+**Examples:**
+
+```bash
+# Use Docling for richer PDF structure (tables, figures, reading order)
+APP_PDF_BACKEND=docling  # requires: pip install braindrain-workers[pdf-ml]
+
+# Local dev without Redis — stream metrics to the logger instead
+APP_METRICS_BACKEND=log
+
+# Disable language detection (faster parsing, no langdetect dependency)
+APP_LANGUAGE_DETECTOR_BACKEND=null
+```
+
+**Registering a custom backend** (no code changes to existing files):
+
+```python
+# my_engine.py
+from src.activities.training_engine import register_engine
+
+class MyEngine:
+    def load_model(self, model_name, max_seq_length, load_in_4bit): ...
+    def attach_adapter(self, model, r, lora_alpha, lora_dropout, target_modules): ...
+    def save_adapter(self, model, tokenizer, output_dir): ...
+    def prepare_for_inference(self, model): return model
+
+register_engine("my_engine", MyEngine)
+# Then: APP_TRAINING_ENGINE=my_engine
+```
+
+Same pattern works for `register()` in `pdf_backend.py`, `language_detector.py`,
+`metrics_collector.py`, and `model_inference.py`.
+
 ### Install with ML Dependencies
 
 ```bash
-uv sync --extra ml    # Includes unsloth, transformers, distilabel, datasets
+uv sync --extra ml        # Unsloth, transformers, datasets, TRL
+uv sync --extra pdf-ml    # Docling (alternative PDF backend)
 ```
 
 ## Docker Build & Deploy

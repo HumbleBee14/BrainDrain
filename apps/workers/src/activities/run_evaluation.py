@@ -135,18 +135,19 @@ class RunEvaluationActivity:
 
 async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> tuple[dict, dict]:
     """Run all registered evaluation suites and aggregate results."""
-    from unsloth import FastLanguageModel
+    from src.activities.training_engine import get_engine
+
+    engine = get_engine(infra.settings)
 
     with tempfile.TemporaryDirectory(prefix=f"eval-{input.evaluation_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
 
         # Load fine-tuned model with adapter
         logger.info("Loading fine-tuned model: %s + %s", input.base_model, input.adapter_path)
-        model_ft, tokenizer = FastLanguageModel.from_pretrained(
+        model_ft, tokenizer = engine.load_model(
             model_name=input.base_model,
             max_seq_length=2048,
             load_in_4bit=True,
-            dtype=None,
         )
 
         adapter_local = tmpdir_path / "adapter"
@@ -156,17 +157,16 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
         from peft import PeftModel
 
         model_ft = PeftModel.from_pretrained(model_ft, str(adapter_local))
-        FastLanguageModel.for_inference(model_ft)
+        model_ft = engine.prepare_for_inference(model_ft)
 
         # Load base model for comparison
         logger.info("Loading base model for comparison: %s", input.base_model)
-        model_base, tokenizer_base = FastLanguageModel.from_pretrained(
+        model_base, tokenizer_base = engine.load_model(
             model_name=input.base_model,
             max_seq_length=2048,
             load_in_4bit=True,
-            dtype=None,
         )
-        FastLanguageModel.for_inference(model_base)
+        model_base = engine.prepare_for_inference(model_base)
 
         activity.heartbeat("models_loaded")
 
@@ -487,24 +487,22 @@ class SafetySuite:
 # -- Helpers --
 
 
+_model_inference = None
+
+
+def _get_model_inference():
+    """Get or create the module-level ModelInference backend."""
+    global _model_inference  # noqa: PLW0603
+    if _model_inference is None:
+        from src.backends.model_inference import get as get_inference
+
+        _model_inference = get_inference("hf")
+    return _model_inference
+
+
 def _generate(model, tokenizer, prompt: str, max_new_tokens: int = 512) -> str:
     """Generate a response from a model given a text prompt."""
-    import torch
-
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1536)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=0.1,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-
-    generated_ids = outputs[0][inputs["input_ids"].shape[1] :]
-    return tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+    return _get_model_inference().generate(model, tokenizer, prompt, max_new_tokens)
 
 
 def _format_prompt(messages: list[dict]) -> str:

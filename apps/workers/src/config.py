@@ -44,6 +44,13 @@ class WorkerSettings(BaseSettings):
     # GPU provider: "local" (default, worker's own GPU) | "modal" (serverless)
     gpu_provider: str = "local"
 
+    # Backend selection — swap any processing layer without code changes
+    pdf_backend: str = "pymupdf"                   # "pymupdf" | "docling"
+    language_detector_backend: str = "langdetect"  # "langdetect" | "null"
+    training_engine: str = "unsloth"               # "unsloth"
+    metrics_backend: str = "redis"                 # "redis" | "log" | "null"
+    eval_model_loader: str = "unsloth"             # "unsloth"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "json"  # "json" (production) | "text" (local dev)

@@ -143,12 +143,12 @@ class TrainSftRoundActivity:
 
     @activity.defn(name="train_sft_round")
     async def run(self, input: TrainSftRoundInput) -> TrainSftRoundOutput:
-        engine = get_engine()
+        engine = get_engine(self.infra.settings)
         hp = input.hyperparams
         job_id = input.training_job_id
         iteration = input.iteration
 
-        _get_sync_redis(self.infra.settings)
+        _get_metrics_collector(self.infra.settings)
 
         with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
             tmpdir_path = Path(tmpdir)
@@ -256,7 +256,7 @@ class EvaluateHoldoutActivity:
 
     @activity.defn(name="evaluate_holdout")
     async def run(self, input: EvaluateHoldoutInput) -> EvaluateHoldoutOutput:
-        engine = get_engine()
+        engine = get_engine(self.infra.settings)
         hp = input.hyperparams
 
         job_prefix = input.training_job_id[:8]
@@ -332,12 +332,12 @@ def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
 
 async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
     """Load model via engine, dispatch to strategy, upload adapter."""
-    engine = get_engine()
+    engine = get_engine(infra.settings)
     hp = input.hyperparams
     job_id = input.training_job_id
 
-    # Ensure sync redis is initialized before any training callbacks use it
-    _get_sync_redis(infra.settings)
+    # Ensure MetricsCollector is initialized before any training callbacks use it
+    _get_metrics_collector(infra.settings)
 
     with tempfile.TemporaryDirectory(prefix=f"train-{job_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -695,19 +695,19 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
 
 # -- Helpers --
 
-_sync_redis_client = None
+_metrics_collector = None
 
 
-def _get_sync_redis(settings=None):
-    """Get or create the module-level synchronous Redis client."""
-    global _sync_redis_client  # noqa: PLW0603
-    if _sync_redis_client is None:
-        import redis as sync_redis
+def _get_metrics_collector(settings=None):
+    """Get or create the module-level MetricsCollector (backend selected from settings)."""
+    global _metrics_collector  # noqa: PLW0603
+    if _metrics_collector is None:
+        from src.backends.metrics_collector import get as get_collector
 
         if settings is None:
-            raise RuntimeError("Settings required for first Redis initialization")
-        _sync_redis_client = sync_redis.from_url(settings.redis_url)
-    return _sync_redis_client
+            raise RuntimeError("Settings required for first MetricsCollector initialization")
+        _metrics_collector = get_collector(settings.metrics_backend, settings.redis_url)
+    return _metrics_collector
 
 
 def _get_gpu_metrics() -> dict:
@@ -792,7 +792,7 @@ def _build_callback_class():
 
             try:
                 stream_key = f"training:metrics:{self.job_id}"
-                _get_sync_redis().xadd(stream_key, metrics, maxlen=10000)
+                _get_metrics_collector().record(stream_key, metrics, maxlen=10000)
             except Exception as e:
                 logger.warning("Failed to stream metrics: %s", e)
 
@@ -860,11 +860,11 @@ def _build_checkpoint_callback_class(tenant_id: str, job_id: str, s3, bucket: st
 
 
 def _stream_metric(job_id: str, data: dict):
-    """Push a single metric event to Redis."""
+    """Push a single metric event via the configured MetricsCollector."""
     try:
         stream_key = f"training:metrics:{job_id}"
         str_data = {k: str(v) for k, v in data.items()}
-        _get_sync_redis().xadd(stream_key, str_data, maxlen=10000)
+        _get_metrics_collector().record(stream_key, str_data, maxlen=10000)
     except Exception as e:
         logger.warning("Failed to stream metric event: %s", e)
 

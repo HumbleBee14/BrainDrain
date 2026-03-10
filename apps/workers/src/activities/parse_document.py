@@ -1,6 +1,9 @@
 """Document parsing activity — extracts structured text from uploaded files.
 
-Supports PDF (PyMuPDF), DOCX (python-docx), TXT, Markdown, HTML, and CSV.
+Supports PDF, DOCX, TXT, Markdown, HTML, and CSV.
+The PDF backend and language detector are swappable via WorkerSettings:
+  APP_PDF_BACKEND=pymupdf|docling
+  APP_LANGUAGE_DETECTOR_BACKEND=langdetect|null
 CPU-only — no GPU dependencies.
 """
 
@@ -9,14 +12,15 @@ import io
 import json
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import fitz  # PyMuPDF
 from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
-from langdetect import LangDetectException, detect
 from markdown import markdown
 from temporalio import activity
+
+if TYPE_CHECKING:
+    from src.config import WorkerSettings
 
 from src import s3_paths
 from src.constants import DocumentStatus
@@ -71,11 +75,23 @@ def register_parser(parser: DocumentParser) -> DocumentParser:
     return parser
 
 
-def get_parser(mime_type: str, storage_path: str) -> DocumentParser:
-    """Find the first parser that can handle this file type."""
+def get_parser(
+    mime_type: str,
+    storage_path: str,
+    settings: "WorkerSettings | None" = None,
+) -> DocumentParser:
+    """Find the first parser that can handle this file type.
+
+    If settings is provided and the matched parser is PdfParser, the PDF
+    extraction backend is selected from settings.pdf_backend.
+    """
     mime = mime_type.lower()
     for parser in _PARSER_REGISTRY:
         if parser.can_parse(mime, storage_path):
+            if settings is not None and isinstance(parser, PdfParser):
+                from src.backends.pdf_backend import get as get_pdf_backend
+
+                parser._backend = get_pdf_backend(settings.pdf_backend)
             return parser
     # Fallback to plain text
     return _PLAIN_TEXT_PARSER
@@ -85,51 +101,32 @@ def get_parser(mime_type: str, storage_path: str) -> DocumentParser:
 
 
 class PdfParser:
-    """Extract text and structure from PDF using PyMuPDF."""
+    """Extract text and structure from PDF via a swappable PdfBackend.
+
+    Default backend: PyMuPDF. Override via APP_PDF_BACKEND env var or by
+    passing settings to get_parser().
+    """
+
+    def __init__(self) -> None:
+        # Lazily resolved; get_parser() may replace this with the config-selected backend.
+        self._backend = None
+
+    def _get_backend(self):
+        if self._backend is None:
+            from src.backends.pdf_backend import PyMuPdfBackend
+
+            self._backend = PyMuPdfBackend()
+        return self._backend
 
     @property
     def name(self) -> str:
-        return "pymupdf"
+        return "pdf"
 
     def can_parse(self, mime_type: str, storage_path: str) -> bool:
         return mime_type == "application/pdf" or storage_path.endswith(".pdf")
 
     def parse(self, raw_bytes: bytes) -> list[dict]:
-        pages = []
-        doc = fitz.open(stream=raw_bytes, filetype="pdf")
-
-        for page_num, page in enumerate(doc, start=1):
-            blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-            sections = []
-            page_text_parts = []
-
-            for block in blocks:
-                if block["type"] == 0:  # text block
-                    for line in block.get("lines", []):
-                        text = "".join(span["text"] for span in line.get("spans", []))
-                        if not text.strip():
-                            continue
-
-                        # Detect headings by font size
-                        max_size = max(
-                            (span.get("size", 12) for span in line.get("spans", [])),
-                            default=12,
-                        )
-                        section_type = "heading" if max_size > 14 else "paragraph"
-
-                        sections.append({"type": section_type, "content": text.strip()})
-                        page_text_parts.append(text.strip())
-
-            pages.append(
-                {
-                    "page_num": page_num,
-                    "text": "\n".join(page_text_parts),
-                    "sections": sections,
-                }
-            )
-
-        doc.close()
-        return pages
+        return self._get_backend().extract_pages(raw_bytes)
 
 
 class DocxParser:
@@ -297,9 +294,14 @@ _PLAIN_TEXT_PARSER = register_parser(PlainTextParser())
 # ── Dispatch functions ──
 
 
-def _parse_by_type(raw_bytes: bytes, mime_type: str, storage_path: str) -> list[dict]:
+def _parse_by_type(
+    raw_bytes: bytes,
+    mime_type: str,
+    storage_path: str,
+    settings: "WorkerSettings | None" = None,
+) -> list[dict]:
     """Route to the appropriate parser based on mime type."""
-    parser = get_parser(mime_type, storage_path)
+    parser = get_parser(mime_type, storage_path, settings)
     return parser.parse(raw_bytes)
 
 
@@ -345,13 +347,15 @@ class ParseDocumentActivity:
             response = s3.get_object(Bucket=bucket, Key=input.storage_path)
             raw_bytes = response["Body"].read()
 
-            # Route to parser by mime type
+            # Route to parser by mime type (backend selected from settings)
             activity.heartbeat("parsing")
-            pages = _parse_by_type(raw_bytes, input.mime_type, input.storage_path)
+            pages = _parse_by_type(
+                raw_bytes, input.mime_type, input.storage_path, self.infra.settings
+            )
 
-            # Detect language from combined text
+            # Detect language from combined text (backend selected from settings)
             full_text = " ".join(p["text"] for p in pages if p.get("text"))
-            language = _detect_language(full_text)
+            language = _detect_language(full_text, self.infra.settings)
 
             # Compute quality score
             parse_quality = _compute_quality(pages, len(raw_bytes))
@@ -419,14 +423,15 @@ class ParseDocumentActivity:
 # ── Helpers ──
 
 
-def _detect_language(text: str) -> str | None:
-    """Detect language from text, returns ISO 639-1 code."""
-    if not text or len(text) < 20:
-        return None
-    try:
-        return detect(text[:5000])
-    except LangDetectException:
-        return None
+def _detect_language(text: str, settings: "WorkerSettings | None" = None) -> str | None:
+    """Detect language from text, returns ISO 639-1 code.
+
+    Backend selected via settings.language_detector_backend (default: 'langdetect').
+    """
+    from src.backends.language_detector import get as get_detector
+
+    name = settings.language_detector_backend if settings else "langdetect"
+    return get_detector(name).detect(text)
 
 
 def _compute_quality(pages: list[dict], original_size: int) -> float:
