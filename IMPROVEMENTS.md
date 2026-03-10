@@ -207,18 +207,19 @@ of the `ObjectStorage` trait makes testing slow and environment-dependent.
 
 | # | Feature | Est. Complexity | Status |
 |---|---------|----------------|--------|
-| 1 | Real evaluation suites | High | ✅ Done |
-| 2 | WebSocket metrics streaming | Medium | ✅ Done |
-| 3 | Hardcoded limits → config | Low | ✅ Done |
-| 4 | S3 partial failure recovery | Medium | ✅ Done |
-| 5 | GGUF export + quant options | Medium | ✅ Done |
-| 6 | Per-API-key rate limiting | Medium | ✅ Done |
-| 7 | RLS enforcement | Medium | ✅ Done |
-| 8 | Streaming inference (SSE) | Medium | ✅ Done |
+| 1 | Real evaluation suites | High | ✅ Done (already implemented) |
+| 2 | WebSocket metrics streaming | Medium | ✅ Done — Redis XREAD wired |
+| 3 | Hardcoded limits → config | Low | ✅ Done — timeouts.py + INFERENCE_MAX_TOKENS |
+| 4 | S3 partial failure recovery | Medium | ✅ Done (already implemented) |
+| 5 | GGUF export + quant options | Medium | ✅ Done (already implemented) |
+| 6 | Per-API-key rate limiting | Medium | ✅ Done (already implemented) |
+| 7 | RLS enforcement | Medium | ✅ Done — before_acquire + migration 009 |
+| 8 | Streaming inference (SSE) | Medium | ✅ Done (already implemented) |
 | 9 | Multi-adapter serving | High | Pending |
 | 10 | Smart defaults / auto-config | High | Pending |
-| 11 | Training ETA display | Low | Pending |
+| 11 | Training ETA display | Low | ✅ Done — eta_seconds in metrics stream |
 | 12 | Onboarding wizard | High | Pending |
-| 13 | Team query O(1) fix | Trivial | ✅ Done |
+| 13 | Team query O(1) fix | Trivial | ✅ Done — SELECT EXISTS |
 | 14 | Billing credit-back | Medium | Pending |
 | 15 | In-memory storage mock | Low | Pending |
+| 16 | Safety benchmark coverage | Low | ✅ Done — 30 → 65 prompts, 5 categories |
