@@ -49,6 +49,10 @@ ml = [
 gpu-cloud = [
     "modal>=0.73.0",
 ]
+# Alternative PDF backend (richer structure extraction, larger install)
+pdf-ml = [
+    "docling>=2.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
