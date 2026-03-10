@@ -349,7 +349,9 @@ class ParseDocumentActivity:
 
             # Route to parser by mime type (backend selected from settings)
             activity.heartbeat("parsing")
-            pages = _parse_by_type(raw_bytes, input.mime_type, input.storage_path, self.infra.settings)
+            pages = _parse_by_type(
+                raw_bytes, input.mime_type, input.storage_path, self.infra.settings
+            )
 
             # Detect language from combined text (backend selected from settings)
             full_text = " ".join(p["text"] for p in pages if p.get("text"))

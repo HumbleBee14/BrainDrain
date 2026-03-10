@@ -31,7 +31,7 @@ class LangdetectDetector:
         if not text or len(text) < 20:
             return None
         try:
-            from langdetect import LangDetectException, detect
+            from langdetect import detect
 
             return detect(text[:5000])
         except Exception:  # LangDetectException or any import error
