@@ -174,5 +174,3 @@ class GeneratePairsActivity:
 
         activity.logger.info("Generated %d pairs from %d chunks", len(all_pairs), len(chunks))
         return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)
-
-

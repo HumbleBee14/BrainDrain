@@ -159,5 +159,3 @@ class BuildDatasetActivity:
         )
 
         return BuildDatasetOutput(pair_count=len(chat_records), storage_path=dataset_key)
-
-

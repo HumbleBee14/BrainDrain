@@ -3,8 +3,6 @@
 Triggered by POST /api/v1/models/{model_id}/exports.
 """
 
-
-
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():

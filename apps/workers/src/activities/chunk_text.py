@@ -93,5 +93,3 @@ class ChunkTextActivity:
             "Chunked %d documents into %d chunks", len(input.document_ids), len(all_chunks)
         )
         return ChunkTextOutput(chunk_count=len(all_chunks), chunks_storage_path=chunks_key)
-
-
