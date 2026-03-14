@@ -67,6 +67,7 @@ sha2 = "0.10"
 hmac = "0.12"
 rand = "0.8"
 hex = "0.4"
+subtle = "2"
 
 # Async traits
 async-trait = "0.1"

@@ -10,7 +10,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.parse_document import ParseDocumentInput
-    from src.activities.stubs import DocumentInfo
+    from src.activities.stubs import DocumentInfo, GetDocumentInfoInput
 
 
 @workflow.defn
@@ -27,7 +27,7 @@ class IngestWorkflow:
                 # Fetch document metadata from DB (storage_path, mime_type)
                 doc_info: DocumentInfo = await workflow.execute_activity(
                     "get_document_info",
-                    doc_id,
+                    GetDocumentInfoInput(tenant_id=tenant_id, document_id=doc_id),
                     start_to_close_timeout=timeouts.db_lookup(),
                 )
 

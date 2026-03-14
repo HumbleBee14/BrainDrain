@@ -254,35 +254,58 @@ impl AuthProvider for ClerkAuthProvider {
 /// The worker sends `Authorization: Bearer {platform_internal_token}` plus
 /// an `X-Tenant-Id` header. This provider validates the token and extracts
 /// the tenant UUID from the header. The authenticated user gets `Owner` role
-/// to allow any operation (it's an internal service, not a human user).
+/// but is restricted to specific API paths (deploy callbacks only).
+///
+/// **Security:** Internal auth is scoped to `INTERNAL_AUTH_ALLOWED_PATHS` to
+/// prevent a compromised worker from accessing arbitrary tenant endpoints.
 pub struct InternalTokenAuthProvider {
     token: String,
 }
+
+/// Path prefixes where internal token auth is allowed.
+/// All other routes reject internal tokens and fall through to Clerk JWT auth.
+const INTERNAL_AUTH_ALLOWED_PATHS: &[&str] = &[
+    "/api/v1/models/", // deploy/undeploy callbacks
+];
 
 impl InternalTokenAuthProvider {
     pub fn new(token: String) -> Self {
         Self { token }
     }
 
-    /// Check if bearer token matches the internal token.
+    /// Check if bearer token matches the internal token for an allowed path.
     /// Returns `None` if this isn't an internal token (let other providers try).
-    /// Uses constant-time comparison to prevent timing side-channel attacks.
+    /// Uses constant-time comparison (via `subtle`) to prevent timing side-channel attacks.
     pub fn authenticate_with_headers(
         &self,
         token: &str,
         headers: &axum::http::HeaderMap,
+        request_path: &str,
     ) -> Option<Result<AuthenticatedUser, AppError>> {
         if self.token.is_empty() {
             return None;
         }
 
-        // Constant-time comparison: hash both tokens with SHA-256 and compare
-        // the digests. This prevents timing attacks that could leak the token
-        // byte-by-byte via response time differences.
+        // Constant-time comparison: hash both tokens with SHA-256, then compare
+        // digests using subtle::ConstantTimeEq. GenericArray's PartialEq uses
+        // standard short-circuit comparison — subtle guarantees fixed-time.
         use sha2::{Digest, Sha256};
+        use subtle::ConstantTimeEq;
         let expected = Sha256::digest(self.token.as_bytes());
         let provided = Sha256::digest(token.as_bytes());
-        if expected != provided {
+        if expected.ct_eq(&provided).unwrap_u8() != 1 {
+            return None;
+        }
+
+        // Scope check: only allow internal auth on specific route prefixes
+        let path_allowed = INTERNAL_AUTH_ALLOWED_PATHS
+            .iter()
+            .any(|prefix| request_path.starts_with(prefix));
+        if !path_allowed {
+            tracing::warn!(
+                path = request_path,
+                "Internal token used on non-allowed path — rejecting"
+            );
             return None;
         }
 
@@ -329,9 +352,10 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .strip_prefix("Bearer ")
             .ok_or(AppError::Unauthorized)?;
 
-        // Try internal token first (worker → API calls)
+        // Try internal token first (worker → API calls, scoped to allowed paths)
         if let Some(internal_provider) = state.internal_auth()
-            && let Some(result) = internal_provider.authenticate_with_headers(token, &parts.headers)
+            && let Some(result) =
+                internal_provider.authenticate_with_headers(token, &parts.headers, parts.uri.path())
         {
             return result;
         }
