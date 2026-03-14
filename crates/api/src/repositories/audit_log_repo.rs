@@ -144,4 +144,64 @@ impl AuditLogRepository for PgAuditLogRepo {
             Ok(count)
         })
     }
+
+    fn list_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>> {
+        let action = action.map(|s| s.to_string());
+        let resource_type = resource_type.map(|s| s.to_string());
+        Box::pin(async move {
+            let logs = sqlx::query_as::<_, AuditLog>(
+                r#"
+                SELECT * FROM audit_logs
+                WHERE tenant_id = $1
+                  AND ($2::text IS NULL OR action = $2)
+                  AND ($3::text IS NULL OR resource_type = $3)
+                ORDER BY created_at DESC
+                LIMIT $4 OFFSET $5
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(action.as_deref())
+            .bind(resource_type.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(logs)
+        })
+    }
+
+    fn count_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<i64>> {
+        let action = action.map(|s| s.to_string());
+        let resource_type = resource_type.map(|s| s.to_string());
+        Box::pin(async move {
+            let count = sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*) FROM audit_logs
+                WHERE tenant_id = $1
+                  AND ($2::text IS NULL OR action = $2)
+                  AND ($3::text IS NULL OR resource_type = $3)
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(action.as_deref())
+            .bind(resource_type.as_deref())
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(count)
+        })
+    }
 }

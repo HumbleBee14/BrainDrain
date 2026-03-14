@@ -16,10 +16,18 @@ use crate::services::billing_batcher;
 use crate::services::token_estimator;
 
 
+/// Maximum number of items in a single batch request.
+const MAX_BATCH_SIZE: usize = 50;
+
+/// Concurrent vLLM requests per batch.
+const BATCH_CONCURRENCY: usize = 5;
+
 /// Inference routes — OpenAI-compatible API.
 /// These are mounted at `/v1/` (not `/api/v1/`) and use API key auth.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/v1/chat/completions", post(chat_completions))
+    Router::new()
+        .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/chat/completions/batch", post(batch_chat_completions))
 }
 
 /// OpenAI-compatible chat completion request (subset of fields we support).
@@ -279,4 +287,235 @@ pub async fn chat_completions(
 
         Ok(Json(response).into_response())
     }
+}
+
+/// A single item in a batch request.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BatchRequestItem {
+    /// Client-supplied identifier for correlating responses.
+    pub custom_id: String,
+    pub messages: Vec<ChatMessage>,
+    #[serde(default = "default_temperature")]
+    pub temperature: f64,
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: i64,
+    #[serde(default)]
+    pub top_p: Option<f64>,
+}
+
+/// Batch chat completion request.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BatchChatCompletionRequest {
+    pub requests: Vec<BatchRequestItem>,
+}
+
+/// Result of a single item in the batch response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchResponseItem {
+    pub custom_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Batch chat completion response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchChatCompletionResponse {
+    pub results: Vec<BatchResponseItem>,
+    pub usage: BatchUsageSummary,
+}
+
+/// Aggregated usage across all batch items.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchUsageSummary {
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
+    pub successful: usize,
+    pub failed: usize,
+}
+
+/// POST /v1/chat/completions/batch
+///
+/// Process multiple chat completion requests in a single API call.
+/// Items are processed concurrently with bounded parallelism.
+/// Streaming is not supported for batch requests.
+#[utoipa::path(
+    post,
+    path = "/v1/chat/completions/batch",
+    tag = "Inference",
+    request_body = BatchChatCompletionRequest,
+    responses(
+        (status = 200, description = "Batch completion response", body = BatchChatCompletionResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 401, body = crate::error::ErrorEnvelope),
+    ),
+    security(("api_key" = []))
+)]
+pub async fn batch_chat_completions(
+    State(state): State<AppState>,
+    api_key: ApiKeyAuth,
+    Json(body): Json<BatchChatCompletionRequest>,
+) -> AppResult<Json<BatchChatCompletionResponse>> {
+    if body.requests.is_empty() {
+        return Err(AppError::BadRequest {
+            message: "Batch must contain at least one request".to_string(),
+        });
+    }
+
+    if body.requests.len() > MAX_BATCH_SIZE {
+        return Err(AppError::BadRequest {
+            message: format!("Batch size exceeds maximum of {MAX_BATCH_SIZE}"),
+        });
+    }
+
+    // Verify model is actively deployed (once for the entire batch)
+    let model = state
+        .model_repo()
+        .get_by_id(api_key.tenant_id, api_key.model_id)
+        .await?
+        .ok_or(AppError::NotFound {
+            message: "Model not found".to_string(),
+        })?;
+
+    if model.deployment_status != DeploymentStatus::Active.to_string() {
+        return Err(AppError::BadRequest {
+            message: format!(
+                "Model is not deployed (status: {}). Deploy the model first.",
+                model.deployment_status
+            ),
+        });
+    }
+
+    let adapter_name = model.deployment_config["vllm_adapter_name"]
+        .as_str()
+        .ok_or(AppError::Internal(anyhow::anyhow!(
+            "Model deployment config missing vllm_adapter_name"
+        )))?
+        .to_string();
+
+    let vllm_url = state.config().vllm_api_url.clone();
+    let http_client = state.http_client().clone();
+
+    // Process batch items concurrently with bounded parallelism
+    let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
+        .map(|item| {
+            let adapter = adapter_name.clone();
+            let url = vllm_url.clone();
+            let client = http_client.clone();
+            let cb = state.vllm_circuit_breaker();
+
+            async move {
+                let max_tokens = item.max_tokens.min(MAX_TOKENS_LIMIT);
+                let vllm_request = serde_json::json!({
+                    "model": adapter,
+                    "messages": item.messages,
+                    "temperature": item.temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": item.top_p.unwrap_or(1.0),
+                    "stream": false,
+                });
+
+                let resp = cb
+                    .execute(|| async {
+                        client
+                            .post(format!("{url}/v1/chat/completions"))
+                            .json(&vllm_request)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                AppError::Internal(anyhow::anyhow!(
+                                    "Cannot reach vLLM service: {e}"
+                                ))
+                            })
+                    })
+                    .await;
+
+                match resp {
+                    Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+                        Ok(json) => BatchResponseItem {
+                            custom_id: item.custom_id,
+                            response: Some(json),
+                            error: None,
+                        },
+                        Err(e) => {
+                            tracing::warn!(custom_id = %item.custom_id, error = %e, "Batch item response parse failed");
+                            BatchResponseItem {
+                                custom_id: item.custom_id,
+                                response: None,
+                                error: Some("Inference service returned an invalid response".into()),
+                            }
+                        }
+                    },
+                    Ok(r) => {
+                        let status = r.status();
+                        tracing::warn!(custom_id = %item.custom_id, status = %status, "Batch item inference failed");
+                        BatchResponseItem {
+                            custom_id: item.custom_id,
+                            response: None,
+                            error: Some(format!("Inference failed with status {status}")),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(custom_id = %item.custom_id, error = %e, "Batch item request error");
+                        BatchResponseItem {
+                            custom_id: item.custom_id,
+                            response: None,
+                            error: Some("Inference service unavailable".into()),
+                        }
+                    }
+                }
+            }
+        })
+        .buffer_unordered(BATCH_CONCURRENCY)
+        .collect()
+        .await;
+
+    // Aggregate usage and bill
+    let mut total_prompt = 0i64;
+    let mut total_completion = 0i64;
+    let mut successful = 0usize;
+    let mut failed = 0usize;
+
+    for item in &results {
+        if let Some(ref resp) = item.response {
+            successful += 1;
+            let tokens_in = resp["usage"]["prompt_tokens"].as_i64().unwrap_or(0);
+            let tokens_out = resp["usage"]["completion_tokens"].as_i64().unwrap_or(0);
+            total_prompt += tokens_in;
+            total_completion += tokens_out;
+        } else {
+            failed += 1;
+        }
+    }
+
+    // Bill aggregated tokens
+    if total_prompt > 0 || total_completion > 0 {
+        state.billing_batcher().send(billing_batcher::BillingEvent {
+            tenant_id: api_key.tenant_id,
+            operation: "inference".to_string(),
+            resource_id: Some(api_key.model_id),
+            tokens_in: total_prompt,
+            tokens_out: total_completion,
+            gpu_seconds: 0,
+            cost_usd: token_estimator::estimate_inference_cost(total_prompt, total_completion),
+            metadata: serde_json::json!({
+                "api_key_id": api_key.key_id.to_string(),
+                "batch": true,
+                "batch_size": results.len(),
+            }),
+        });
+    }
+
+    Ok(Json(BatchChatCompletionResponse {
+        results,
+        usage: BatchUsageSummary {
+            total_prompt_tokens: total_prompt,
+            total_completion_tokens: total_completion,
+            total_tokens: total_prompt + total_completion,
+            successful,
+            failed,
+        },
+    }))
 }

@@ -22,7 +22,7 @@ import {
 export function useAuthedQuery<TData = unknown, TError = Error>(
   options: Omit<UseQueryOptions<TData, TError>, "queryFn"> & {
     queryFn: (token: string) => Promise<TData>;
-  }
+  },
 ) {
   const { getToken } = useAuth();
 
@@ -53,7 +53,7 @@ export function useAuthedMutation<
 >(
   options: Omit<UseMutationOptions<TData, TError, TVariables>, "mutationFn"> & {
     mutationFn: (token: string, variables: TVariables) => Promise<TData>;
-  }
+  },
 ) {
   const { getToken } = useAuth();
 

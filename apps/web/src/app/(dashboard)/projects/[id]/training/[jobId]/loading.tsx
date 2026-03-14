@@ -1,0 +1,17 @@
+export default function TrainingJobLoading() {
+  return (
+    <div className="animate-pulse space-y-6">
+      <div className="h-6 w-40 bg-zinc-100 dark:bg-zinc-800 rounded" />
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-48 bg-zinc-100 dark:bg-zinc-800 rounded" />
+        <div className="h-6 w-24 bg-zinc-100/60 dark:bg-zinc-800/60 rounded-full" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-20 bg-zinc-100/40 dark:bg-zinc-800/40 rounded-lg" />
+        ))}
+      </div>
+      <div className="h-72 bg-zinc-100/30 dark:bg-zinc-800/30 rounded-lg" />
+    </div>
+  );
+}

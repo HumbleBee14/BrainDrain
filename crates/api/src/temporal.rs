@@ -34,6 +34,24 @@ pub struct StartWorkflowResponse {
 // Convenience type alias for boxed futures (used by the trait methods).
 type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
+/// Optional trace context propagated from the API request to workflow execution.
+#[derive(Debug, Clone, Default)]
+pub struct TraceContext {
+    pub request_id: Option<String>,
+}
+
+impl TraceContext {
+    /// Extract trace context from an HTTP request's headers.
+    /// Reads the `x-request-id` header set by the `SetRequestIdLayer`.
+    pub fn from_headers(headers: &axum::http::HeaderMap) -> Self {
+        let request_id = headers
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        Self { request_id }
+    }
+}
+
 /// Trait for workflow orchestration — decouples services from Temporal.
 ///
 /// Implement this for any workflow engine (Temporal, Airflow, Prefect, etc.).
@@ -45,6 +63,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         tenant_id: Uuid,
         project_id: Uuid,
         document_ids: Vec<Uuid>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
     fn start_refine(
@@ -54,6 +73,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         document_ids: Vec<Uuid>,
         task_type: &str,
         config: serde_json::Value,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
     fn start_train(
@@ -66,6 +86,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         mode: &str,
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
     fn start_evaluate(
@@ -78,6 +99,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         dataset_path: &str,
         judge_model: Option<&str>,
         judge_api_base: Option<&str>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
     fn start_export(
@@ -88,6 +110,18 @@ pub trait WorkflowOrchestrator: Send + Sync {
         adapter_path: &str,
         base_model: &str,
         quant_type: &str,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
+    fn start_full_pipeline(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        document_ids: Vec<Uuid>,
+        task_type: &str,
+        base_model: &str,
+        training_config: serde_json::Value,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
     fn get_workflow_status(
@@ -129,12 +163,16 @@ impl TemporalClient {
     }
 
     /// Start a Temporal workflow via the HTTP API on a specific task queue.
+    ///
+    /// When `trace_ctx` has a `request_id`, it is injected as a Temporal header
+    /// so Python workers can extract it for structured logging.
     async fn start_workflow_on_queue(
         &self,
         workflow_type: &str,
         workflow_id: &str,
         args: serde_json::Value,
         task_queue: Option<&str>,
+        trace_ctx: &TraceContext,
     ) -> Result<StartWorkflowResponse, OrchestratorError> {
         let url = format!(
             "{}/api/v1/namespaces/{}/workflows",
@@ -143,11 +181,26 @@ impl TemporalClient {
 
         let queue = task_queue.unwrap_or(&self.task_queue);
 
+        // Build Temporal headers for trace propagation
+        let header = if let Some(ref rid) = trace_ctx.request_id {
+            serde_json::json!({
+                "fields": {
+                    "x-request-id": {
+                        "metadata": { "encoding": base64_encode("json/plain") },
+                        "data": base64_encode(&format!("\"{rid}\"")),
+                    }
+                }
+            })
+        } else {
+            serde_json::json!({ "fields": {} })
+        };
+
         // Temporal HTTP API payload format
         let payload = serde_json::json!({
             "workflowId": workflow_id,
             "workflowType": { "name": workflow_type },
             "taskQueue": { "name": queue },
+            "header": header,
             "input": {
                 "payloads": args.as_array().unwrap_or(&vec![]).iter().map(|arg| {
                     serde_json::json!({
@@ -187,6 +240,7 @@ impl WorkflowOrchestrator for TemporalClient {
         tenant_id: Uuid,
         project_id: Uuid,
         document_ids: Vec<Uuid>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         Box::pin(async move {
             let workflow_id = format!("ingest-{project_id}-{}", chrono::Utc::now().timestamp());
@@ -197,6 +251,7 @@ impl WorkflowOrchestrator for TemporalClient {
                 &workflow_id,
                 serde_json::json!([tenant_id.to_string(), project_id.to_string(), doc_ids]),
                 None,
+                &trace_ctx,
             )
             .await
         })
@@ -209,6 +264,7 @@ impl WorkflowOrchestrator for TemporalClient {
         document_ids: Vec<Uuid>,
         task_type: &str,
         config: serde_json::Value,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let task_type = task_type.to_string();
         Box::pin(async move {
@@ -226,6 +282,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     config,
                 ]),
                 None,
+                &trace_ctx,
             )
             .await
         })
@@ -241,6 +298,7 @@ impl WorkflowOrchestrator for TemporalClient {
         mode: &str,
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let dataset_path = dataset_path.to_string();
         let base_model = base_model.to_string();
@@ -264,6 +322,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     gpu_class,
                 ]),
                 Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                &trace_ctx,
             )
             .await
         })
@@ -279,6 +338,7 @@ impl WorkflowOrchestrator for TemporalClient {
         dataset_path: &str,
         judge_model: Option<&str>,
         judge_api_base: Option<&str>,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let adapter_path = adapter_path.to_string();
         let base_model = base_model.to_string();
@@ -305,6 +365,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     judge_api_base.as_deref().unwrap_or(""),
                 ]),
                 Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                &trace_ctx,
             )
             .await
         })
@@ -318,6 +379,7 @@ impl WorkflowOrchestrator for TemporalClient {
         adapter_path: &str,
         base_model: &str,
         quant_type: &str,
+        trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let adapter_path = adapter_path.to_string();
         let base_model = base_model.to_string();
@@ -337,6 +399,44 @@ impl WorkflowOrchestrator for TemporalClient {
                     quant_type,
                 ]),
                 Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                &trace_ctx,
+            )
+            .await
+        })
+    }
+
+    fn start_full_pipeline(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        document_ids: Vec<Uuid>,
+        task_type: &str,
+        base_model: &str,
+        training_config: serde_json::Value,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let workflow_id = format!(
+                "full-pipeline-{project_id}-{}",
+                chrono::Utc::now().timestamp()
+            );
+            let doc_ids: Vec<String> = document_ids.iter().map(|id| id.to_string()).collect();
+
+            self.start_workflow_on_queue(
+                "FullPipelineWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    doc_ids,
+                    task_type,
+                    base_model,
+                    training_config,
+                ]),
+                None,
+                &trace_ctx,
             )
             .await
         })

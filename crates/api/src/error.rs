@@ -1,4 +1,4 @@
-use axum::http::StatusCode;
+use axum::http::{HeaderName, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -56,6 +56,8 @@ pub(crate) struct ErrorEnvelope {
 pub(crate) struct ErrorBody {
     code: &'static str,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
 }
 
 /// Structured context for error observability.
@@ -163,11 +165,80 @@ impl IntoResponse for AppError {
             other => other.to_string(),
         };
 
+        // request_id is injected by the inject_request_id_into_errors middleware
+        // after this response is created (since the error handler doesn't have
+        // access to request headers). We set None here; the middleware fills it in.
         let body = ErrorEnvelope {
-            error: ErrorBody { code, message },
+            error: ErrorBody {
+                code,
+                message,
+                request_id: None,
+            },
         };
 
         (status, axum::Json(body)).into_response()
+    }
+}
+
+/// Middleware that injects `x-request-id` into JSON error response bodies.
+///
+/// tower-http already propagates x-request-id to the response header, but error
+/// JSON bodies are serialized by `IntoResponse` which has no access to request
+/// headers. This middleware runs AFTER the handler, reads the x-request-id from
+/// the response header, and patches error JSON bodies (4xx/5xx) to include it.
+pub async fn inject_request_id_into_errors(
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    let response = next.run(request).await;
+
+    // Only patch error responses
+    if !response.status().is_client_error() && !response.status().is_server_error() {
+        return response;
+    }
+
+    // Extract request ID from the response header (set by PropagateRequestIdLayer)
+    let request_id = response
+        .headers()
+        .get(HeaderName::from_static("x-request-id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if request_id.is_none() {
+        return response;
+    }
+
+    let request_id = request_id.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+
+    // Read the body
+    let body_bytes = match axum::body::to_bytes(response.into_body(), 64 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    // Try to parse and patch the JSON
+    if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        if let Some(error_obj) = json.get_mut("error").and_then(|e| e.as_object_mut()) {
+            error_obj.insert(
+                "request_id".to_string(),
+                serde_json::Value::String(request_id),
+            );
+        }
+        let patched = serde_json::to_vec(&json).unwrap_or_else(|_| body_bytes.to_vec());
+        let mut resp = (status, patched).into_response();
+        *resp.headers_mut() = headers;
+        resp.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        resp
+    } else {
+        // Not JSON — return as-is
+        let mut resp = (status, body_bytes).into_response();
+        *resp.headers_mut() = headers;
+        resp
     }
 }
 

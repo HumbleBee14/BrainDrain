@@ -112,6 +112,21 @@ class EvaluateHoldoutOutput:
     metrics: dict
 
 
+# ── Iterative Training DB Lifecycle ──
+
+
+@dataclass
+class FinalizeIterativeTrainingInput:
+    tenant_id: str
+    training_job_id: str
+    base_model: str
+    mode: str
+    adapter_path: str
+    adapter_size_bytes: int
+    metrics: dict
+    gpu_class: str | None
+
+
 # ── Evaluation (Phase 3 — real implementation in run_evaluation.py) ──
 
 

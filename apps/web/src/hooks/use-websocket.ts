@@ -15,7 +15,7 @@ import { wsClient } from "@/lib/ws-client";
 export function useWebSocket(
   channel: string | null,
   onMessage: (payload: unknown) => void,
-  enabled = true
+  enabled = true,
 ) {
   const { getToken } = useAuth();
   const callbackRef = useRef(onMessage);

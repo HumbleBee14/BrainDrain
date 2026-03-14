@@ -204,4 +204,95 @@ impl ModelRepository for PgModelRepo {
             Ok(count)
         })
     }
+
+    fn list_versions(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let models = sqlx::query_as::<_, Model>(
+                r#"
+                SELECT * FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3
+                ORDER BY version DESC
+                LIMIT 100
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(&base_model)
+            .fetch_all(&self.db)
+            .await?;
+
+            Ok(models)
+        })
+    }
+
+    fn get_max_version(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<i32>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let max_version = sqlx::query_scalar::<_, Option<i32>>(
+                r#"
+                SELECT MAX(version) FROM models
+                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3
+                "#,
+            )
+            .bind(project_id)
+            .bind(tenant_id)
+            .bind(&base_model)
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(max_version.unwrap_or(0))
+        })
+    }
+
+    fn rollback_deployment(
+        &self,
+        tenant_id: Uuid,
+        current_id: Uuid,
+        target_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<Model>>> {
+        Box::pin(async move {
+            let mut tx = self.db.begin().await?;
+
+            // Undeploy current
+            sqlx::query(
+                r#"
+                UPDATE models
+                SET deployment_status = 'undeployed', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND deployment_status = 'active'
+                "#,
+            )
+            .bind(current_id)
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Deploy target
+            let model = sqlx::query_as::<_, Model>(
+                r#"
+                UPDATE models
+                SET deployment_status = 'active', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                RETURNING *
+                "#,
+            )
+            .bind(target_id)
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(model)
+        })
+    }
 }

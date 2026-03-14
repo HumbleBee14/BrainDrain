@@ -14,7 +14,11 @@ from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from src.activities.stubs import StartTrainingInput, StartTrainingOutput
+    from src.activities.stubs import (
+        FinalizeIterativeTrainingInput,
+        StartTrainingInput,
+        StartTrainingOutput,
+    )
     from src.workflows.train_aligned import TrainAlignedWorkflow
     from src.workflows.train_iterative import TrainIterativeWorkflow
     from src.workflows.train_reasoning import TrainReasoningWorkflow
@@ -64,7 +68,7 @@ class TrainWorkflow:
             )
 
         elif mode == "iterative":
-            return await workflow.execute_child_workflow(
+            result = await workflow.execute_child_workflow(
                 TrainIterativeWorkflow.run,
                 args=[
                     tenant_id,
@@ -77,6 +81,26 @@ class TrainWorkflow:
                 ],
                 id=f"train-iterative-{training_job_id}",
             )
+
+            # Finalize: update DB status, calculate cost, create model record
+            await workflow.execute_activity(
+                "finalize_iterative_training",
+                FinalizeIterativeTrainingInput(
+                    tenant_id=tenant_id,
+                    training_job_id=training_job_id,
+                    base_model=base_model,
+                    mode="iterative",
+                    adapter_path=result.adapter_path,
+                    adapter_size_bytes=result.adapter_size_bytes,
+                    metrics=result.metrics,
+                    gpu_class=gpu_class,
+                ),
+                task_queue="ml-pipeline-gpu",
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            )
+
+            return result
 
         elif mode == "aligned":
             return await workflow.execute_child_workflow(

@@ -66,6 +66,13 @@ pub trait ProjectRepository: Send + Sync {
         task_type: Option<&str>,
     ) -> BoxFuture<'_, AppResult<Option<Project>>>;
 
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        status: &str,
+    ) -> BoxFuture<'_, AppResult<Option<Project>>>;
+
     fn delete(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
 
@@ -148,6 +155,13 @@ pub trait DatasetRepository: Send + Sync {
         project_id: Uuid,
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+        status: DatasetStatus,
+    ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
 }
 
 /// Contract for training job database operations.
@@ -219,6 +233,20 @@ pub trait TrainingJobRepository: Send + Sync {
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 
+    /// Set a job's status to cost_approval (only from pending).
+    fn set_cost_approval(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
+    /// Approve a cost_approval job — transitions to pending so it can be started.
+    fn approve_cost(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
+
     /// Count all training jobs for a tenant.
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
@@ -284,6 +312,32 @@ pub trait ModelRepository: Send + Sync {
         tenant_id: Uuid,
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// List all versions of models sharing the same base_model within a project.
+    fn list_versions(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<Vec<Model>>>;
+
+    /// Get the highest version number for a given base_model within a project.
+    /// Used by the Python training worker to auto-increment on model creation.
+    #[allow(dead_code)]
+    fn get_max_version(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<i32>>;
+
+    /// Atomic rollback: undeploy current model and deploy target in a single transaction.
+    fn rollback_deployment(
+        &self,
+        tenant_id: Uuid,
+        current_id: Uuid,
+        target_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<Model>>>;
 }
 
 /// Contract for evaluation database operations.
@@ -444,6 +498,22 @@ pub trait AuditLogRepository: Send + Sync {
         resource_type: &str,
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn list_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>>;
+
+    fn count_filtered(
+        &self,
+        tenant_id: Uuid,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+    ) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for team member database operations.
@@ -601,6 +671,27 @@ pub trait NotificationRepository: Send + Sync {
         status: &str,
         error: Option<&str>,
     ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn get_delivery(
+        &self,
+        tenant_id: Uuid,
+        delivery_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationDelivery>>>;
+
+    fn get_preference(
+        &self,
+        tenant_id: Uuid,
+        preference_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>>;
+
+    /// Fetch deliveries eligible for processing by the background worker.
+    /// Returns pending deliveries and failed deliveries under the retry limit,
+    /// ordered oldest-first for fair scheduling.
+    fn list_pending_deliveries(
+        &self,
+        max_attempts: i32,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
 }
 
 /// Contract for model export database operations.

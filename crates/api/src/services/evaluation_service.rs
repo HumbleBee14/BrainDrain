@@ -6,7 +6,7 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{
     DatasetRepository, EvaluationRepository, ModelRepository, TrainingJobRepository,
 };
-use crate::temporal::WorkflowOrchestrator;
+use crate::temporal::{TraceContext, WorkflowOrchestrator};
 
 /// Business logic for evaluation operations.
 pub struct EvaluationService;
@@ -23,6 +23,7 @@ impl EvaluationService {
         tenant_id: Uuid,
         model_id: Uuid,
         req: CreateEvaluationRequest,
+        trace_ctx: TraceContext,
     ) -> AppResult<EvaluationResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
             message: "Evaluation workflows are not available (orchestrator not configured)"
@@ -81,6 +82,7 @@ impl EvaluationService {
                 &dataset_path,
                 req.judge_model.as_deref(),
                 req.judge_api_base.as_deref(),
+                trace_ctx,
             )
             .await
             .map_err(|e| {

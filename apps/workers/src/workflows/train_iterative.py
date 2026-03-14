@@ -70,18 +70,22 @@ class TrainIterativeWorkflow:
         gpu_class: str | None = None,
     ) -> StartTrainingOutput:
         num_iterations = hyperparams.get("num_iterations", 3)
+        patience = hyperparams.get("early_stop_patience", 2)
+        min_delta = hyperparams.get("early_stop_min_delta", 0.01)
         self._total_iterations = num_iterations
 
         workflow.logger.info(
-            "Starting iterative training: %d iterations for job %s",
+            "Starting iterative training: %d iterations, patience=%d, min_delta=%.4f for job %s",
             num_iterations,
+            patience,
+            min_delta,
             training_job_id,
         )
 
         previous_adapter_path: str | None = None
-        previous_eval_loss: float = float("inf")
         best_adapter_path: str = ""
         best_adapter_size: int = 0
+        no_improvement_count: int = 0
         all_metrics: dict = {}
 
         for iteration in range(num_iterations):
@@ -158,35 +162,47 @@ class TrainIterativeWorkflow:
                 eval_loss = sft_result.metrics.get(f"iter_{iteration}_train_loss", 0.0)
                 all_metrics[f"iter_{iteration}_eval_loss"] = eval_loss
 
-            # Track best
-            if eval_loss < self._best_eval_loss:
+            # Track best (with min_delta threshold for meaningful improvement)
+            improved = eval_loss < (self._best_eval_loss - min_delta)
+            if improved:
                 self._best_eval_loss = eval_loss
                 self._best_adapter_path = sft_result.adapter_path
                 best_adapter_path = sft_result.adapter_path
                 best_adapter_size = sft_result.adapter_size_bytes
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
 
             self._iteration_metrics[f"iter_{iteration}"] = {
                 "train_metrics": sft_result.metrics,
                 "eval_loss": eval_loss,
+                "improved": improved,
+                "no_improvement_count": no_improvement_count,
             }
 
-            # Early stopping: eval_loss regressed
-            if iteration > 0 and eval_loss > previous_eval_loss:
+            # Early stopping: no meaningful improvement for `patience` consecutive iterations
+            if iteration > 0 and no_improvement_count >= patience:
                 workflow.logger.info(
-                    "Early stop: eval_loss regressed (%.4f > %.4f) at iteration %d",
+                    "Early stop: no improvement for %d iterations "
+                    "(best=%.4f, current=%.4f, min_delta=%.4f) at iteration %d",
+                    patience,
+                    self._best_eval_loss,
                     eval_loss,
-                    previous_eval_loss,
+                    min_delta,
                     iteration + 1,
                 )
                 all_metrics["early_stopped"] = True
-                all_metrics["early_stop_reason"] = "eval_loss_regression"
+                all_metrics["early_stop_reason"] = "no_improvement"
+                all_metrics["early_stop_patience"] = patience
+                all_metrics["early_stop_min_delta"] = min_delta
                 break
 
             previous_adapter_path = sft_result.adapter_path
-            previous_eval_loss = eval_loss
 
         all_metrics["total_iterations"] = self._current_iteration
         all_metrics["best_eval_loss"] = self._best_eval_loss
+        all_metrics["patience"] = patience
+        all_metrics["min_delta"] = min_delta
         all_metrics["best_iteration"] = next(
             (
                 k

@@ -19,8 +19,10 @@ export function usePlanLimits() {
 
 export function useCreateCheckout() {
   return useAuthedMutation({
-    mutationFn: (token: string, data: { plan: string; success_url: string; cancel_url: string }) =>
-      api.billing.createCheckout(token, data),
+    mutationFn: (
+      token: string,
+      data: { plan: string; success_url: string; cancel_url: string },
+    ) => api.billing.createCheckout(token, data),
   });
 }
 

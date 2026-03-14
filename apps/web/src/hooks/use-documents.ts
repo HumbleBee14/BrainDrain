@@ -30,7 +30,9 @@ export function useUploadDocuments(projectId: string) {
     mutationFn: (token, files) => api.documents.upload(token, projectId, files),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["documents", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["pipeline-status", projectId] });
+      queryClient.invalidateQueries({
+        queryKey: ["pipeline-status", projectId],
+      });
     },
   });
 }
