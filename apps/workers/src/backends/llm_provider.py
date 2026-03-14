@@ -10,12 +10,9 @@ Register custom backends with register().
 """
 
 import json
-import logging
 from typing import Protocol
 
 import httpx
-
-logger = logging.getLogger("platform.llm_provider")
 
 
 class LLMProvider(Protocol):
@@ -83,7 +80,8 @@ class OpenAICompatibleProvider:
 def parse_pairs_json(raw: str) -> list[dict]:
     """Parse a JSON array of pairs from raw LLM output.
 
-    Handles common LLM quirks: markdown wrapping, trailing commas, etc.
+    Markdown code block stripping is handled by LLMProvider.generate(),
+    so this receives clean JSON. Raises json.JSONDecodeError on invalid input.
     """
     return json.loads(raw)
 
