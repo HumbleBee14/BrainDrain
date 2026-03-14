@@ -50,6 +50,11 @@ class WorkerSettings(BaseSettings):
     training_engine: str = "unsloth"               # "unsloth"
     metrics_backend: str = "redis"                 # "redis" | "log" | "null"
     eval_model_loader: str = "unsloth"             # "unsloth"
+    chunking_backend: str = "recursive"            # "recursive" | "sliding"
+    llm_provider_backend: str = "openai"           # "openai" (any OpenAI-compatible)
+    dataset_filter_backend: str = "heuristic"      # "heuristic"
+    dedup_backend: str = "hash"                    # "hash"
+    judge_backend: str = "openai"                  # "openai"
 
     # Logging
     log_level: str = "INFO"

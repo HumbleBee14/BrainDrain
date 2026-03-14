@@ -1,6 +1,6 @@
 """Text chunking activity — splits parsed documents into training-sized chunks.
 
-Implements recursive chunking: sections → paragraphs → sentences.
+Delegates to a pluggable ChunkingStrategy backend (default: recursive).
 """
 
 import json
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from temporalio import activity
 
 from src import s3_paths
+from src.backends.chunking_strategy import get as get_chunking_strategy
 from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.chunk")
@@ -40,6 +41,7 @@ class ChunkTextActivity:
         """Download parsed JSONs from S3, split into chunks, upload as JSONL."""
         s3 = self.infra.s3
         bucket = self.infra.s3_bucket
+        chunker = get_chunking_strategy(self.infra.settings.chunking_backend)
 
         all_chunks = []
 
@@ -60,8 +62,7 @@ class ChunkTextActivity:
                 if not text.strip():
                     continue
 
-                # Recursive chunking
-                chunks = _split_text(text, input.chunk_size, input.overlap)
+                chunks = chunker.chunk(text, input.chunk_size, input.overlap)
                 for i, chunk_text_content in enumerate(chunks):
                     all_chunks.append(
                         {
@@ -94,45 +95,3 @@ class ChunkTextActivity:
         return ChunkTextOutput(chunk_count=len(all_chunks), chunks_storage_path=chunks_key)
 
 
-def _split_text(text: str, chunk_size: int, overlap: int) -> list[str]:
-    """Recursively split text into chunks with overlap."""
-    if len(text) <= chunk_size:
-        return [text] if text.strip() else []
-
-    chunks = []
-    # Split by paragraphs first
-    paragraphs = text.split("\n\n")
-    current_chunk = ""
-
-    for para in paragraphs:
-        if len(current_chunk) + len(para) + 2 <= chunk_size:
-            current_chunk += ("\n\n" if current_chunk else "") + para
-        else:
-            if current_chunk:
-                chunks.append(current_chunk.strip())
-            # If single paragraph is too large, split by sentences
-            if len(para) > chunk_size:
-                sentences = para.replace(". ", ".\n").split("\n")
-                current_chunk = ""
-                for sent in sentences:
-                    if len(current_chunk) + len(sent) + 1 <= chunk_size:
-                        current_chunk += (" " if current_chunk else "") + sent
-                    else:
-                        if current_chunk:
-                            chunks.append(current_chunk.strip())
-                        current_chunk = sent
-            else:
-                current_chunk = para
-
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-
-    # Add overlap between chunks
-    if overlap > 0 and len(chunks) > 1:
-        overlapped = [chunks[0]]
-        for i in range(1, len(chunks)):
-            prev_tail = chunks[i - 1][-overlap:] if len(chunks[i - 1]) > overlap else ""
-            overlapped.append(prev_tail + " " + chunks[i] if prev_tail else chunks[i])
-        return overlapped
-
-    return chunks

@@ -1,9 +1,9 @@
 """Build dataset activity — assembles pairs into a training-ready dataset.
 
-Applies quality filtering, formats into ChatML, creates train/val split.
+Delegates quality filtering and deduplication to pluggable backends.
+Formats into ChatML and creates train/val split.
 """
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from temporalio import activity
 
 from src import s3_paths
+from src.backends.dataset_filter import (
+    get_deduplicator,
+    get_filter,
+)
 from src.infra import InfraContainer
 
 logger = logging.getLogger("platform.dataset")
@@ -53,11 +57,13 @@ class BuildDatasetActivity:
         if not pairs:
             return BuildDatasetOutput(pair_count=0, storage_path="")
 
-        # Quality filtering
-        filtered = _filter_pairs(pairs)
+        # Quality filtering (backend-driven)
+        pair_filter = get_filter(self.infra.settings.dataset_filter_backend)
+        filtered = pair_filter.filter(pairs)
 
-        # Deduplicate
-        filtered = _deduplicate(filtered)
+        # Deduplicate (backend-driven)
+        deduper = get_deduplicator(self.infra.settings.dedup_backend)
+        filtered = deduper.deduplicate(filtered)
 
         if not filtered:
             return BuildDatasetOutput(pair_count=0, storage_path="")
@@ -155,39 +161,3 @@ class BuildDatasetActivity:
         return BuildDatasetOutput(pair_count=len(chat_records), storage_path=dataset_key)
 
 
-def _filter_pairs(pairs: list[dict]) -> list[dict]:
-    """Basic quality filtering — remove too short/long, empty pairs."""
-    filtered = []
-    for pair in pairs:
-        instruction = pair.get("instruction", "")
-        response = pair.get("response", "")
-
-        # Skip empty
-        if not instruction or not response:
-            continue
-        # Skip very short responses
-        if len(response) < 20:
-            continue
-        # Skip very long responses
-        if len(response) > 5000:
-            continue
-        # Skip very short instructions
-        if len(instruction) < 10:
-            continue
-
-        filtered.append(pair)
-
-    return filtered
-
-
-def _deduplicate(pairs: list[dict]) -> list[dict]:
-    """Remove exact duplicate pairs using content hash."""
-    seen = set()
-    unique = []
-    for pair in pairs:
-        content = pair.get("instruction", "") + "|" + pair.get("response", "")
-        h = hashlib.md5(content.encode()).hexdigest()  # noqa: S324
-        if h not in seen:
-            seen.add(h)
-            unique.append(pair)
-    return unique
