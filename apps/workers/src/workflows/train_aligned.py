@@ -8,8 +8,6 @@ Future: if retry isolation between SFT and DPO becomes critical,
 split into two activities here without changing the dispatcher.
 """
 
-
-
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():

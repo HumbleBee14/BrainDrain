@@ -45,11 +45,16 @@ class WorkerSettings(BaseSettings):
     gpu_provider: str = "local"
 
     # Backend selection — swap any processing layer without code changes
-    pdf_backend: str = "pymupdf"                   # "pymupdf" | "docling"
+    pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
     language_detector_backend: str = "langdetect"  # "langdetect" | "null"
-    training_engine: str = "unsloth"               # "unsloth"
-    metrics_backend: str = "redis"                 # "redis" | "log" | "null"
-    eval_model_loader: str = "unsloth"             # "unsloth"
+    training_engine: str = "unsloth"  # "unsloth"
+    metrics_backend: str = "redis"  # "redis" | "log" | "null"
+    eval_model_loader: str = "unsloth"  # "unsloth"
+    chunking_backend: str = "recursive"  # "recursive" | "sliding"
+    llm_provider_backend: str = "openai"  # "openai" (any OpenAI-compatible)
+    dataset_filter_backend: str = "heuristic"  # "heuristic"
+    dedup_backend: str = "hash"  # "hash"
+    judge_backend: str = "openai"  # "openai"
 
     # Logging
     log_level: str = "INFO"
@@ -66,15 +71,15 @@ class WorkerSettings(BaseSettings):
 
     # Activity timeouts — override for slower hardware or very large models
     # Set via APP_TIMEOUT_* env vars
-    timeout_parse_minutes: int = 10           # per-document parse
-    timeout_chunk_minutes: int = 10           # text chunking
+    timeout_parse_minutes: int = 10  # per-document parse
+    timeout_chunk_minutes: int = 10  # text chunking
     timeout_generate_pairs_minutes: int = 30  # synthetic pair generation
-    timeout_build_dataset_minutes: int = 15   # dataset assembly
-    timeout_train_hours: int = 6              # single training run (SFT/DPO/GRPO)
-    timeout_train_iterative_hours: int = 4    # one round of iterative training
-    timeout_holdout_eval_hours: int = 1       # holdout validation during training
-    timeout_eval_hours: int = 1               # full evaluation suite
-    timeout_export_hours: int = 2             # GGUF export + quantize
+    timeout_build_dataset_minutes: int = 15  # dataset assembly
+    timeout_train_hours: int = 6  # single training run (SFT/DPO/GRPO)
+    timeout_train_iterative_hours: int = 4  # one round of iterative training
+    timeout_holdout_eval_hours: int = 1  # holdout validation during training
+    timeout_eval_hours: int = 1  # full evaluation suite
+    timeout_export_hours: int = 2  # GGUF export + quantize
 
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 

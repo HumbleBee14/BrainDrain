@@ -9,8 +9,6 @@ The workflow manages the loop, early stopping (eval_loss regression),
 progress tracking (signals/queries), and Temporal UI visibility.
 """
 
-
-
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():

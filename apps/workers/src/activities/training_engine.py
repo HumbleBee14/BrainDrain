@@ -209,5 +209,3 @@ def get_strategy(mode: str) -> TrainingStrategy:
         available = ", ".join(sorted(_STRATEGY_REGISTRY.keys()))
         raise ValueError(f"Unknown training mode: '{mode}'. Available: {available}")
     return cls()
-
-

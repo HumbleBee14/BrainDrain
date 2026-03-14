@@ -35,11 +35,7 @@ use uuid::Uuid;
 ///
 /// Opens a transaction, sets `SET LOCAL app.tenant_id = $1`, runs `f`,
 /// and commits. Any error returned from `f` rolls the transaction back.
-pub async fn with_tenant<F, Fut, T, E>(
-    pool: &PgPool,
-    tenant_id: Uuid,
-    f: F,
-) -> Result<T, E>
+pub async fn with_tenant<F, Fut, T, E>(pool: &PgPool, tenant_id: Uuid, f: F) -> Result<T, E>
 where
     F: FnOnce(&mut PgConnection) -> Fut,
     Fut: Future<Output = Result<T, E>>,

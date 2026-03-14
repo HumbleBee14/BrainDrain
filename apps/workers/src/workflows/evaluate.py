@@ -3,8 +3,6 @@
 Triggered automatically after training completes, or manually.
 """
 
-
-
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():

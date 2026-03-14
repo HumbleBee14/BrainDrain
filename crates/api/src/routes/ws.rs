@@ -202,6 +202,7 @@ async fn handle_subscribe(
 
         loop {
             // XREAD BLOCK 5000 COUNT 100 STREAMS {stream_key} {last_id}
+            #[allow(clippy::type_complexity)]
             let result: redis::RedisResult<
                 Option<Vec<(String, Vec<(String, HashMap<String, String>)>)>>,
             > = redis

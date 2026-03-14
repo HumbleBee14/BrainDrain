@@ -20,8 +20,9 @@ from typing import Any, Protocol
 
 from temporalio import activity
 
-from src.activities.llm_judge import OpenAICompatibleJudge
+from src.activities.llm_judge import LLMJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
+from src.backends.judge import get as get_judge
 from src.constants import EvaluationStatus
 from src.infra import InfraContainer
 
@@ -56,7 +57,7 @@ class EvaluationSuite(Protocol):
         tokenizer_ft: Any,
         model_base: Any,
         tokenizer_base: Any,
-        judge: OpenAICompatibleJudge,
+        judge: LLMJudge,
         val_dataset: list[dict] | None,
     ) -> tuple[dict, dict]:
         """Run the suite. Returns (scores_dict, report_dict)."""
@@ -186,7 +187,12 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
         judge_model = input.judge_model or llm_config.model
         judge_api_key = llm_config.api_key
 
-        judge = OpenAICompatibleJudge(judge_api_base, judge_api_key, judge_model)
+        judge = get_judge(
+            infra.settings.judge_backend,
+            api_base=judge_api_base,
+            api_key=judge_api_key,
+            model=judge_model,
+        )
 
         # Download validation set
         val_dataset = None

@@ -14,8 +14,10 @@ import httpx
 from temporalio import activity
 
 from src import s3_paths
+from src.backends.llm_provider import get as get_llm_provider
+from src.backends.llm_provider import parse_pairs_json
 from src.infra import InfraContainer
-from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
+from src.tenant_config import get_tenant_llm_config
 
 logger = logging.getLogger("platform.generate")
 
@@ -112,6 +114,8 @@ class GeneratePairsActivity:
         # Select prompt template
         prompt_template = PROMPTS.get(input.task_type, DEFAULT_PROMPT)
 
+        provider = get_llm_provider(self.infra.settings.llm_provider_backend)
+
         all_pairs = []
         async with httpx.AsyncClient(timeout=120.0) as http:
             for chunk in chunks:
@@ -126,9 +130,16 @@ class GeneratePairsActivity:
                 )
 
                 try:
-                    pairs = await self.infra.circuit_breaker.call(
-                        _call_llm, http, llm_config, prompt
+                    raw = await self.infra.circuit_breaker.call(
+                        provider.generate,
+                        http,
+                        prompt,
+                        model=llm_config.model,
+                        api_base_url=llm_config.api_base_url,
+                        api_key=llm_config.api_key,
+                        max_tokens=llm_config.max_tokens,
                     )
+                    pairs = parse_pairs_json(raw)
                     for pair in pairs:
                         all_pairs.append(
                             {
@@ -163,36 +174,3 @@ class GeneratePairsActivity:
 
         activity.logger.info("Generated %d pairs from %d chunks", len(all_pairs), len(chunks))
         return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)
-
-
-async def _call_llm(
-    http: httpx.AsyncClient,
-    llm_config: TenantLlmConfig,
-    prompt: str,
-) -> list[dict]:
-    """Call an OpenAI-compatible LLM API and parse the JSON response."""
-    url = f"{llm_config.api_base_url.rstrip('/')}/chat/completions"
-
-    resp = await http.post(
-        url,
-        headers={"Authorization": f"Bearer {llm_config.api_key}"},
-        json={
-            "model": llm_config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": llm_config.max_tokens,
-            "temperature": 0.7,
-        },
-    )
-    resp.raise_for_status()
-
-    data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-
-    # Parse JSON from response (handle markdown code blocks)
-    content = content.strip()
-    if content.startswith("```"):
-        # Remove markdown code block wrapping
-        lines = content.split("\n")
-        content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-
-    return json.loads(content)
