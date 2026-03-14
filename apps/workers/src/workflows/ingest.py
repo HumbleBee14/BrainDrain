@@ -8,9 +8,9 @@ Handles partial failures — some docs can fail without killing the workflow.
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.parse_document import ParseDocumentInput
     from src.activities.stubs import DocumentInfo
-    from src import timeouts
 
 
 @workflow.defn

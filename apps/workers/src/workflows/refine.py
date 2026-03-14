@@ -9,10 +9,10 @@ import uuid
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput
     from src.activities.chunk_text import ChunkTextInput
     from src.activities.generate_pairs import GenerateSyntheticPairsInput
-    from src import timeouts
 
 
 @workflow.defn

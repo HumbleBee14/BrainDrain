@@ -282,7 +282,7 @@ class EvaluateHoldoutActivity:
         job_id = input.training_job_id
         iteration = input.iteration
 
-        _get_sync_redis(self.infra.settings)
+        _get_metrics_collector(self.infra.settings)
 
         _stream_metric(
             job_id,

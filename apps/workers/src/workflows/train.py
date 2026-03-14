@@ -10,10 +10,13 @@ FullPipelineWorkflow still calls TrainWorkflow.run — this dispatcher
 is transparent to upstream callers.
 """
 
+from datetime import timedelta
+
 from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.stubs import (
         FinalizeIterativeTrainingInput,
         StartTrainingInput,
@@ -22,7 +25,6 @@ with workflow.unsafe.imports_passed_through():
     from src.workflows.train_aligned import TrainAlignedWorkflow
     from src.workflows.train_iterative import TrainIterativeWorkflow
     from src.workflows.train_reasoning import TrainReasoningWorkflow
-    from src import timeouts
 
 
 @workflow.defn

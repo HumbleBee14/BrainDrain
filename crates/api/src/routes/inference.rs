@@ -15,7 +15,6 @@ use crate::error::{AppError, AppResult};
 use crate::services::billing_batcher;
 use crate::services::token_estimator;
 
-
 /// Maximum number of items in a single batch request.
 const MAX_BATCH_SIZE: usize = 50;
 
