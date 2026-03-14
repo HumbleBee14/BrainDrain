@@ -16,6 +16,12 @@ from src.infra import InfraContainer
 
 
 @dataclass
+class GetDocumentInfoInput:
+    tenant_id: str
+    document_id: str
+
+
+@dataclass
 class DocumentInfo:
     document_id: str
     tenant_id: str
@@ -30,15 +36,16 @@ class GetDocumentInfoActivity:
         self.infra = infra
 
     @activity.defn(name="get_document_info")
-    async def run(self, document_id: str) -> DocumentInfo:
+    async def run(self, input: GetDocumentInfoInput) -> DocumentInfo:
         db = self.infra.db
         row = await db.fetchrow(
             "SELECT id, tenant_id, project_id, storage_path, mime_type, status "
-            "FROM documents WHERE id = $1",
-            document_id,
+            "FROM documents WHERE id = $1 AND tenant_id = $2",
+            input.document_id,
+            input.tenant_id,
         )
         if row is None:
-            raise ValueError(f"Document not found: {document_id}")
+            raise ValueError(f"Document not found: {input.document_id}")
         return DocumentInfo(
             document_id=str(row["id"]),
             tenant_id=str(row["tenant_id"]),
@@ -194,6 +201,7 @@ class DeployModelActivity:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": input.tenant_id,
         }
 
         async with aiohttp.ClientSession() as session:

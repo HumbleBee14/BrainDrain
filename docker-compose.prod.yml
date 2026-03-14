@@ -102,7 +102,7 @@ services:
     environment:
       POSTGRES_DB: temporal
       POSTGRES_USER: temporal
-      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal_prod}
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?TEMPORAL_DB_PASSWORD is required}
     volumes:
       - temporal_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -120,7 +120,7 @@ services:
       DB: postgres12
       DB_PORT: "5432"
       POSTGRES_USER: temporal
-      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:-temporal_prod}
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?TEMPORAL_DB_PASSWORD is required}
       POSTGRES_SEEDS: temporal-postgres
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CLI_ADDRESS: temporal:7233

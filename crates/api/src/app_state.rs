@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::auth::{AuthProviderChain, ClerkAuthProvider};
+use crate::auth::{AuthProviderChain, ClerkAuthProvider, InternalTokenAuthProvider};
 use crate::config::Config;
 use crate::repositories::api_key_repo::PgApiKeyRepo;
 use crate::repositories::audit_log_repo::PgAuditLogRepo;
@@ -48,6 +48,7 @@ struct AppStateInner {
     pub storage: S3Storage,
     pub orchestrator: Option<Arc<dyn WorkflowOrchestrator>>,
     pub auth_chain: AuthProviderChain,
+    pub internal_auth: Option<InternalTokenAuthProvider>,
     pub http_client: reqwest::Client,
     // Repository trait objects
     pub project_repo: Arc<dyn ProjectRepository>,
@@ -111,7 +112,7 @@ impl AppState {
                 let client = TemporalClient::new(
                     &config.temporal_host,
                     &config.temporal_namespace,
-                    "ml-pipeline",
+                    &config.temporal_task_queue,
                 );
                 tracing::info!(
                     "Workflow orchestrator configured (host: {})",
@@ -127,7 +128,7 @@ impl AppState {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
-            .unwrap_or_default();
+            .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
         // Auth provider chain (uses shared HTTP client for JWKS fetching)
         let auth_chain = AuthProviderChain::new().add(ClerkAuthProvider::new(
@@ -135,6 +136,17 @@ impl AppState {
             config.is_dev(),
             http_client.clone(),
         ));
+
+        // Internal token auth for worker → API service calls
+        let internal_auth = if !config.platform_internal_token.is_empty() {
+            tracing::info!("Internal service token configured for worker callbacks");
+            Some(InternalTokenAuthProvider::new(
+                config.platform_internal_token.clone(),
+            ))
+        } else {
+            tracing::warn!("No PLATFORM_INTERNAL_TOKEN set — worker deploy callbacks will fail");
+            None
+        };
 
         tracing::info!("Auth provider chain initialized");
 
@@ -196,7 +208,7 @@ impl AppState {
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
+            .map_err(|e| anyhow::anyhow!("Failed to build webhook HTTP client: {e}"))?;
 
         // Notification delivery worker (polls every 10s for pending webhook deliveries)
         let delivery_worker = Arc::new(DeliveryWorker::new(
@@ -217,6 +229,7 @@ impl AppState {
                 storage,
                 orchestrator,
                 auth_chain,
+                internal_auth,
                 http_client,
                 project_repo,
                 document_repo,
@@ -262,6 +275,10 @@ impl AppState {
 
     pub fn auth_chain(&self) -> &AuthProviderChain {
         &self.inner.auth_chain
+    }
+
+    pub fn internal_auth(&self) -> Option<&InternalTokenAuthProvider> {
+        self.inner.internal_auth.as_ref()
     }
 
     pub fn http_client(&self) -> &reqwest::Client {

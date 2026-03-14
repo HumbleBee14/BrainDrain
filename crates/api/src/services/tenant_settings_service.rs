@@ -189,7 +189,10 @@ impl TenantSettingsService {
         let mut admin_obj = existing_admin.as_object().cloned().unwrap_or_default();
 
         if let Some(gpu_rates) = request.gpu_rates {
-            admin_obj.insert("gpu_rates".into(), serde_json::to_value(gpu_rates).unwrap());
+            admin_obj.insert(
+                "gpu_rates".into(),
+                serde_json::to_value(gpu_rates).unwrap_or_else(|_| serde_json::json!({})),
+            );
         }
         if let Some(v) = request.cost_approval_threshold {
             admin_obj.insert("cost_approval_threshold".into(), serde_json::json!(v));
