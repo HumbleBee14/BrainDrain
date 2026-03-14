@@ -396,6 +396,7 @@ pub async fn batch_chat_completions(
 
     let vllm_url = state.config().vllm_api_url.clone();
     let http_client = state.http_client().clone();
+    let max_tokens_limit = state.config().inference_max_tokens;
 
     // Process batch items concurrently with bounded parallelism
     let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
@@ -406,7 +407,7 @@ pub async fn batch_chat_completions(
             let cb = state.vllm_circuit_breaker();
 
             async move {
-                let max_tokens = item.max_tokens.min(MAX_TOKENS_LIMIT);
+                let max_tokens = item.max_tokens.min(max_tokens_limit);
                 let vllm_request = serde_json::json!({
                     "model": adapter,
                     "messages": item.messages,
