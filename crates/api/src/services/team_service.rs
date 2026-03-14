@@ -44,10 +44,8 @@ impl TeamService {
         }
         let role_str = role.to_string();
 
-        // Check if user is already a member
-        // TODO: Replace with SELECT EXISTS query for O(1) lookup
-        let members = team_repo.list_by_tenant(tenant_id).await?;
-        if members.iter().any(|m| m.email == email) {
+        // O(1) membership check via SELECT EXISTS — no full table scan.
+        if team_repo.email_exists(tenant_id, &email).await? {
             return Err(AppError::Conflict {
                 message: "User is already a team member".to_string(),
             });

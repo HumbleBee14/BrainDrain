@@ -5,13 +5,12 @@ fetches metadata from DB, then calls the parse activity.
 Handles partial failures — some docs can fail without killing the workflow.
 """
 
-from datetime import timedelta
-
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from src.activities.parse_document import ParseDocumentInput
     from src.activities.stubs import DocumentInfo
+    from src import timeouts
 
 
 @workflow.defn
@@ -29,7 +28,7 @@ class IngestWorkflow:
                 doc_info: DocumentInfo = await workflow.execute_activity(
                     "get_document_info",
                     doc_id,
-                    start_to_close_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timeouts.db_lookup(),
                 )
 
                 # Skip if already parsed
@@ -47,9 +46,9 @@ class IngestWorkflow:
                         storage_path=doc_info.storage_path,
                         mime_type=doc_info.mime_type,
                     ),
-                    start_to_close_timeout=timedelta(minutes=10),
+                    start_to_close_timeout=timeouts.parse_activity(),
                     retry_policy=workflow.RetryPolicy(maximum_attempts=3),
-                    heartbeat_timeout=timedelta(minutes=2),
+                    heartbeat_timeout=timeouts.parse_heartbeat(),
                 )
                 successes.append(doc_id)
 

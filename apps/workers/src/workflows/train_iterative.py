@@ -9,11 +9,12 @@ The workflow manages the loop, early stopping (eval_loss regression),
 progress tracking (signals/queries), and Temporal UI visibility.
 """
 
-from datetime import timedelta
+
 
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.stubs import (
         EvaluateHoldoutInput,
         EvaluateHoldoutOutput,
@@ -122,8 +123,8 @@ class TrainIterativeWorkflow:
                     gpu_class=gpu_class,
                 ),
                 task_queue="ml-pipeline-gpu",
-                start_to_close_timeout=timedelta(hours=4),
-                heartbeat_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timeouts.train_iterative_activity(),
+                heartbeat_timeout=timeouts.train_heartbeat(),
                 retry_policy=workflow.RetryPolicy(maximum_attempts=2),
             )
 
@@ -144,8 +145,8 @@ class TrainIterativeWorkflow:
                         iteration=iteration,
                     ),
                     task_queue="ml-pipeline-gpu",
-                    start_to_close_timeout=timedelta(hours=1),
-                    heartbeat_timeout=timedelta(minutes=5),
+                    start_to_close_timeout=timeouts.holdout_eval_activity(),
+                    heartbeat_timeout=timeouts.holdout_eval_heartbeat(),
                     retry_policy=workflow.RetryPolicy(maximum_attempts=2),
                 )
                 eval_loss = eval_result.eval_loss

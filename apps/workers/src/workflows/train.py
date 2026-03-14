@@ -10,8 +10,6 @@ FullPipelineWorkflow still calls TrainWorkflow.run — this dispatcher
 is transparent to upstream callers.
 """
 
-from datetime import timedelta
-
 from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
@@ -24,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
     from src.workflows.train_aligned import TrainAlignedWorkflow
     from src.workflows.train_iterative import TrainIterativeWorkflow
     from src.workflows.train_reasoning import TrainReasoningWorkflow
+    from src import timeouts
 
 
 @workflow.defn
@@ -63,8 +62,8 @@ class TrainWorkflow:
                     gpu_class=gpu_class,
                 ),
                 task_queue="ml-pipeline-gpu",
-                start_to_close_timeout=timedelta(hours=6),
-                heartbeat_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timeouts.train_activity(),
+                heartbeat_timeout=timeouts.train_heartbeat(),
                 retry_policy=workflow.RetryPolicy(maximum_attempts=1),
             )
 

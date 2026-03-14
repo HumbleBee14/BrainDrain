@@ -3,11 +3,12 @@
 Triggered automatically after training completes, or manually.
 """
 
-from datetime import timedelta
+
 
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
+    from src import timeouts
     from src.activities.stubs import (
         RunEvaluationInput,
         RunEvaluationOutput,
@@ -46,8 +47,8 @@ class EvaluateWorkflow:
                 judge_model=judge_model,
                 judge_api_base=judge_api_base,
             ),
-            start_to_close_timeout=timedelta(hours=1),
-            heartbeat_timeout=timedelta(minutes=10),
+            start_to_close_timeout=timeouts.eval_activity(),
+            heartbeat_timeout=timeouts.eval_heartbeat(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
         )
 

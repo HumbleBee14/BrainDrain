@@ -116,6 +116,20 @@ impl TeamMemberRepository for PgTeamMemberRepo {
         })
     }
 
+    fn email_exists(&self, tenant_id: Uuid, email: &str) -> BoxFuture<'_, AppResult<bool>> {
+        let email = email.to_string();
+        Box::pin(async move {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM team_members WHERE tenant_id = $1 AND email = $2)",
+            )
+            .bind(tenant_id)
+            .bind(&email)
+            .fetch_one(&self.db)
+            .await?;
+            Ok(exists)
+        })
+    }
+
     fn update_role(
         &self,
         tenant_id: Uuid,

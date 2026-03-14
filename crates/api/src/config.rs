@@ -78,6 +78,12 @@ pub struct Config {
     #[serde(default = "default_temporal_namespace")]
     pub temporal_namespace: String,
 
+    // ── Inference Limits ──
+    /// Hard cap on max_tokens per inference request to prevent GPU abuse.
+    /// Default: 8192. Override with INFERENCE_MAX_TOKENS env var.
+    #[serde(default = "default_inference_max_tokens")]
+    pub inference_max_tokens: i64,
+
     // ── vLLM ──
     /// vLLM server URL for model inference.
     #[serde(default = "default_vllm_api_url")]
@@ -228,4 +234,7 @@ fn default_cb_failure_threshold() -> u32 {
 }
 fn default_cb_recovery_timeout_secs() -> u64 {
     30
+}
+fn default_inference_max_tokens() -> i64 {
+    8192
 }

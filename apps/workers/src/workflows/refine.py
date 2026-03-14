@@ -5,7 +5,6 @@ Triggered after documents are parsed, or manually by the user.
 """
 
 import uuid
-from datetime import timedelta
 
 from temporalio import workflow
 
@@ -13,6 +12,7 @@ with workflow.unsafe.imports_passed_through():
     from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput
     from src.activities.chunk_text import ChunkTextInput
     from src.activities.generate_pairs import GenerateSyntheticPairsInput
+    from src import timeouts
 
 
 @workflow.defn
@@ -42,7 +42,7 @@ class RefineWorkflow:
                 chunk_size=config.get("chunk_size", 1500),
                 overlap=config.get("overlap", 200),
             ),
-            start_to_close_timeout=timedelta(minutes=10),
+            start_to_close_timeout=timeouts.chunk_activity(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=3),
         )
 
@@ -60,9 +60,9 @@ class RefineWorkflow:
                 task_type=task_type,
                 pairs_per_chunk=config.get("pairs_per_chunk", 5),
             ),
-            start_to_close_timeout=timedelta(minutes=30),
+            start_to_close_timeout=timeouts.generate_pairs_activity(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
-            heartbeat_timeout=timedelta(minutes=5),
+            heartbeat_timeout=timeouts.generate_pairs_heartbeat(),
         )
 
         if pairs_result.pair_count == 0:
@@ -80,7 +80,7 @@ class RefineWorkflow:
                 pairs_storage_path=pairs_result.storage_path,
                 system_prompt=config.get("system_prompt", ""),
             ),
-            start_to_close_timeout=timedelta(minutes=15),
+            start_to_close_timeout=timeouts.build_dataset_activity(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
         )
 

@@ -538,6 +538,9 @@ pub trait TeamMemberRepository: Send + Sync {
 
     fn list_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<Vec<TeamMember>>>;
 
+    /// O(1) membership check — avoids fetching all members just to scan for an email.
+    fn email_exists(&self, tenant_id: Uuid, email: &str) -> BoxFuture<'_, AppResult<bool>>;
+
     fn update_role(
         &self,
         tenant_id: Uuid,
