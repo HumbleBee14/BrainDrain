@@ -255,12 +255,14 @@ pub async fn chat_completions(
 
         let body = Body::from_stream(forwarded_stream);
 
-        Response::builder()
+        let resp = Response::builder()
             .header(CONTENT_TYPE, "text/event-stream")
             .header(CACHE_CONTROL, "no-cache")
             .body(body)
-            .map(|r| Ok(r.into_response()))
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to build SSE response: {e}")))?
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to build SSE response: {e}"))
+            })?;
+        Ok(resp.into_response())
     } else {
         // Non-streaming: parse JSON response and bill
         let response: serde_json::Value = vllm_resp.json().await.map_err(|e| {

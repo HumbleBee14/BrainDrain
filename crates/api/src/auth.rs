@@ -263,18 +263,26 @@ impl InternalTokenAuthProvider {
     pub fn new(token: String) -> Self {
         Self { token }
     }
-}
 
-/// Extended auth for internal tokens — needs access to request headers.
-impl InternalTokenAuthProvider {
     /// Check if bearer token matches the internal token.
     /// Returns `None` if this isn't an internal token (let other providers try).
+    /// Uses constant-time comparison to prevent timing side-channel attacks.
     pub fn authenticate_with_headers(
         &self,
         token: &str,
         headers: &axum::http::HeaderMap,
     ) -> Option<Result<AuthenticatedUser, AppError>> {
-        if self.token.is_empty() || token != self.token {
+        if self.token.is_empty() {
+            return None;
+        }
+
+        // Constant-time comparison: hash both tokens with SHA-256 and compare
+        // the digests. This prevents timing attacks that could leak the token
+        // byte-by-byte via response time differences.
+        use sha2::{Digest, Sha256};
+        let expected = Sha256::digest(self.token.as_bytes());
+        let provided = Sha256::digest(token.as_bytes());
+        if expected != provided {
             return None;
         }
 

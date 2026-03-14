@@ -306,6 +306,7 @@ Settings JSONB structure:
 │   Authentication                                                    │
 │   ├── Clerk JWT verification (frontend sessions)                    │
 │   ├── API key auth (inference endpoints, scoped per model)          │
+│   ├── Internal token (worker→API callbacks, constant-time compare)  │
 │   └── Dev token (development only, disabled in production)          │
 │                                                                     │
 │   Authorization                                                     │
