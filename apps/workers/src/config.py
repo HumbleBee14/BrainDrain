@@ -10,16 +10,16 @@ class WorkerSettings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_task_queue: str = "ml-pipeline"
 
-    # Database
-    database_url: str = "postgresql://platform:platform@localhost:5432/platform"
+    # Database (required — no insecure default)
+    database_url: str
 
     # Redis
     redis_url: str = "redis://localhost:6379"
 
-    # S3 / Object storage
+    # S3 / Object storage (required — no insecure defaults for credentials)
     s3_endpoint: str = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    s3_access_key: str
+    s3_secret_key: str
     s3_bucket: str = "platform"
     s3_region: str = "us-east-1"
 

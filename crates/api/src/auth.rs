@@ -246,6 +246,61 @@ impl AuthProvider for ClerkAuthProvider {
 }
 
 // ---------------------------------------------------------------------------
+// InternalTokenAuthProvider — worker → API service calls
+// ---------------------------------------------------------------------------
+
+/// Authenticates internal service-to-service calls using a shared secret.
+///
+/// The worker sends `Authorization: Bearer {platform_internal_token}` plus
+/// an `X-Tenant-Id` header. This provider validates the token and extracts
+/// the tenant UUID from the header. The authenticated user gets `Owner` role
+/// to allow any operation (it's an internal service, not a human user).
+pub struct InternalTokenAuthProvider {
+    token: String,
+}
+
+impl InternalTokenAuthProvider {
+    pub fn new(token: String) -> Self {
+        Self { token }
+    }
+}
+
+/// Extended auth for internal tokens — needs access to request headers.
+impl InternalTokenAuthProvider {
+    /// Check if bearer token matches the internal token.
+    /// Returns `None` if this isn't an internal token (let other providers try).
+    pub fn authenticate_with_headers(
+        &self,
+        token: &str,
+        headers: &axum::http::HeaderMap,
+    ) -> Option<Result<AuthenticatedUser, AppError>> {
+        if self.token.is_empty() || token != self.token {
+            return None;
+        }
+
+        let tenant_id = match headers
+            .get("x-tenant-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<Uuid>().ok())
+        {
+            Some(id) => id,
+            None => {
+                return Some(Err(AppError::BadRequest {
+                    message: "Internal auth requires X-Tenant-Id header".to_string(),
+                }));
+            }
+        };
+
+        Some(Ok(AuthenticatedUser {
+            user_id: "__internal_worker__".to_string(),
+            tenant_id,
+            org_id: None,
+            role: TeamRole::Owner,
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FromRequestParts extractor
 // ---------------------------------------------------------------------------
 
@@ -265,6 +320,13 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         let token = auth_header
             .strip_prefix("Bearer ")
             .ok_or(AppError::Unauthorized)?;
+
+        // Try internal token first (worker → API calls)
+        if let Some(internal_provider) = state.internal_auth()
+            && let Some(result) = internal_provider.authenticate_with_headers(token, &parts.headers)
+        {
+            return result;
+        }
 
         let mut user = state.auth_chain().authenticate(token, state.db()).await?;
 

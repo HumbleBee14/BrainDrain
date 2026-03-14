@@ -194,6 +194,7 @@ class DeployModelActivity:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": input.tenant_id,
         }
 
         async with aiohttp.ClientSession() as session:

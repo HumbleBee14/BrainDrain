@@ -142,6 +142,19 @@ pub struct Config {
     #[serde(default)]
     pub stripe_price_pro: Option<String>,
 
+    // ── Internal Service Auth ──
+    /// Shared secret for worker → API callbacks (e.g., deploy after training).
+    /// Must match APP_PLATFORM_INTERNAL_TOKEN on the worker side.
+    /// When empty, internal auth is disabled.
+    #[serde(default)]
+    pub platform_internal_token: String,
+
+    // ── Temporal Task Queue ──
+    /// Default Temporal task queue for non-GPU workflows.
+    /// Must match APP_TEMPORAL_TASK_QUEUE on the worker side.
+    #[serde(default = "default_temporal_task_queue")]
+    pub temporal_task_queue: String,
+
     // ── Observability (OTEL) ──
     /// Whether OpenTelemetry export is enabled.
     #[serde(default)]
@@ -182,7 +195,7 @@ fn default_environment() -> String {
     "production".to_string()
 }
 fn default_log_level() -> String {
-    "debug".to_string()
+    "info".to_string()
 }
 fn default_host() -> String {
     "0.0.0.0".to_string()
@@ -237,4 +250,7 @@ fn default_cb_recovery_timeout_secs() -> u64 {
 }
 fn default_inference_max_tokens() -> i64 {
     8192
+}
+fn default_temporal_task_queue() -> String {
+    "ml-pipeline".to_string()
 }
