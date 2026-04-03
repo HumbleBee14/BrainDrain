@@ -1,9 +1,8 @@
 -- Idempotency key storage for safe client retries on mutating endpoints.
 --
--- Scoped per principal (JWT sub claim) to prevent cross-user replay.
--- Keys expire after 24 hours (cleaned up by background task).
+-- Scoped per principal (JWT sub claim) + method + route to prevent cross-user
+-- and cross-endpoint replay. Keys expire after 24 hours.
 -- Stale processing keys reaped after 5 minutes (crash recovery).
--- In-flight requests tracked via status to prevent concurrent duplicates.
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,13 +19,14 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     completed_at           TIMESTAMPTZ,
     expires_at             TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
 
+    -- Unique per principal + key + method + route: prevents cross-endpoint key reuse
     CONSTRAINT uq_idempotency_principal_key
-        UNIQUE (principal_id, idempotency_key)
+        UNIQUE (principal_id, idempotency_key, method, route)
 );
 
--- Cleanup: expired keys + stale processing keys.
-CREATE INDEX idx_idempotency_keys_expires_at ON idempotency_keys (expires_at)
-    WHERE status != 'processing';
+-- Cleanup: all expired keys (any status, including stuck processing).
+CREATE INDEX idx_idempotency_keys_expires_at ON idempotency_keys (expires_at);
 
+-- Fast lookup for stale processing keys (crash recovery).
 CREATE INDEX idx_idempotency_keys_stale_processing ON idempotency_keys (created_at)
     WHERE status = 'processing';
