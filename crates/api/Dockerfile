@@ -28,4 +28,7 @@ USER appuser
 ENV RUST_LOG=info
 EXPOSE 8000
 
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+  CMD ["platform-api", "--health-check"] || curl -f http://localhost:8000/health || exit 1
+
 CMD ["platform-api"]

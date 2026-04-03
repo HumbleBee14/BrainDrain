@@ -1163,8 +1163,7 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
     """
     try:
         row = await db.fetchrow(
-            "SELECT started_at, completed_at, gpu_class "
-            "FROM training_jobs WHERE id = $1",
+            "SELECT started_at, completed_at, gpu_class FROM training_jobs WHERE id = $1",
             job_id,
         )
         if row is None or row["started_at"] is None or row["completed_at"] is None:
@@ -1181,7 +1180,9 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
             )
             logger.info(
                 "Voided billing for job %s (ran %.1fs < %ds threshold)",
-                job_id, elapsed, min_billable,
+                job_id,
+                elapsed,
+                min_billable,
             )
         else:
             # Ran long enough — bill for actual GPU time consumed
@@ -1192,11 +1193,16 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
 
             await db.execute(
                 "UPDATE training_jobs SET actual_cost = $2 WHERE id = $1",
-                job_id, actual_cost,
+                job_id,
+                actual_cost,
             )
             logger.info(
                 "Billed failed job %s for actual GPU time: %.1fs = $%.2f (%s @ $%.2f/hr)",
-                job_id, elapsed, actual_cost, gpu_class or "default", rate,
+                job_id,
+                elapsed,
+                actual_cost,
+                gpu_class or "default",
+                rate,
             )
     except Exception as e:
         # Billing is best-effort — never block the failure path

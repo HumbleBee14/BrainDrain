@@ -43,10 +43,14 @@ async fn main() -> anyhow::Result<()> {
     // Build application state (connects to DB, Redis, S3)
     let state = AppState::new(config.clone()).await?;
 
-    // Run database migrations
-    tracing::info!("Running database migrations...");
-    platform_db::run_migrations(state.db()).await?;
-    tracing::info!("Migrations complete");
+    // Run database migrations (dev/staging only — production should use `make migrate`)
+    if config.is_dev() || config.environment == "staging" {
+        tracing::info!("Running database migrations (non-production)...");
+        platform_db::run_migrations(state.db()).await?;
+        tracing::info!("Migrations complete");
+    } else {
+        tracing::info!("Production mode — skipping auto-migration (use `make migrate`)");
+    }
 
     // Build middleware stack
     let cors_origins = config.cors_origins_list();
