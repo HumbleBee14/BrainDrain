@@ -89,6 +89,11 @@ pub struct Config {
     #[serde(default = "default_vllm_api_url")]
     pub vllm_api_url: String,
 
+    /// Maximum number of LoRA adapters served simultaneously on one vLLM instance.
+    /// Must match the `--max-loras` flag passed to vLLM.
+    #[serde(default = "default_vllm_max_loras")]
+    pub vllm_max_loras: i64,
+
     // ── Circuit Breaker (vLLM) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -250,6 +255,9 @@ fn default_cb_recovery_timeout_secs() -> u64 {
 }
 fn default_inference_max_tokens() -> i64 {
     8192
+}
+fn default_vllm_max_loras() -> i64 {
+    4
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

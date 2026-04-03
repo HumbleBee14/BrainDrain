@@ -99,6 +99,22 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
+    fn count_active_by_base_model(
+        &self,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<i64>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            let count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM models WHERE base_model = $1 AND deployment_status = 'active'",
+            )
+            .bind(&base_model)
+            .fetch_one(&self.db)
+            .await?;
+            Ok(count)
+        })
+    }
+
     fn update_deployment_status(
         &self,
         tenant_id: Uuid,
