@@ -65,22 +65,31 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // Spawn background task: cleanup expired idempotency keys every hour
+    // Spawn background task: cleanup expired + stale idempotency keys every hour.
+    let (idempotency_shutdown_tx, mut idempotency_shutdown_rx) =
+        tokio::sync::oneshot::channel::<()>();
     {
         let cleanup_db = state.db().clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                interval.tick().await;
-                match services::idempotency::cleanup_expired_keys(&cleanup_db).await {
-                    Ok(count) if count > 0 => {
-                        tracing::info!(count, "Cleaned up expired idempotency keys");
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match services::idempotency::cleanup_expired_keys(&cleanup_db).await {
+                            Ok(count) if count > 0 => {
+                                tracing::info!(count, "Cleaned up expired idempotency keys");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to cleanup idempotency keys");
+                            }
+                            _ => {}
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to cleanup idempotency keys");
+                    _ = &mut idempotency_shutdown_rx => {
+                        tracing::info!("Idempotency cleanup task shutting down");
+                        return;
                     }
-                    _ => {}
                 }
             }
         });
@@ -172,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Shut down background workers after server stops accepting requests
     tracing::info!("Shutting down background workers...");
+    let _ = idempotency_shutdown_tx.send(());
     tokio::join!(billing_batcher.shutdown(), delivery_worker.shutdown());
 
     tracing::info!("Server shutdown complete");

@@ -32,6 +32,14 @@ pub fn cors_layer(origins: &[String]) -> CorsLayer {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
             axum::http::header::ACCEPT,
+            axum::http::HeaderName::from_static("idempotency-key"),
+        ])
+        .expose_headers([
+            axum::http::HeaderName::from_static("x-idempotency-replayed"),
+            axum::http::HeaderName::from_static("x-request-id"),
+            axum::http::HeaderName::from_static("x-ratelimit-limit"),
+            axum::http::HeaderName::from_static("x-ratelimit-remaining"),
+            axum::http::HeaderName::from_static("retry-after"),
         ])
         .allow_credentials(true)
 }

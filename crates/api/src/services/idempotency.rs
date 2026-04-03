@@ -7,7 +7,7 @@
 //! 1. Extract `Idempotency-Key` header from request.
 //! 2. Hash the request body to detect payload changes on key reuse.
 //! 3. Check PostgreSQL for an existing key:
-//!    - **Completed**: return cached response immediately.
+//!    - **Completed**: return cached response immediately (with original Content-Type).
 //!    - **Processing**: return 409 Conflict (in-flight dedup).
 //!    - **Not found**: INSERT with status=processing, run handler, cache response.
 //! 4. If the handler returns non-2xx, mark key as failed so retries re-execute.
@@ -18,11 +18,13 @@
 //! - Stripe webhook endpoint (has its own dedup via event IDs).
 //! - OpenAI-compatible inference endpoint (stateless, high throughput).
 //! - Requests without the header (opt-in, not mandatory).
+//! - Disabled when `idempotency.enforced` feature flag is off.
 //!
 //! # Security
 //! - Keys scoped per JWT `sub` — one user cannot replay another's key.
 //! - Request body hash prevents key reuse with different payloads.
 //! - 24-hour TTL prevents unbounded storage growth.
+//! - Stale `processing` keys reaped after 5 minutes (crash recovery).
 //! - Max key length enforced to prevent abuse.
 
 use axum::body::Body;
@@ -36,6 +38,7 @@ use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::error::AppError;
+use crate::services::feature_flags::{FlagContext, IDEMPOTENCY_ENFORCED};
 
 /// Header name per IETF draft-ietf-httpapi-idempotency-key-header.
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
@@ -124,11 +127,22 @@ fn extract_principal(request: &Request<Body>) -> Option<String> {
 }
 
 /// Axum middleware for idempotency enforcement.
+///
+/// Gated by the `idempotency.enforced` feature flag — when disabled, all
+/// requests pass through without idempotency processing.
 pub async fn idempotency_middleware(
     State(state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> Response<Body> {
+    // Feature flag gate: skip entirely when disabled
+    if !state
+        .feature_flags()
+        .is_enabled(IDEMPOTENCY_ENFORCED, &FlagContext::default())
+    {
+        return next.run(request).await;
+    }
+
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
@@ -180,7 +194,7 @@ pub async fn idempotency_middleware(
 
     // Check for existing key
     let existing = sqlx::query_as::<_, IdempotencyRecord>(
-        "SELECT id, status, request_hash, response_status, response_body \
+        "SELECT id, status, request_hash, response_status, response_content_type, response_body \
          FROM idempotency_keys \
          WHERE principal_id = $1 AND idempotency_key = $2 AND expires_at > NOW()",
     )
@@ -205,7 +219,17 @@ pub async fn idempotency_middleware(
 
                 if let (Some(status), Some(body)) = (record.response_status, record.response_body) {
                     let status_code = StatusCode::from_u16(status as u16).unwrap_or(StatusCode::OK);
-                    return (status_code, [("x-idempotency-replayed", "true")], body)
+                    let content_type = record
+                        .response_content_type
+                        .unwrap_or_else(|| "application/json".to_string());
+                    return (
+                        status_code,
+                        [
+                            ("x-idempotency-replayed", "true"),
+                            ("content-type", &content_type),
+                        ],
+                        body,
+                    )
                         .into_response();
                 }
             }
@@ -255,6 +279,11 @@ pub async fn idempotency_middleware(
 
     // Capture response for caching
     let response_status = response.status().as_u16() as i16;
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     let (resp_parts, resp_body) = response.into_parts();
 
     let resp_bytes = match axum::body::to_bytes(resp_body, MAX_BODY_SIZE).await {
@@ -269,10 +298,12 @@ pub async fn idempotency_middleware(
     if (200..300).contains(&(response_status as u16)) {
         let _ = sqlx::query(
             "UPDATE idempotency_keys \
-             SET status = 'completed', response_status = $1, response_body = $2, completed_at = NOW() \
-             WHERE principal_id = $3 AND idempotency_key = $4",
+             SET status = 'completed', response_status = $1, response_content_type = $2, \
+                 response_body = $3, completed_at = NOW() \
+             WHERE principal_id = $4 AND idempotency_key = $5",
         )
         .bind(response_status)
+        .bind(&content_type)
         .bind(resp_bytes.as_ref())
         .bind(&principal_id)
         .bind(&key)
@@ -310,10 +341,15 @@ async fn mark_failed(db: &PgPool, principal_id: &str, key: &str) {
     .await;
 }
 
-/// Cleanup expired idempotency keys. Call periodically (e.g., hourly).
+/// Cleanup expired idempotency keys and stale processing keys.
+///
+/// - Expired completed/failed keys: deleted based on `expires_at`.
+/// - Stale processing keys: deleted if older than 5 minutes (crash recovery).
 pub async fn cleanup_expired_keys(db: &PgPool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
-        "DELETE FROM idempotency_keys WHERE expires_at < NOW() AND status != 'processing'",
+        "DELETE FROM idempotency_keys \
+         WHERE (expires_at < NOW() AND status != 'processing') \
+            OR (status = 'processing' AND created_at < NOW() - INTERVAL '5 minutes')",
     )
     .execute(db)
     .await?;
@@ -326,6 +362,7 @@ struct IdempotencyRecord {
     status: String,
     request_hash: String,
     response_status: Option<i16>,
+    response_content_type: Option<String>,
     response_body: Option<Vec<u8>>,
 }
 
@@ -387,7 +424,6 @@ mod tests {
 
     #[test]
     fn extract_principal_from_jwt() {
-        // Build a minimal JWT: header.payload.signature
         use base64::Engine;
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"alg":"HS256","typ":"JWT"}"#);
@@ -400,8 +436,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let principal = extract_principal(&request);
-        assert_eq!(principal, Some("user_abc123".to_string()));
+        assert_eq!(extract_principal(&request), Some("user_abc123".to_string()));
     }
 
     #[test]
