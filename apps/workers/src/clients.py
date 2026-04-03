@@ -1,8 +1,8 @@
 """Shared infrastructure clients for worker activities.
 
-Thin compatibility layer over the InfraContainer. Activities can use
-either the typed container (via `get_container()`) or these convenience
-functions (backward-compatible with existing code).
+Thin convenience layer over the InfraContainer. Activities can use
+either the typed container (via `get_container()`) or these module-level
+functions for direct access.
 
 All clients are initialized once at worker startup via init_clients().
 """

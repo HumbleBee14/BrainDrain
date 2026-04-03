@@ -90,12 +90,8 @@ pub struct Config {
     #[serde(default = "default_inference_backend_type")]
     pub inference_backend_type: String,
 
-    /// Base URL for the inference serving engine.
-    /// Maps to INFERENCE_SERVER_URL (legacy alias: VLLM_API_URL still accepted).
-    #[serde(
-        alias = "vllm_api_url",
-        default = "default_inference_server_url"
-    )]
+    /// Base URL for the inference serving engine (INFERENCE_SERVER_URL).
+    #[serde(default = "default_inference_server_url")]
     pub inference_server_url: String,
 
     /// Maximum number of LoRA adapters served simultaneously.
