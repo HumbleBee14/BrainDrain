@@ -251,6 +251,21 @@ impl Config {
     pub fn is_dev(&self) -> bool {
         self.environment == "development"
     }
+
+    /// Build a Config with all defaults populated, only requiring the fields
+    /// that have no default (database_url, s3 keys). Used by tests so they
+    /// don't break every time a new field is added to Config.
+    #[cfg(test)]
+    pub fn test_default() -> Self {
+        // Deserialize from a minimal set of key-value pairs.
+        // All other fields use their serde defaults.
+        let pairs: Vec<(String, String)> = vec![
+            ("DATABASE_URL".into(), "postgres://test:test@localhost/test".into()),
+            ("S3_ACCESS_KEY".into(), "test-key".into()),
+            ("S3_SECRET_KEY".into(), "test-secret".into()),
+        ];
+        envy::from_iter(pairs).expect("Config::test_default should always work")
+    }
 }
 
 fn default_app_name() -> String {

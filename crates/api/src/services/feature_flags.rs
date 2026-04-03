@@ -156,57 +156,7 @@ mod tests {
     use super::*;
 
     fn test_config() -> Config {
-        Config {
-            app_name: "Platform API".to_string(),
-            environment: "development".to_string(),
-            log_level: "info".to_string(),
-            api_host: "0.0.0.0".to_string(),
-            api_port: 8000,
-            database_url: "postgres://localhost/platform".to_string(),
-            database_max_connections: 20,
-            redis_url: "redis://localhost:6379".to_string(),
-            s3_endpoint: Some("http://localhost:9000".to_string()),
-            s3_access_key: "minio".to_string(),
-            s3_secret_key: "minio-secret".to_string(),
-            s3_bucket: "platform-dev".to_string(),
-            s3_region: "us-east-1".to_string(),
-            clerk_jwks_url: String::new(),
-            clerk_secret_key: String::new(),
-            temporal_host: "localhost:7233".to_string(),
-            temporal_namespace: "default".to_string(),
-            inference_max_tokens: 8192,
-            inference_backend_type: "vllm".to_string(),
-            inference_server_url: "http://localhost:8080".to_string(),
-            vllm_max_loras: 4,
-            billing_channel_capacity: 10_000,
-            billing_batch_size: 1_000,
-            billing_flush_interval_secs: 5,
-            delivery_poll_interval_secs: 10,
-            deploy_stale_minutes: 10,
-            vllm_cb_failure_threshold: 5,
-            vllm_cb_recovery_timeout_secs: 30,
-            cors_origins: "http://localhost:3000".to_string(),
-            rate_limit_enabled: true,
-            rate_limit_rpm: 200,
-            security_csp_policy: "default-src 'self'".to_string(),
-            security_hsts_max_age: 31_536_000,
-            stripe_secret_key: None,
-            stripe_webhook_secret: None,
-            stripe_price_starter: None,
-            stripe_price_growth: None,
-            stripe_price_pro: None,
-            platform_internal_token: String::new(),
-            temporal_task_queue: "ml-pipeline-main".to_string(),
-            otel_enabled: false,
-            otel_endpoint: "http://localhost:4317".to_string(),
-            feature_flags_provider: "static".to_string(),
-            feature_flags_json: None,
-            feature_flags_file: None,
-            unleash_url: None,
-            unleash_api_token: None,
-            unleash_app_name: "platform-api".to_string(),
-            unleash_environment: "development".to_string(),
-        }
+        Config::test_default()
     }
 
     #[test]
@@ -250,7 +200,10 @@ mod tests {
         let err = build_feature_flags(&config)
             .err()
             .expect("unsupported provider should fail");
-        assert!(err.to_string().contains("Unsupported FEATURE_FLAGS_PROVIDER"));
+        assert!(
+            err.to_string()
+                .contains("Unsupported FEATURE_FLAGS_PROVIDER")
+        );
     }
 
     #[test]
