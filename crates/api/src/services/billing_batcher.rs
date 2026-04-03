@@ -102,15 +102,14 @@ impl BillingBatcher {
         // Capture the handle now — the caller is inside the tokio runtime.
         let handle = tokio::runtime::Handle::current();
         // spawn_blocking is bounded by tokio's max_blocking_threads (default 512).
-        // The JoinHandle is intentionally dropped — billing is best-effort under
-        // overload, and the blocking pool ensures bounded concurrency.
-        let _ = tokio::task::spawn_blocking(move || {
+        // JoinHandle intentionally dropped — billing is best-effort under overload.
+        drop(tokio::task::spawn_blocking(move || {
             handle.block_on(async {
                 if let Err(e) = insert_single(&db, &event).await {
                     tracing::error!(error = %e, "Billing direct insert failed");
                 }
             });
-        });
+        }));
     }
 
     /// Graceful shutdown: signal the flush loop to drain remaining events and exit.

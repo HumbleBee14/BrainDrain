@@ -164,9 +164,7 @@ pub async fn chat_completions(
         .json(&vllm_request)
         .send()
         .await
-        .map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}"))
-        })?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}")))?;
 
     if !vllm_resp.status().is_success() {
         let status = vllm_resp.status();

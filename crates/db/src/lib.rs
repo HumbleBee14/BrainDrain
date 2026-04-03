@@ -50,7 +50,10 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 /// Calls the `create_billing_partition(date)` PG function created by migration 003.
 /// Idempotent — safe to call on every startup. Without this, inserts into future
 /// months fail on the partitioned billing_events table.
-pub async fn ensure_billing_partitions(pool: &PgPool, months_ahead: u32) -> Result<(), sqlx::Error> {
+pub async fn ensure_billing_partitions(
+    pool: &PgPool,
+    months_ahead: u32,
+) -> Result<(), sqlx::Error> {
     // 0..=months_ahead: current month + N months ahead (inclusive)
     for i in 0..=months_ahead {
         sqlx::query(

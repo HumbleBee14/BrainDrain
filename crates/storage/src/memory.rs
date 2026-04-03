@@ -56,12 +56,7 @@ impl InMemoryStorage {
 }
 
 impl ObjectStorage for InMemoryStorage {
-    async fn put(
-        &self,
-        key: &str,
-        data: Bytes,
-        content_type: &str,
-    ) -> Result<(), StorageError> {
+    async fn put(&self, key: &str, data: Bytes, content_type: &str) -> Result<(), StorageError> {
         self.objects.write().await.insert(
             key.to_string(),
             StoredObject {
@@ -92,11 +87,7 @@ impl ObjectStorage for InMemoryStorage {
         Ok(())
     }
 
-    async fn presigned_url(
-        &self,
-        key: &str,
-        _expiry_secs: u64,
-    ) -> Result<String, StorageError> {
+    async fn presigned_url(&self, key: &str, _expiry_secs: u64) -> Result<String, StorageError> {
         // Verify object exists, then return a fake URL for test assertions
         if !self.objects.read().await.contains_key(key) {
             return Err(StorageError::NotFound {

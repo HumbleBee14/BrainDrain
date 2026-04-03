@@ -1,5 +1,4 @@
 pub mod api_key_service;
-pub mod inference_backend;
 pub mod audit_logger;
 pub mod billing_batcher;
 pub mod billing_provider;
@@ -11,6 +10,7 @@ pub mod deployment_service;
 pub mod document_service;
 pub mod evaluation_service;
 pub mod export_service;
+pub mod inference_backend;
 pub mod model_service;
 pub mod notification_service;
 pub mod pipeline_service;
