@@ -67,31 +67,23 @@ async fn main() -> anyhow::Result<()> {
 
     let default_flag_context = FlagContext::default();
     tracing::info!(
-        billing_outbox = state.feature_flags().bool_variation(
-            BILLING_OUTBOX_ENABLED,
-            false,
-            &default_flag_context
-        ),
-        idempotency = state.feature_flags().bool_variation(
-            IDEMPOTENCY_ENFORCED,
-            false,
-            &default_flag_context
-        ),
-        multi_instance_inference = state.feature_flags().bool_variation(
-            DEPLOYMENTS_MULTI_INSTANCE_ENABLED,
-            false,
-            &default_flag_context
-        ),
+        billing_outbox = state
+            .feature_flags()
+            .is_enabled(BILLING_OUTBOX_ENABLED, &default_flag_context),
+        idempotency = state
+            .feature_flags()
+            .is_enabled(IDEMPOTENCY_ENFORCED, &default_flag_context),
+        multi_instance_inference = state
+            .feature_flags()
+            .is_enabled(DEPLOYMENTS_MULTI_INSTANCE_ENABLED, &default_flag_context),
         delivery_worker = state.feature_flags().bool_variation(
             NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
             true,
-            &default_flag_context
+            &default_flag_context,
         ),
-        tgi_backend = state.feature_flags().bool_variation(
-            INFERENCE_BACKEND_TGI_ENABLED,
-            false,
-            &default_flag_context
-        ),
+        tgi_backend = state
+            .feature_flags()
+            .is_enabled(INFERENCE_BACKEND_TGI_ENABLED, &default_flag_context),
         "Feature flags initialized"
     );
 

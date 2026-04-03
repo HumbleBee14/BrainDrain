@@ -29,6 +29,13 @@ struct ShutdownHandle {
 }
 
 impl DeliveryWorker {
+    /// Disabled worker used when feature flags turn delivery processing off.
+    pub fn disabled() -> Self {
+        Self {
+            shutdown: Mutex::new(None),
+        }
+    }
+
     /// Spawn the delivery worker with a background poll loop.
     ///
     /// - `poll_interval`: how often to check for pending deliveries
