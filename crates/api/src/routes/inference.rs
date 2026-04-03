@@ -18,7 +18,7 @@ use crate::services::token_estimator;
 /// Maximum number of items in a single batch request.
 const MAX_BATCH_SIZE: usize = 50;
 
-/// Concurrent vLLM requests per batch.
+/// Concurrent inference requests per batch.
 const BATCH_CONCURRENCY: usize = 5;
 
 /// Inference routes — OpenAI-compatible API.
@@ -88,7 +88,7 @@ pub struct ChatUsage {
 
 /// OpenAI-compatible chat completion endpoint.
 ///
-/// Proxies the request to the vLLM backend, routing to the correct
+/// Proxies the request to the inference backend, routing to the correct
 /// LoRA adapter based on the API key's associated model.
 /// Supports both streaming (SSE) and non-streaming responses.
 #[utoipa::path(
@@ -126,61 +126,75 @@ pub async fn chat_completions(
         });
     }
 
-    // Get the vLLM adapter name from deployment config
-    let adapter_name = model.deployment_config["vllm_adapter_name"]
+    let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
         .ok_or(AppError::Internal(anyhow::anyhow!(
-            "Model deployment config missing vllm_adapter_name"
+            "Model deployment config missing adapter_ref"
         )))?
         .to_string();
+
+    // Validate the model was deployed on the same backend we're currently running.
+    let backend = state.inference_backend();
+    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
+        && deployed_backend != backend.name()
+    {
+        return Err(AppError::BadRequest {
+            message: format!(
+                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
+                deployed_backend,
+                backend.name()
+            ),
+        });
+    }
 
     // Cap max_tokens to prevent GPU abuse (configurable via INFERENCE_MAX_TOKENS)
     let max_tokens = body.max_tokens.min(state.config().inference_max_tokens);
 
     let is_streaming = body.stream.unwrap_or(false);
 
-    // Build the vLLM request — use the adapter name as the "model" field
-    let mut vllm_request = serde_json::json!({
-        "model": adapter_name,
-        "messages": body.messages,
-        "temperature": body.temperature,
-        "max_tokens": max_tokens,
-        "top_p": body.top_p.unwrap_or(1.0),
-        "stream": is_streaming,
-    });
+    // Build the inference request via the backend (handles adapter selection correctly)
+    let mut inference_request = backend.build_inference_body(
+        &adapter_name,
+        &serde_json::json!(body.messages),
+        body.temperature,
+        max_tokens,
+        body.top_p.unwrap_or(1.0),
+        is_streaming,
+    );
 
     // For streaming, request usage in the final chunk
     if is_streaming {
-        vllm_request["stream_options"] = serde_json::json!({"include_usage": true});
+        inference_request["stream_options"] = serde_json::json!({"include_usage": true});
     }
 
-    let vllm_url = state.config().vllm_api_url.clone();
+    let inference_url = backend.chat_completions_url();
     let http_client = state.http_client().clone();
 
-    // Execute vLLM request through circuit breaker
-    let vllm_resp = state
-        .vllm_circuit_breaker()
+    let vllm_resp = backend
+        .circuit_breaker()
         .execute(|| async {
             http_client
-                .post(format!("{vllm_url}/v1/chat/completions"))
-                .json(&vllm_request)
+                .post(&inference_url)
+                .json(&inference_request)
                 .send()
                 .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}")))
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}"))
+                })
         })
         .await?;
 
     if !vllm_resp.status().is_success() {
         let status = vllm_resp.status();
         let body_text = vllm_resp.text().await.unwrap_or_default();
-        tracing::error!(status = %status, body = %body_text, "vLLM inference failed");
+        tracing::error!(status = %status, body = %body_text, "Inference request failed");
         return Err(AppError::Internal(anyhow::anyhow!(
-            "vLLM inference failed: {status}"
+            "Inference request failed: {status}"
         )));
     }
 
     if is_streaming {
-        // SSE streaming: forward vLLM's byte stream and extract usage from final chunk
+        // SSE streaming: forward the byte stream and extract usage from final chunk
         let tenant_id = api_key.tenant_id;
         let model_id = api_key.model_id;
         let key_id = api_key.key_id;
@@ -195,7 +209,7 @@ pub async fn chat_completions(
                 match chunk_result {
                     Ok(bytes) => {
                         // Scan for usage in the final SSE chunk
-                        // vLLM sends: data: {"usage":{"prompt_tokens":N,"completion_tokens":N}}
+                        // OpenAI-compat SSE: data: {"usage":{"prompt_tokens":N,"completion_tokens":N}}
                         let text = String::from_utf8_lossy(&bytes);
                         for line in text.lines() {
                             if let Some(data) = line.strip_prefix("data: ")
@@ -266,7 +280,7 @@ pub async fn chat_completions(
     } else {
         // Non-streaming: parse JSON response and bill
         let response: serde_json::Value = vllm_resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Failed to parse vLLM response: {e}"))
+            AppError::Internal(anyhow::anyhow!("Failed to parse inference response: {e}"))
         })?;
 
         // Extract token usage for billing via batcher (not fire-and-forget spawn)
@@ -389,14 +403,29 @@ pub async fn batch_chat_completions(
         });
     }
 
-    let adapter_name = model.deployment_config["vllm_adapter_name"]
+    let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
         .ok_or(AppError::Internal(anyhow::anyhow!(
-            "Model deployment config missing vllm_adapter_name"
+            "Model deployment config missing adapter_ref"
         )))?
         .to_string();
 
-    let vllm_url = state.config().vllm_api_url.clone();
+    let batch_backend = state.inference_backend();
+
+    // Validate backend matches what the model was deployed on
+    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
+        && deployed_backend != batch_backend.name()
+    {
+        return Err(AppError::BadRequest {
+            message: format!(
+                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
+                deployed_backend,
+                batch_backend.name()
+            ),
+        });
+    }
+
+    let batch_url = batch_backend.chat_completions_url();
     let http_client = state.http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
 
@@ -404,31 +433,31 @@ pub async fn batch_chat_completions(
     let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
         .map(|item| {
             let adapter = adapter_name.clone();
-            let url = vllm_url.clone();
+            let url = batch_url.clone();
             let client = http_client.clone();
-            let cb = state.vllm_circuit_breaker();
+            let cb = batch_backend.circuit_breaker();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
-                let vllm_request = serde_json::json!({
-                    "model": adapter,
-                    "messages": item.messages,
-                    "temperature": item.temperature,
-                    "max_tokens": max_tokens,
-                    "top_p": item.top_p.unwrap_or(1.0),
-                    "stream": false,
-                });
+                let request_body = batch_backend.build_inference_body(
+                    &adapter,
+                    &serde_json::json!(item.messages),
+                    item.temperature,
+                    max_tokens,
+                    item.top_p.unwrap_or(1.0),
+                    false,
+                );
 
                 let resp = cb
                     .execute(|| async {
                         client
-                            .post(format!("{url}/v1/chat/completions"))
-                            .json(&vllm_request)
+                            .post(&url)
+                            .json(&request_body)
                             .send()
                             .await
                             .map_err(|e| {
                                 AppError::Internal(anyhow::anyhow!(
-                                    "Cannot reach vLLM service: {e}"
+                                    "Cannot reach inference service: {e}"
                                 ))
                             })
                     })

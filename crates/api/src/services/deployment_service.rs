@@ -5,22 +5,20 @@ use crate::config::Config;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BillingEventRepository, ModelRepository};
-use crate::services::circuit_breaker::CircuitBreaker;
+use crate::services::inference_backend::InferenceBackend;
 
-/// Business logic for model deployment via vLLM.
+/// Business logic for model deployment via pluggable inference backends.
 ///
-/// vLLM runs as a sidecar service with `--enable-lora`. This service manages
-/// adapter lifecycle via vLLM's REST API (load/unload LoRA adapters).
+/// The inference backend (vLLM, TGI, SGLang) runs as a sidecar service.
+/// This service manages adapter lifecycle via the `InferenceBackend` trait.
 pub struct DeploymentService;
 
 impl DeploymentService {
-    /// Deploy a fine-tuned model by loading its LoRA adapter into vLLM.
-    /// Protected by a circuit breaker against vLLM outages.
+    /// Deploy a fine-tuned model by loading its LoRA adapter into the inference backend.
     pub async fn deploy(
         model_repo: &dyn ModelRepository,
         billing_repo: &dyn BillingEventRepository,
-        http_client: &reqwest::Client,
-        circuit_breaker: &CircuitBreaker,
+        backend: &dyn InferenceBackend,
         config: &Config,
         tenant_id: Uuid,
         model_id: Uuid,
@@ -59,43 +57,24 @@ impl DeploymentService {
                 .await?;
             return Err(AppError::Conflict {
                 message: format!(
-                    "vLLM adapter limit reached: {active_count}/{max_loras} adapters active \
-                     for base model '{}'. Undeploy an existing model first, or increase \
-                     VLLM_MAX_LORAS and restart vLLM with a higher --max-loras flag.",
+                    "Adapter limit reached: {active_count}/{max_loras} adapters active \
+                     for base model '{}'. Undeploy an existing model first.",
                     model.base_model
                 ),
             });
         }
 
-        // Build a unique adapter name for vLLM
-        let adapter_name = format!("adapter-{model_id}");
-
-        // Load LoRA adapter via vLLM REST API (through circuit breaker)
-        let vllm_url = config.vllm_api_url.clone();
-        let load_body = serde_json::json!({
-            "lora_name": adapter_name,
-            "lora_path": adapter_path,
-        });
-        let http = http_client.clone();
-
-        let load_result = circuit_breaker
-            .execute(|| async {
-                http.post(format!("{vllm_url}/v1/load_lora_adapter"))
-                    .json(&load_body)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}"))
-                    })
-            })
-            .await;
+        // Load LoRA adapter via the pluggable inference backend (circuit-broken).
+        let load_result = backend.load_adapter(model_id, &adapter_path).await;
 
         match load_result {
-            Ok(resp) if resp.status().is_success() => {
+            Ok(handle) => {
                 let deployment_config = serde_json::json!({
-                    "vllm_adapter_name": adapter_name,
+                    "adapter_ref": handle.adapter_ref,
                     "adapter_path": adapter_path,
                     "base_model": model.base_model,
+                    "backend": backend.name(),
+                    "backend_meta": handle.metadata,
                 });
 
                 let updated = model_repo
@@ -110,7 +89,6 @@ impl DeploymentService {
                         message: "Model not found after deploy".to_string(),
                     })?;
 
-                // Create billing event for deployment
                 let _ = billing_repo
                     .create(
                         tenant_id,
@@ -120,40 +98,42 @@ impl DeploymentService {
                         0,
                         0,
                         0.0,
-                        serde_json::json!({"action": "deploy", "adapter_name": adapter_name}),
+                        serde_json::json!({
+                            "action": "deploy",
+                            "adapter_ref": handle.adapter_ref,
+                            "backend": backend.name(),
+                        }),
                     )
                     .await;
 
-                tracing::info!(model_id = %model_id, adapter_name = %adapter_name, "Model deployed");
+                tracing::info!(
+                    model_id = %model_id,
+                    adapter_ref = %handle.adapter_ref,
+                    backend = backend.name(),
+                    "Model deployed"
+                );
                 Ok(updated.into())
-            }
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                model_repo
-                    .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
-                    .await?;
-                tracing::error!(model_id = %model_id, status = %status, body = %body, "vLLM deploy failed");
-                Err(AppError::Internal(anyhow::anyhow!(
-                    "vLLM adapter load failed: {status}"
-                )))
             }
             Err(e) => {
                 model_repo
                     .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
                     .await?;
-                tracing::error!(model_id = %model_id, error = %e, "vLLM deploy failed (circuit breaker)");
+                tracing::error!(
+                    model_id = %model_id,
+                    backend = backend.name(),
+                    error = %e,
+                    "Adapter load failed"
+                );
                 Err(e)
             }
         }
     }
 
-    /// Undeploy a model by unloading its LoRA adapter from vLLM.
-    /// Uses shared HTTP client (not circuit breaker — unload is best-effort).
+    /// Undeploy a model by unloading its LoRA adapter from the inference backend.
+    /// Unload is always best-effort — the DB is updated regardless of backend response.
     pub async fn undeploy(
         model_repo: &dyn ModelRepository,
-        http_client: &reqwest::Client,
-        config: &Config,
+        backend: &dyn InferenceBackend,
         tenant_id: Uuid,
         model_id: Uuid,
     ) -> AppResult<ModelResponse> {
@@ -170,25 +150,26 @@ impl DeploymentService {
             });
         }
 
-        let adapter_name = model.deployment_config["vllm_adapter_name"]
+        // Warn if the model was deployed on a different backend than what's currently running.
+        // We still proceed with undeploy (DB status update) but the unload call may no-op.
+        if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
+            && deployed_backend != backend.name()
+        {
+            tracing::warn!(
+                model_id = %model_id,
+                deployed_on = deployed_backend,
+                current = backend.name(),
+                "Undeploying model from a different backend than it was deployed on"
+            );
+        }
+
+        let adapter_ref = model.deployment_config["adapter_ref"]
             .as_str()
             .unwrap_or(&format!("adapter-{model_id}"))
             .to_string();
 
-        let vllm_url = &config.vllm_api_url;
-
-        let unload_result = http_client
-            .post(format!("{vllm_url}/v1/unload_lora_adapter"))
-            .json(&serde_json::json!({
-                "lora_name": adapter_name,
-            }))
-            .send()
-            .await;
-
-        // Even if vLLM call fails, mark as undeployed — adapter may already be gone
-        if let Err(e) = &unload_result {
-            tracing::warn!(model_id = %model_id, error = %e, "vLLM unload request failed — marking as undeployed anyway");
-        }
+        // Best-effort — backend errors are logged but never surface as HTTP errors.
+        let _ = backend.unload_adapter(&adapter_ref).await;
 
         let updated = model_repo
             .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
@@ -361,7 +342,7 @@ mod tests {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
             deployment_status: DeploymentStatus::Active,
-            deployment_config: serde_json::json!({"vllm_adapter_name": "adapter-123"}),
+            deployment_config: serde_json::json!({"adapter_ref": "adapter-123", "backend": "vllm"}),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             adapter_path: Some("/path/to/adapter".to_string()),
         };

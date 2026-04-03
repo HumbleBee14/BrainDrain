@@ -46,8 +46,8 @@ class Database(Protocol):
 class InfraContainer:
     """Concrete infrastructure container holding all initialized clients.
 
-    Created once at worker startup, passed to activities via the
-    module-level accessor (backwards-compatible with existing code).
+    Created once at worker startup, accessed via the module-level
+    `get_container()` accessor.
     """
 
     def __init__(

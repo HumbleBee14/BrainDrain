@@ -99,10 +99,7 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
-    fn count_active_by_base_model(
-        &self,
-        base_model: &str,
-    ) -> BoxFuture<'_, AppResult<i64>> {
+    fn count_active_by_base_model(&self, base_model: &str) -> BoxFuture<'_, AppResult<i64>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
             let count = sqlx::query_scalar::<_, i64>(

@@ -174,9 +174,10 @@ class DeployModelOutput:
 
 
 class DeployModelActivity:
-    """Deploy a model by calling the Rust API to load the LoRA adapter into vLLM.
+    """Deploy a model by calling the Rust API to load the LoRA adapter.
 
-    The Rust API handles the vLLM adapter load/unload and circuit breaker.
+    The Rust API handles the adapter load/unload via the configured inference
+    backend (vLLM, TGI, SGLang) and circuit breaker.
     This activity is the Temporal bridge from the full pipeline workflow.
     """
 

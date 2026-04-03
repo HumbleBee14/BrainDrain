@@ -56,7 +56,9 @@ async fn main() -> anyhow::Result<()> {
     // Runs on every startup (idempotent, <1ms). Without this, inserts into
     // future months would fail on the partitioned billing_events table.
     if let Err(e) = platform_db::ensure_billing_partitions(state.db(), 3).await {
-        tracing::warn!("Failed to ensure billing partitions: {e} — billing inserts for future months may fail");
+        tracing::warn!(
+            "Failed to ensure billing partitions: {e} — billing inserts for future months may fail"
+        );
     }
 
     // Build middleware stack

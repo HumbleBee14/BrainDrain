@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::error::AppError;
 
-/// Async circuit breaker for protecting calls to external services (vLLM).
+/// Async circuit breaker for protecting calls to external services.
 ///
 /// State machine: Closed → Open → HalfOpen → Closed (on success) or Open (on failure).
 ///

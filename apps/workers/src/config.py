@@ -29,9 +29,6 @@ class WorkerSettings(BaseSettings):
     platform_api_url: str = "http://localhost:8000"
     platform_internal_token: str = ""
 
-    # vLLM inference server
-    vllm_api_url: str = "http://localhost:8080"
-
     # LLM API (OpenAI-compatible — works with any provider)
     llm_api_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
