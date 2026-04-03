@@ -48,7 +48,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-} ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -187,7 +187,17 @@ services:
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://localhost:4317}
+      # Operational knobs (all have sensible defaults — override only if needed)
+      BILLING_CHANNEL_CAPACITY: ${BILLING_CHANNEL_CAPACITY:-10000}
+      BILLING_BATCH_SIZE: ${BILLING_BATCH_SIZE:-1000}
+      BILLING_FLUSH_INTERVAL_SECS: ${BILLING_FLUSH_INTERVAL_SECS:-5}
+      DELIVERY_POLL_INTERVAL_SECS: ${DELIVERY_POLL_INTERVAL_SECS:-10}
+      DEPLOY_STALE_MINUTES: ${DEPLOY_STALE_MINUTES:-10}
+      INFERENCE_MAX_TOKENS: ${INFERENCE_MAX_TOKENS:-8192}
+      VLLM_MAX_LORAS: ${VLLM_MAX_LORAS:-4}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -247,6 +257,8 @@ services:
       APP_HF_TOKEN: ${HF_TOKEN:-}
       APP_MODEL_CACHE_DIR: /app/model_cache
       APP_WORKER_MODE: ${WORKER_MODE:-all}
+      APP_DB_POOL_MIN: ${WORKER_DB_POOL_MIN:-2}
+      APP_DB_POOL_MAX: ${WORKER_DB_POOL_MAX:-10}
       APP_LOG_LEVEL: ${LOG_LEVEL:-INFO}
       APP_LOG_FORMAT: json
     volumes:

@@ -51,7 +51,8 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 /// Idempotent — safe to call on every startup. Without this, inserts into future
 /// months fail on the partitioned billing_events table.
 pub async fn ensure_billing_partitions(pool: &PgPool, months_ahead: u32) -> Result<(), sqlx::Error> {
-    for i in 0..months_ahead {
+    // 0..=months_ahead: current month + N months ahead (inclusive)
+    for i in 0..=months_ahead {
         sqlx::query(
             "SELECT create_billing_partition((date_trunc('month', CURRENT_DATE) + make_interval(months => $1))::date)",
         )

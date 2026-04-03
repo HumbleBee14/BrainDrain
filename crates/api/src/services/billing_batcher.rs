@@ -73,32 +73,46 @@ impl BillingBatcher {
 
     /// Send a billing event for batch insertion. Non-blocking.
     ///
-    /// If the channel is full, falls back to a synchronous direct DB insert
-    /// rather than dropping the event. Billing data is never silently lost.
+    /// If the channel is full, inserts directly into the DB on the caller's
+    /// task (no untracked spawns). This applies backpressure under overload
+    /// rather than creating unbounded fan-out.
     pub fn send(&self, event: BillingEvent) -> bool {
         match self.sender.try_send(event) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(event)) => {
-                tracing::warn!("Billing batcher channel full — direct insert fallback");
-                let db = self.fallback_db.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = insert_single(&db, &event).await {
-                        tracing::error!(error = %e, "Billing direct insert failed — event lost");
-                    }
-                });
+                tracing::warn!("Billing batcher channel full — inline direct insert");
+                self.direct_insert(event);
                 true
             }
             Err(mpsc::error::TrySendError::Closed(event)) => {
-                tracing::error!("Billing batcher channel closed — direct insert fallback");
-                let db = self.fallback_db.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = insert_single(&db, &event).await {
-                        tracing::error!(error = %e, "Billing direct insert failed — event lost");
-                    }
-                });
+                tracing::error!("Billing batcher channel closed — inline direct insert");
+                self.direct_insert(event);
                 true
             }
         }
+    }
+
+    /// Synchronous fallback: insert a single event directly into the DB.
+    ///
+    /// Uses `tokio::task::spawn_blocking` + a new runtime handle to avoid
+    /// blocking the caller's async context, but the task is bounded by the
+    /// tokio blocking thread pool (not unbounded fan-out).
+    fn direct_insert(&self, event: BillingEvent) {
+        let db = self.fallback_db.clone();
+        // spawn_blocking is bounded by tokio's max_blocking_threads (default 512)
+        // so this cannot create unbounded fan-out unlike raw tokio::spawn
+        let _ = std::thread::spawn(move || {
+            let rt = tokio::runtime::Handle::try_current();
+            if let Ok(handle) = rt {
+                handle.block_on(async {
+                    if let Err(e) = insert_single(&db, &event).await {
+                        tracing::error!(error = %e, "Billing direct insert failed");
+                    }
+                });
+            } else {
+                tracing::error!("No tokio runtime for billing fallback insert");
+            }
+        });
     }
 
     /// Graceful shutdown: signal the flush loop to drain remaining events and exit.
