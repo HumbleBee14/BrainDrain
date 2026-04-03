@@ -299,6 +299,10 @@ pub trait ModelRepository: Send + Sync {
         max_loras: i64,
     ) -> BoxFuture<'_, AppResult<bool>>;
 
+    /// Reset models stuck in 'deploying' for longer than the given minutes back to 'undeployed'.
+    /// Prevents capacity leaks when the API dies mid-deploy before cleanup runs.
+    fn reap_stale_deployments(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>>;
+
     fn update_deployment_status(
         &self,
         tenant_id: Uuid,

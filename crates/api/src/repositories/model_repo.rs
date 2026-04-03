@@ -124,9 +124,24 @@ impl ModelRepository for PgModelRepo {
     ) -> BoxFuture<'_, AppResult<bool>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
-            // Atomic slot claim: counts both 'active' AND 'deploying' models to
-            // prevent two concurrent deploys from both slipping through when
-            // neither has reached 'active' yet.
+            // Use a PostgreSQL advisory lock keyed on the base_model hash to
+            // serialize concurrent deploy attempts for the same model family.
+            // Under READ COMMITTED, two concurrent UPDATEs can evaluate the
+            // COUNT(*) subquery from separate snapshots and both succeed.
+            // pg_advisory_xact_lock is released automatically at transaction end.
+            let mut tx = self.db.begin().await?;
+
+            // Hash the base_model string to a stable i64 for the advisory lock key
+            let lock_key = base_model
+                .bytes()
+                .fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64));
+
+            sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                .bind(lock_key)
+                .execute(&mut *tx)
+                .await?;
+
+            // Now count is safe — no concurrent deploy can be between our check and claim
             let result = sqlx::query(
                 r#"
                 UPDATE models
@@ -141,10 +156,35 @@ impl ModelRepository for PgModelRepo {
             .bind(tenant_id)
             .bind(&base_model)
             .bind(max_loras)
+            .execute(&mut *tx)
+            .await?;
+
+            let claimed = result.rows_affected() > 0;
+            tx.commit().await?;
+
+            Ok(claimed)
+        })
+    }
+
+    fn reap_stale_deployments(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let result = sqlx::query(
+                r#"
+                UPDATE models
+                SET deployment_status = 'undeployed', updated_at = NOW()
+                WHERE deployment_status = 'deploying'
+                  AND updated_at < NOW() - make_interval(mins => $1)
+                "#,
+            )
+            .bind(stale_minutes as f64)
             .execute(&self.db)
             .await?;
 
-            Ok(result.rows_affected() > 0)
+            let reaped = result.rows_affected() as i64;
+            if reaped > 0 {
+                tracing::warn!(reaped, stale_minutes, "Reaped stale deploying models");
+            }
+            Ok(reaped)
         })
     }
 

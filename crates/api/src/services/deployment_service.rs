@@ -42,9 +42,12 @@ impl DeploymentService {
             });
         }
 
-        // Atomically claim a deployment slot — prevents race where two concurrent
-        // deploys both pass the count check and overrun --max-loras.
-        // This UPDATE only succeeds if the adapter count is still below the limit.
+        // Reap stale 'deploying' slots from crashed API processes before claiming.
+        // Lightweight: single UPDATE, only touches rows stuck > 10 minutes.
+        let _ = model_repo.reap_stale_deployments(10).await;
+
+        // Atomically claim a deployment slot under advisory lock — prevents race
+        // where two concurrent deploys both pass the count check.
         let max_loras = config.vllm_max_loras;
         let claimed = model_repo
             .claim_deployment_slot(tenant_id, model_id, &model.base_model, max_loras)
