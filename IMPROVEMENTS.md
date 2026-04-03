@@ -121,15 +121,52 @@ vLLM supports streaming natively — not piping it through means slow TTFT for u
 ---
 
 ### 9. Multi-Adapter Serving on One Base Model
+
 **Problem**: Each deployment occupies a separate vLLM instance. Loading 10 fine-tuned
 Llama-3-8B adapters = 10× GPU memory for base weights.
 
-**Implementation**:
-- vLLM's `--enable-lora` + `--max-loras N` serves N adapters on one instance
-- `deployments` table tracks which base model a vLLM instance runs
-- `DeploymentService` finds compatible running instance before spinning new one
-- Adapter load/unload via vLLM's `/v1/load_lora_adapter` API
-- Cuts inference GPU cost dramatically for multi-model tenants
+#### Phase 1 — Adapter Limit Enforcement (Done)
+
+What we built: **guard rail on a single vLLM endpoint**.
+
+- `DeploymentService::deploy()` counts active adapters sharing the same `base_model`
+  before calling vLLM's `/v1/load_lora_adapter`
+- If count >= `VLLM_MAX_LORAS` (configurable, default 4), returns 409 Conflict with
+  a clear message instead of a cryptic vLLM error
+- New `ModelRepository::count_active_by_base_model()` query
+- This works correctly for the current single-vLLM-instance architecture
+
+**What this is NOT**: a scheduler that manages multiple vLLM instances or routes
+deploys to the right one. Multiple adapters sharing one base model's GPU memory
+is already how vLLM works natively — we just prevent overloading it.
+
+#### Phase 2 — Multi-Instance Scheduling (Future)
+
+What would need to be built for true instance-aware placement:
+
+- A `vllm_instances` table tracking: instance URL, base model loaded, current
+  adapter count, GPU type, health status, last heartbeat
+- Placement algorithm: "find healthy instance running Llama-3-8B with free
+  adapter slots" → load adapter there; if none found → provision new instance
+- Instance provisioning: spin up vLLM via Docker/K8s API when no compatible
+  instance exists, tear down when all adapters unloaded (scale-to-zero)
+- Health check loop: periodic probe of each instance, mark unhealthy on failure
+- This is essentially a mini scheduler — significant scope, requires multi-node
+  infrastructure (Kubernetes or equivalent) to be meaningful
+
+**Why not now**: The current architecture runs a single vLLM instance (see
+`docker-compose.yml`). Building a scheduler without multiple instances to
+schedule against would be untestable code. Phase 1 (limit enforcement) is the
+correct guard rail for single-instance deployments. Phase 2 becomes relevant
+when the platform scales to multiple GPU nodes.
+
+**Does deferring Phase 2 break anything?** No.
+- Single model training is completely unaffected — training uses Unsloth/TRL
+  directly on GPU, never touches vLLM
+- Single-instance inference works correctly with Phase 1's limit enforcement
+- Multiple adapters on one instance already share base model memory (vLLM native)
+- The only limitation: when `VLLM_MAX_LORAS` is full, users must undeploy
+  an existing model before deploying a new one (clear error message explains this)
 
 ---
 
