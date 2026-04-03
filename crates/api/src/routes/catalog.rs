@@ -157,7 +157,11 @@ fn build_catalog() -> Vec<CatalogModel> {
             size: "3.8B".into(),
             vram_4bit_gb: 4.0,
             vram_full_gb: 8.0,
-            best_for: vec!["Lightweight".into(), "Low latency".into(), "Edge deployment".into()],
+            best_for: vec![
+                "Lightweight".into(),
+                "Low latency".into(),
+                "Edge deployment".into(),
+            ],
             recommended_for: vec!["custom".into()],
             gated: false,
             default_mode: "quick".into(),

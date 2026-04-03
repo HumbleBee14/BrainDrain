@@ -282,10 +282,7 @@ pub trait ModelRepository: Send + Sync {
 
     /// Count all actively deployed adapters sharing the same base model (across all tenants).
     /// Used to enforce the vLLM `--max-loras` limit before loading a new adapter.
-    fn count_active_by_base_model(
-        &self,
-        base_model: &str,
-    ) -> BoxFuture<'_, AppResult<i64>>;
+    fn count_active_by_base_model(&self, base_model: &str) -> BoxFuture<'_, AppResult<i64>>;
 
     /// Atomically claim a deployment slot: set status to 'deploying' only if the
     /// count of active adapters for this base_model is below max_loras.
