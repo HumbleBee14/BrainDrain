@@ -26,6 +26,8 @@ pub struct BillingEvent {
 /// At 10K req/min this reduces ~10K individual INSERTs to ~12 bulk inserts/min.
 pub struct BillingBatcher {
     sender: mpsc::Sender<BillingEvent>,
+    /// DB pool for direct insert fallback when the channel is full.
+    fallback_db: PgPool,
     /// Shutdown signal + flush task handle (taken by the first shutdown() call).
     shutdown: Mutex<Option<ShutdownHandle>>,
 }
@@ -50,6 +52,7 @@ impl BillingBatcher {
         let (sender, receiver) = mpsc::channel(channel_capacity);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
+        let fallback_db = db.clone();
         let flush_handle = tokio::spawn(flush_loop(
             db,
             receiver,
@@ -60,6 +63,7 @@ impl BillingBatcher {
 
         Self {
             sender,
+            fallback_db,
             shutdown: Mutex::new(Some(ShutdownHandle {
                 signal: shutdown_tx,
                 flush_handle,
@@ -68,17 +72,31 @@ impl BillingBatcher {
     }
 
     /// Send a billing event for batch insertion. Non-blocking.
-    /// Returns false if the channel is full (event is dropped).
+    ///
+    /// If the channel is full, falls back to a synchronous direct DB insert
+    /// rather than dropping the event. Billing data is never silently lost.
     pub fn send(&self, event: BillingEvent) -> bool {
         match self.sender.try_send(event) {
             Ok(()) => true,
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!("Billing batcher channel full — dropping event");
-                false
+            Err(mpsc::error::TrySendError::Full(event)) => {
+                tracing::warn!("Billing batcher channel full — direct insert fallback");
+                let db = self.fallback_db.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = insert_single(&db, &event).await {
+                        tracing::error!(error = %e, "Billing direct insert failed — event lost");
+                    }
+                });
+                true
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                tracing::error!("Billing batcher channel closed — dropping event");
-                false
+            Err(mpsc::error::TrySendError::Closed(event)) => {
+                tracing::error!("Billing batcher channel closed — direct insert fallback");
+                let db = self.fallback_db.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = insert_single(&db, &event).await {
+                        tracing::error!(error = %e, "Billing direct insert failed — event lost");
+                    }
+                });
+                true
             }
         }
     }
@@ -162,14 +180,14 @@ async fn flush_loop(
     }
 }
 
-/// Maximum consecutive flush failures before dropping events to prevent unbounded memory growth.
+/// Maximum consecutive batch flush failures before falling back to individual inserts.
 const MAX_FLUSH_RETRIES: usize = 3;
 
 /// Bulk-insert a batch of billing events using QueryBuilder.
 ///
-/// On failure, events are retained in the buffer for the next flush attempt.
-/// After MAX_FLUSH_RETRIES consecutive failures, events are dropped to prevent
-/// unbounded memory growth (better to lose billing data than OOM the process).
+/// On failure, retains events for the next flush attempt. After MAX_FLUSH_RETRIES
+/// consecutive batch failures, falls back to inserting events individually
+/// (slower but ensures no silent data loss).
 async fn flush_batch(
     db: &PgPool,
     buffer: &mut Vec<BillingEvent>,
@@ -205,9 +223,19 @@ async fn flush_batch(
                     count,
                     consecutive_failures = *consecutive_failures,
                     error = %e,
-                    "Billing batcher flush failed too many times — dropping events"
+                    "Batch flush failed too many times — falling back to individual inserts"
                 );
-                buffer.clear();
+                // Fall back to individual inserts — slower but no data loss
+                let mut lost = 0;
+                for event in buffer.drain(..) {
+                    if let Err(ie) = insert_single(db, &event).await {
+                        tracing::error!(error = %ie, "Individual billing insert also failed");
+                        lost += 1;
+                    }
+                }
+                if lost > 0 {
+                    tracing::error!(lost, "Billing events permanently lost after all retries");
+                }
                 *consecutive_failures = 0;
             } else {
                 tracing::warn!(
@@ -216,10 +244,28 @@ async fn flush_batch(
                     error = %e,
                     "Billing batcher flush failed — retaining events for retry"
                 );
-                // Events stay in buffer for the next flush attempt
             }
         }
     }
+}
+
+/// Insert a single billing event directly (fallback path).
+async fn insert_single(db: &PgPool, event: &BillingEvent) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO billing_events (tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(event.tenant_id)
+    .bind(&event.operation)
+    .bind(event.resource_id)
+    .bind(event.tokens_in)
+    .bind(event.tokens_out)
+    .bind(event.gpu_seconds)
+    .bind(event.cost_usd)
+    .bind(&event.metadata)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
