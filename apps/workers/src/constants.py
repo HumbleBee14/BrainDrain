@@ -43,7 +43,7 @@ class DeploymentStatus:
     INACTIVE = "inactive"
 
 
-# GPU hourly rates by class — mirrors crates/shared/src/constants.rs GPU_HOURLY_RATES.
+# GPU hourly rates — mirrors crates/shared/src/constants.rs GPU_HOURLY_RATES.
 # If you change these, update the Rust source too.
 GPU_HOURLY_RATES: dict[str, float] = {
     "t4": 0.80,

@@ -43,8 +43,9 @@ impl DeploymentService {
         }
 
         // Reap stale 'deploying' slots from crashed API processes before claiming.
-        // Lightweight: single UPDATE, only touches rows stuck > 10 minutes.
-        let _ = model_repo.reap_stale_deployments(10).await;
+        let _ = model_repo
+            .reap_stale_deployments(config.deploy_stale_minutes)
+            .await;
 
         // Atomically claim a deployment slot under advisory lock — prevents race
         // where two concurrent deploys both pass the count check.

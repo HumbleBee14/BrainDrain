@@ -94,6 +94,27 @@ pub struct Config {
     #[serde(default = "default_vllm_max_loras")]
     pub vllm_max_loras: i64,
 
+    // ── Operational Knobs ──
+    /// Billing batcher: channel capacity (events buffered in memory).
+    #[serde(default = "default_billing_channel_capacity")]
+    pub billing_channel_capacity: usize,
+
+    /// Billing batcher: flush after this many events accumulate.
+    #[serde(default = "default_billing_batch_size")]
+    pub billing_batch_size: usize,
+
+    /// Billing batcher: flush interval in seconds (even if batch not full).
+    #[serde(default = "default_billing_flush_interval_secs")]
+    pub billing_flush_interval_secs: u64,
+
+    /// Notification delivery worker: poll interval in seconds.
+    #[serde(default = "default_delivery_poll_interval_secs")]
+    pub delivery_poll_interval_secs: u64,
+
+    /// Stale deploy reap threshold in minutes.
+    #[serde(default = "default_deploy_stale_minutes")]
+    pub deploy_stale_minutes: i64,
+
     // ── Circuit Breaker (vLLM) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -258,6 +279,21 @@ fn default_inference_max_tokens() -> i64 {
 }
 fn default_vllm_max_loras() -> i64 {
     4
+}
+fn default_billing_channel_capacity() -> usize {
+    10_000
+}
+fn default_billing_batch_size() -> usize {
+    1_000
+}
+fn default_billing_flush_interval_secs() -> u64 {
+    5
+}
+fn default_delivery_poll_interval_secs() -> u64 {
+    10
+}
+fn default_deploy_stale_minutes() -> i64 {
+    10
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

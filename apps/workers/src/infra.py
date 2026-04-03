@@ -90,8 +90,8 @@ async def init_container(settings: WorkerSettings) -> InfraContainer:
 
     db = await asyncpg.create_pool(
         settings.database_url,
-        min_size=2,
-        max_size=10,
+        min_size=settings.db_pool_min,
+        max_size=settings.db_pool_max,
     )
     logger.info("PostgreSQL pool initialized")
 

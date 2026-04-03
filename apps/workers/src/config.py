@@ -12,6 +12,8 @@ class WorkerSettings(BaseSettings):
 
     # Database (required — no insecure default)
     database_url: str
+    db_pool_min: int = 2
+    db_pool_max: int = 10
 
     # Redis
     redis_url: str = "redis://localhost:6379"

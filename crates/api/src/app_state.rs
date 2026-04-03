@@ -194,12 +194,12 @@ impl AppState {
             Duration::from_secs(config.vllm_cb_recovery_timeout_secs),
         );
 
-        // Billing micro-batcher (10K channel capacity, flush every 5s or 1000 events)
+        // Billing micro-batcher (configurable via env vars)
         let billing_batcher = Arc::new(BillingBatcher::new(
             db.clone(),
-            10_000,
-            1_000,
-            Duration::from_secs(5),
+            config.billing_channel_capacity,
+            config.billing_batch_size,
+            Duration::from_secs(config.billing_flush_interval_secs),
         ));
 
         // Webhook HTTP client: redirects disabled to prevent SSRF bypass via redirect to internal IPs.
@@ -210,11 +210,11 @@ impl AppState {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build webhook HTTP client: {e}"))?;
 
-        // Notification delivery worker (polls every 10s for pending webhook deliveries)
+        // Notification delivery worker (configurable poll interval)
         let delivery_worker = Arc::new(DeliveryWorker::new(
             Arc::clone(&notification_repo),
             webhook_http_client,
-            Duration::from_secs(10),
+            Duration::from_secs(config.delivery_poll_interval_secs),
         ));
 
         tracing::info!(

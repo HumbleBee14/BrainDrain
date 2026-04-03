@@ -55,7 +55,9 @@ async fn main() -> anyhow::Result<()> {
     // Ensure billing partitions exist for the next 3 months.
     // Runs on every startup (idempotent, <1ms). Without this, inserts into
     // future months would fail on the partitioned billing_events table.
-    ensure_billing_partitions(state.db()).await;
+    if let Err(e) = platform_db::ensure_billing_partitions(state.db(), 3).await {
+        tracing::warn!("Failed to ensure billing partitions: {e} — billing inserts for future months may fail");
+    }
 
     // Build middleware stack
     let cors_origins = config.cors_origins_list();
@@ -218,30 +220,4 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("Shutdown signal received");
-}
-
-/// Ensure billing_events partitions exist for the current month + next 3 months.
-///
-/// Idempotent — calls the DB function `create_billing_partition()` which silently
-/// no-ops if the partition already exists. Runs on every startup so no external
-/// cron job is needed. Cost: ~1ms for 4 idempotent DDL checks.
-async fn ensure_billing_partitions(db: &sqlx::PgPool) {
-    // Generate months: current, +1, +2, +3
-    let result = sqlx::query(
-        r#"
-        SELECT create_billing_partition(d::date)
-        FROM generate_series(
-            date_trunc('month', NOW()),
-            date_trunc('month', NOW()) + interval '3 months',
-            interval '1 month'
-        ) AS d
-        "#,
-    )
-    .execute(db)
-    .await;
-
-    match result {
-        Ok(_) => tracing::info!("Billing partitions ensured for next 3 months"),
-        Err(e) => tracing::warn!(error = %e, "Failed to ensure billing partitions (non-fatal)"),
-    }
 }
