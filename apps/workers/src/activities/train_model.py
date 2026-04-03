@@ -140,6 +140,12 @@ class StartTrainingActivity:
                 job_id,
                 str(e)[:2000],
             )
+
+            # Void billing for short-lived failures (e.g. OOM at step 2).
+            # If the job ran less than MIN_BILLABLE_SECONDS, insert a negative
+            # billing event to cancel the cost estimate logged at job creation.
+            await _maybe_void_billing(db, job_id, self.infra.settings)
+
             raise
 
 
@@ -1144,6 +1150,56 @@ async def _get_project_id(db, job_id: str) -> str:
     if row is None:
         raise ValueError(f"Training job not found: {job_id}")
     return str(row["project_id"])
+
+
+async def _maybe_void_billing(db, job_id: str, settings) -> None:
+    """Void billing for a failed training job if it ran less than MIN_BILLABLE_SECONDS.
+
+    Inserts a negative cost_usd billing event to cancel the original estimate.
+    Jobs that ran long enough are still billed for actual GPU time consumed.
+    """
+    try:
+        row = await db.fetchrow(
+            "SELECT tenant_id, started_at, completed_at, cost_estimate "
+            "FROM training_jobs WHERE id = $1",
+            job_id,
+        )
+        if row is None or row["started_at"] is None or row["completed_at"] is None:
+            return
+
+        elapsed = (row["completed_at"] - row["started_at"]).total_seconds()
+        min_billable = getattr(settings, "min_billable_seconds", 300)
+
+        if elapsed < min_billable:
+            cost_estimate = float(row["cost_estimate"] or 0)
+            if cost_estimate <= 0:
+                return
+
+            # Insert a negative billing event to void the original charge
+            await db.execute(
+                """INSERT INTO billing_events
+                   (tenant_id, operation, resource_id, tokens_in, tokens_out,
+                    gpu_seconds, cost_usd, metadata)
+                   VALUES ($1, 'training_void', $2::uuid, 0, 0, 0, $3, $4::jsonb)""",
+                str(row["tenant_id"]),
+                job_id,
+                -cost_estimate,
+                json.dumps({
+                    "reason": "failed_job_credit",
+                    "elapsed_seconds": round(elapsed, 1),
+                    "min_billable_seconds": min_billable,
+                }),
+            )
+            logger.info(
+                "Voided billing for job %s (ran %.1fs < %ds threshold, credited $%.2f)",
+                job_id,
+                elapsed,
+                min_billable,
+                cost_estimate,
+            )
+    except Exception as e:
+        # Billing void is best-effort — never block the failure path
+        logger.warning("Failed to void billing for job %s: %s", job_id, e)
 
 
 def _is_bf16_supported() -> bool:

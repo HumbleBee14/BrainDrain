@@ -81,6 +81,9 @@ class WorkerSettings(BaseSettings):
     timeout_eval_hours: int = 1  # full evaluation suite
     timeout_export_hours: int = 2  # GGUF export + quantize
 
+    # Billing
+    min_billable_seconds: int = 300  # 5 min — failed jobs shorter than this get voided
+
     model_config = {"env_prefix": "APP_", "env_file": ".env"}
 
     @field_validator("temporal_address")
