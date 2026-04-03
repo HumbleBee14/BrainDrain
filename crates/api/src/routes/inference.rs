@@ -18,7 +18,7 @@ use crate::services::token_estimator;
 /// Maximum number of items in a single batch request.
 const MAX_BATCH_SIZE: usize = 50;
 
-/// Concurrent vLLM requests per batch.
+/// Concurrent inference requests per batch.
 const BATCH_CONCURRENCY: usize = 5;
 
 /// Inference routes — OpenAI-compatible API.
@@ -88,7 +88,7 @@ pub struct ChatUsage {
 
 /// OpenAI-compatible chat completion endpoint.
 ///
-/// Proxies the request to the vLLM backend, routing to the correct
+/// Proxies the request to the inference backend, routing to the correct
 /// LoRA adapter based on the API key's associated model.
 /// Supports both streaming (SSE) and non-streaming responses.
 #[utoipa::path(
@@ -138,7 +138,7 @@ pub async fn chat_completions(
 
     let is_streaming = body.stream.unwrap_or(false);
 
-    // Build the vLLM request — use the adapter name as the "model" field
+    // Build the inference request — use the adapter name as the "model" field
     let mut vllm_request = serde_json::json!({
         "model": adapter_name,
         "messages": body.messages,
@@ -181,7 +181,7 @@ pub async fn chat_completions(
     }
 
     if is_streaming {
-        // SSE streaming: forward vLLM's byte stream and extract usage from final chunk
+        // SSE streaming: forward the byte stream and extract usage from final chunk
         let tenant_id = api_key.tenant_id;
         let model_id = api_key.model_id;
         let key_id = api_key.key_id;
@@ -196,7 +196,7 @@ pub async fn chat_completions(
                 match chunk_result {
                     Ok(bytes) => {
                         // Scan for usage in the final SSE chunk
-                        // vLLM sends: data: {"usage":{"prompt_tokens":N,"completion_tokens":N}}
+                        // OpenAI-compat SSE: data: {"usage":{"prompt_tokens":N,"completion_tokens":N}}
                         let text = String::from_utf8_lossy(&bytes);
                         for line in text.lines() {
                             if let Some(data) = line.strip_prefix("data: ")
@@ -267,7 +267,7 @@ pub async fn chat_completions(
     } else {
         // Non-streaming: parse JSON response and bill
         let response: serde_json::Value = vllm_resp.json().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("Failed to parse vLLM response: {e}"))
+            AppError::Internal(anyhow::anyhow!("Failed to parse inference response: {e}"))
         })?;
 
         // Extract token usage for billing via batcher (not fire-and-forget spawn)

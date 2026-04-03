@@ -211,7 +211,7 @@ impl AppState {
         ));
 
         // Webhook HTTP client: redirects disabled to prevent SSRF bypass via redirect to internal IPs.
-        // Separate from the shared http_client since Stripe/Clerk/vLLM may need redirect support.
+        // Separate from the shared http_client since Stripe/Clerk may need redirect support.
         let webhook_http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())

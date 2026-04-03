@@ -202,10 +202,15 @@ pub struct TenantSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS, ToSchema)]
 #[ts(export)]
 pub struct DeploymentConfig {
+    /// Adapter reference used in inference requests (the "model" field).
     #[serde(default)]
-    pub vllm_adapter_name: Option<String>,
+    pub adapter_ref: Option<String>,
+    /// Base model this adapter was fine-tuned from.
     #[serde(default)]
-    pub vllm_base_model: Option<String>,
+    pub base_model: Option<String>,
+    /// Serving engine type (vllm, tgi, sglang).
+    #[serde(default)]
+    pub backend: Option<String>,
     #[serde(default)]
     pub deployed_at: Option<String>,
     /// Extra config not in the schema.
@@ -259,13 +264,15 @@ mod tests {
     #[test]
     fn deployment_config_roundtrip() {
         let config = DeploymentConfig {
-            vllm_adapter_name: Some("my-adapter".into()),
-            vllm_base_model: Some("meta-llama/Llama-3.1-8B".into()),
+            adapter_ref: Some("adapter-abc123".into()),
+            base_model: Some("meta-llama/Llama-3.1-8B".into()),
+            backend: Some("vllm".into()),
             deployed_at: Some("2026-01-01T00:00:00Z".into()),
             extra: HashMap::new(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: DeploymentConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.vllm_adapter_name, Some("my-adapter".into()));
+        assert_eq!(parsed.adapter_ref, Some("adapter-abc123".into()));
+        assert_eq!(parsed.backend, Some("vllm".into()));
     }
 }

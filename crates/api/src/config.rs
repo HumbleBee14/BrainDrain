@@ -120,12 +120,12 @@ pub struct Config {
     #[serde(default = "default_deploy_stale_minutes")]
     pub deploy_stale_minutes: i64,
 
-    // ── Circuit Breaker (vLLM) ──
+    // ── Circuit Breaker (Inference Backend) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
     pub vllm_cb_failure_threshold: u32,
 
-    /// Seconds to wait before probing vLLM after the circuit breaker trips.
+    /// Seconds to wait before probing the inference backend after the circuit breaker trips.
     #[serde(default = "default_cb_recovery_timeout_secs")]
     pub vllm_cb_recovery_timeout_secs: u64,
 

@@ -7,10 +7,10 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BillingEventRepository, ModelRepository};
 use crate::services::inference_backend::InferenceBackend;
 
-/// Business logic for model deployment via vLLM.
+/// Business logic for model deployment via pluggable inference backends.
 ///
-/// vLLM runs as a sidecar service with `--enable-lora`. This service manages
-/// adapter lifecycle via vLLM's REST API (load/unload LoRA adapters).
+/// The inference backend (vLLM, TGI, SGLang) runs as a sidecar service.
+/// This service manages adapter lifecycle via the `InferenceBackend` trait.
 pub struct DeploymentService;
 
 impl DeploymentService {
@@ -329,7 +329,7 @@ mod tests {
         let resp = DeploymentStatusResponse {
             model_id: uuid::Uuid::new_v4().to_string(),
             deployment_status: DeploymentStatus::Active,
-            deployment_config: serde_json::json!({"vllm_adapter_name": "adapter-123"}),
+            deployment_config: serde_json::json!({"adapter_ref": "adapter-123", "backend": "vllm"}),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             adapter_path: Some("/path/to/adapter".to_string()),
         };
