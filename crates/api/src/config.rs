@@ -194,6 +194,40 @@ pub struct Config {
     /// OTEL Collector gRPC endpoint.
     #[serde(default = "default_otel_endpoint")]
     pub otel_endpoint: String,
+
+    // -- Feature Flags --
+    /// Feature flag provider backend. Current supported value: `static`.
+    #[serde(default = "default_feature_flags_provider")]
+    pub feature_flags_provider: String,
+
+    /// Inline JSON object of boolean flags for the static provider.
+    /// Example: {"billing.outbox.enabled":true,"idempotency.enforced":false}
+    #[serde(default)]
+    pub feature_flags_json: Option<String>,
+
+    /// Optional path to a JSON file of boolean flags for the static provider.
+    #[serde(default)]
+    pub feature_flags_file: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: server URL.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub unleash_url: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: API token or client token.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub unleash_api_token: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: application name.
+    #[serde(default = "default_unleash_app_name")]
+    #[allow(dead_code)]
+    pub unleash_app_name: String,
+
+    /// Future Unleash/OpenFeature integration: environment name.
+    #[serde(default = "default_unleash_environment")]
+    #[allow(dead_code)]
+    pub unleash_environment: String,
 }
 
 impl Config {
@@ -269,6 +303,15 @@ fn default_hsts_max_age() -> u64 {
 }
 fn default_otel_endpoint() -> String {
     "http://localhost:4317".to_string()
+}
+fn default_feature_flags_provider() -> String {
+    "static".to_string()
+}
+fn default_unleash_app_name() -> String {
+    "platform-api".to_string()
+}
+fn default_unleash_environment() -> String {
+    "development".to_string()
 }
 fn default_rate_limit_enabled() -> bool {
     true

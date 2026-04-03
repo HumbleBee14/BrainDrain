@@ -29,6 +29,7 @@ use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
+use crate::services::feature_flags::{FeatureFlags, build_feature_flags};
 use crate::services::inference_backend::{InferenceBackend, build_backend};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
@@ -68,6 +69,7 @@ struct AppStateInner {
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
     pub inference_backend: Arc<dyn InferenceBackend>,
+    pub feature_flags: Arc<FeatureFlags>,
     pub billing_batcher: Arc<BillingBatcher>,
     pub delivery_worker: Arc<DeliveryWorker>,
 }
@@ -189,6 +191,9 @@ impl AppState {
                 Arc::new(NoOpBillingProvider)
             };
 
+        // Feature flags: static config-backed today, provider-pluggable later.
+        let feature_flags = Arc::new(build_feature_flags(&config)?);
+
         // Inference backend — pluggable serving engine (vLLM / TGI / SGLang).
         // Circuit breaker wraps load_adapter calls; unload is always best-effort.
         let inference_circuit_breaker = CircuitBreaker::new(
@@ -255,6 +260,7 @@ impl AppState {
                 tenant_repo,
                 billing_provider,
                 inference_backend,
+                feature_flags,
                 billing_batcher,
                 delivery_worker,
             }),
@@ -355,6 +361,10 @@ impl AppState {
 
     pub fn inference_backend(&self) -> &dyn InferenceBackend {
         &*self.inner.inference_backend
+    }
+
+    pub fn feature_flags(&self) -> &FeatureFlags {
+        &self.inner.feature_flags
     }
 
     pub fn billing_batcher(&self) -> &BillingBatcher {
