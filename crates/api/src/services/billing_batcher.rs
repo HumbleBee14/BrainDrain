@@ -92,26 +92,24 @@ impl BillingBatcher {
         }
     }
 
-    /// Synchronous fallback: insert a single event directly into the DB.
+    /// Fallback: insert a single event directly into the DB.
     ///
-    /// Uses `tokio::task::spawn_blocking` + a new runtime handle to avoid
-    /// blocking the caller's async context, but the task is bounded by the
-    /// tokio blocking thread pool (not unbounded fan-out).
+    /// Captures the tokio runtime handle from the calling context, then
+    /// spawns a blocking thread that uses it. The handle is captured here
+    /// (where we're inside the runtime), not inside the spawned thread.
     fn direct_insert(&self, event: BillingEvent) {
         let db = self.fallback_db.clone();
-        // spawn_blocking is bounded by tokio's max_blocking_threads (default 512)
-        // so this cannot create unbounded fan-out unlike raw tokio::spawn
-        let _ = std::thread::spawn(move || {
-            let rt = tokio::runtime::Handle::try_current();
-            if let Ok(handle) = rt {
-                handle.block_on(async {
-                    if let Err(e) = insert_single(&db, &event).await {
-                        tracing::error!(error = %e, "Billing direct insert failed");
-                    }
-                });
-            } else {
-                tracing::error!("No tokio runtime for billing fallback insert");
-            }
+        // Capture the handle now — the caller is inside the tokio runtime.
+        let handle = tokio::runtime::Handle::current();
+        // spawn_blocking is bounded by tokio's max_blocking_threads (default 512).
+        // The JoinHandle is intentionally dropped — billing is best-effort under
+        // overload, and the blocking pool ensures bounded concurrency.
+        let _ = tokio::task::spawn_blocking(move || {
+            handle.block_on(async {
+                if let Err(e) = insert_single(&db, &event).await {
+                    tracing::error!(error = %e, "Billing direct insert failed");
+                }
+            });
         });
     }
 
@@ -150,6 +148,12 @@ async fn flush_loop(
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut consecutive_failures: usize = 0;
 
+    // Periodic partition check: ensure billing partitions exist for the next 3 months.
+    // Runs once per hour inside the flush loop so long-lived deployments never age
+    // past the pre-created partition window.
+    let mut partition_interval = tokio::time::interval(Duration::from_secs(3600));
+    partition_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             // Receive events
@@ -175,6 +179,12 @@ async fn flush_loop(
             _ = interval.tick() => {
                 if !buffer.is_empty() {
                     flush_batch(&db, &mut buffer, &mut consecutive_failures).await;
+                }
+            }
+            // Hourly partition maintenance (idempotent, <1ms)
+            _ = partition_interval.tick() => {
+                if let Err(e) = platform_db::ensure_billing_partitions(&db, 3).await {
+                    tracing::warn!("Partition maintenance failed: {e}");
                 }
             }
             // Explicit shutdown signal

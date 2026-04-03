@@ -43,19 +43,6 @@ class DeploymentStatus:
     INACTIVE = "inactive"
 
 
-# GPU hourly rates — mirrors crates/shared/src/constants.rs GPU_HOURLY_RATES.
-# If you change these, update the Rust source too.
-GPU_HOURLY_RATES: dict[str, float] = {
-    "t4": 0.80,
-    "a10g": 1.20,
-    "l40s": 1.80,
-    "a10040gb": 2.00,
-    "a10080gb": 3.00,
-    "h100": 4.50,
-}
-GPU_DEFAULT_HOURLY_RATE: float = 0.80
-
-
 # ── AUTO-GENERATED FROM crates/shared/src/constants.rs ──
 # DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
 
