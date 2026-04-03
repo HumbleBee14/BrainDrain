@@ -153,25 +153,30 @@ pub async fn chat_completions(
         vllm_request["stream_options"] = serde_json::json!({"include_usage": true});
     }
 
-    let inference_url = format!(
-        "{}/v1/chat/completions",
-        state.inference_backend().base_url()
-    );
+    let backend = state.inference_backend();
+    let inference_url = format!("{}/v1/chat/completions", backend.base_url());
     let http_client = state.http_client().clone();
 
-    let vllm_resp = http_client
-        .post(&inference_url)
-        .json(&vllm_request)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}")))?;
+    let vllm_resp = backend
+        .circuit_breaker()
+        .execute(|| async {
+            http_client
+                .post(&inference_url)
+                .json(&vllm_request)
+                .send()
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}"))
+                })
+        })
+        .await?;
 
     if !vllm_resp.status().is_success() {
         let status = vllm_resp.status();
         let body_text = vllm_resp.text().await.unwrap_or_default();
-        tracing::error!(status = %status, body = %body_text, "vLLM inference failed");
+        tracing::error!(status = %status, body = %body_text, "Inference request failed");
         return Err(AppError::Internal(anyhow::anyhow!(
-            "vLLM inference failed: {status}"
+            "Inference request failed: {status}"
         )));
     }
 
@@ -392,10 +397,8 @@ pub async fn batch_chat_completions(
         )))?
         .to_string();
 
-    let vllm_url = format!(
-        "{}/v1/chat/completions",
-        state.inference_backend().base_url()
-    );
+    let batch_backend = state.inference_backend();
+    let vllm_url = format!("{}/v1/chat/completions", batch_backend.base_url());
     let http_client = state.http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
 
@@ -405,6 +408,7 @@ pub async fn batch_chat_completions(
             let adapter = adapter_name.clone();
             let url = vllm_url.clone();
             let client = http_client.clone();
+            let cb = batch_backend.circuit_breaker();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
@@ -417,12 +421,20 @@ pub async fn batch_chat_completions(
                     "stream": false,
                 });
 
-                let resp = client
-                    .post(&url)
-                    .json(&vllm_request)
-                    .send()
-                    .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}")));
+                let resp = cb
+                    .execute(|| async {
+                        client
+                            .post(&url)
+                            .json(&vllm_request)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                AppError::Internal(anyhow::anyhow!(
+                                    "Cannot reach inference service: {e}"
+                                ))
+                            })
+                    })
+                    .await;
 
                 match resp {
                     Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {

@@ -57,9 +57,8 @@ impl DeploymentService {
                 .await?;
             return Err(AppError::Conflict {
                 message: format!(
-                    "vLLM adapter limit reached: {active_count}/{max_loras} adapters active \
-                     for base model '{}'. Undeploy an existing model first, or increase \
-                     VLLM_MAX_LORAS and restart vLLM with a higher --max-loras flag.",
+                    "Adapter limit reached: {active_count}/{max_loras} adapters active \
+                     for base model '{}'. Undeploy an existing model first.",
                     model.base_model
                 ),
             });

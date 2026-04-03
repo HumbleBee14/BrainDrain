@@ -305,14 +305,16 @@ redis-cli -u $REDIS_URL PING
 temporal workflow list --namespace default
 ```
 
-### Common alerts
+### Suggested alerts
 
-| Alert | Cause | Action |
-|-------|-------|--------|
-| `billing_batcher_channel_full` | Spike in inference traffic | Increase `BILLING_CHANNEL_CAPACITY`, investigate request rate |
-| `inference_circuit_breaker_open` | Inference backend unhealthy | Check backend logs, restart if needed |
-| `billing_partition_missing` | Cron missed monthly partition creation | Run `SELECT create_billing_partition(...)` manually |
-| `stale_deployments_reaped > 0` | API pods crashed mid-deploy | Normal during rolling deploys; investigate if persistent |
+Map these conditions onto your Prometheus metrics, log queries, or health checks:
+
+| Condition | Cause | Action |
+|-----------|-------|--------|
+| Billing queue saturation or dropped events in logs | Spike in inference traffic | Increase `BILLING_CHANNEL_CAPACITY`, investigate request rate |
+| Inference backend health degrades or circuit breaker opens | Backend unhealthy | Check backend logs, restart if needed |
+| Monthly billing partition missing (insert fails) | Hourly partition task missed | Run `SELECT create_billing_partition(...)` manually |
+| Stale deployments reaped outside normal rollouts | API pods crashed mid-deploy | Normal during rolling deploys; investigate if persistent |
 
 ### Rolling deploy checklist
 

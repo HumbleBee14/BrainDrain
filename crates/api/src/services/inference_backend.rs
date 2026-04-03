@@ -7,8 +7,8 @@
 //!
 //! # Adding a new backend
 //! 1. Implement `InferenceBackend` for your type.
-//! 2. Add a variant to [`BackendType`].
-//! 3. Wire it up in [`build_backend`].
+//! 2. Add a new backend type string branch in `build_backend` that constructs it.
+//! 3. Document the new backend's type string and adapter lifecycle endpoints below.
 //!
 //! # Supported backends
 //! | Backend     | Type string | Load endpoint              | Unload endpoint              |
@@ -41,6 +41,8 @@ pub struct AdapterHandle {
 /// Chat completion itself is **not** part of this trait: all supported engines
 /// expose an OpenAI-compatible `/v1/chat/completions` endpoint, so the
 /// inference proxy in `routes/inference.rs` calls `base_url()` directly.
+/// The circuit breaker is exposed via [`circuit_breaker()`] so callers can
+/// wrap inference requests too.
 #[async_trait]
 pub trait InferenceBackend: Send + Sync {
     /// Human-readable engine name for logs and the `backend` field in
@@ -51,10 +53,11 @@ pub trait InferenceBackend: Send + Sync {
     /// `inference.rs` constructs `{base_url}/v1/chat/completions` from this.
     fn base_url(&self) -> &str;
 
+    /// Circuit breaker shared across load and inference calls.
+    /// Routes use this to wrap chat completion HTTP requests.
+    fn circuit_breaker(&self) -> &CircuitBreaker;
+
     /// Load a LoRA adapter and return a handle for inference routing.
-    ///
-    /// Implementations may call through the circuit breaker so a degraded
-    /// serving engine surfaces as a proper error rather than a timeout.
     async fn load_adapter(&self, model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle>;
 
     /// Unload a LoRA adapter.  Best-effort — never fails hard; callers
@@ -98,6 +101,10 @@ impl InferenceBackend for VllmBackend {
         &self.base_url
     }
 
+    fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
+    }
+
     async fn load_adapter(&self, model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
         let adapter_ref = format!("adapter-{model_id}");
         let url = format!("{}/v1/load_lora_adapter", self.base_url);
@@ -134,14 +141,22 @@ impl InferenceBackend for VllmBackend {
 
     async fn unload_adapter(&self, adapter_ref: &str) -> AppResult<()> {
         let url = format!("{}/v1/unload_lora_adapter", self.base_url);
-        if let Err(e) = self
+        match self
             .http_client
             .post(&url)
             .json(&serde_json::json!({"lora_name": adapter_ref}))
             .send()
             .await
         {
-            tracing::warn!(adapter_ref, error = %e, "vLLM unload request failed (best-effort)");
+            Ok(resp) if !resp.status().is_success() => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(adapter_ref, %status, body = %body, "vLLM unload returned error (best-effort)");
+            }
+            Err(e) => {
+                tracing::warn!(adapter_ref, error = %e, "vLLM unload request failed (best-effort)");
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -183,6 +198,10 @@ impl InferenceBackend for TgiBackend {
         &self.base_url
     }
 
+    fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
+    }
+
     async fn load_adapter(&self, model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
         let adapter_id = format!("adapter-{model_id}");
         let url = format!("{}/lora_adapters", self.base_url);
@@ -219,8 +238,16 @@ impl InferenceBackend for TgiBackend {
 
     async fn unload_adapter(&self, adapter_ref: &str) -> AppResult<()> {
         let url = format!("{}/lora_adapters/{adapter_ref}", self.base_url);
-        if let Err(e) = self.http_client.delete(&url).send().await {
-            tracing::warn!(adapter_ref, error = %e, "TGI unload request failed (best-effort)");
+        match self.http_client.delete(&url).send().await {
+            Ok(resp) if !resp.status().is_success() => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(adapter_ref, %status, body = %body, "TGI unload returned error (best-effort)");
+            }
+            Err(e) => {
+                tracing::warn!(adapter_ref, error = %e, "TGI unload request failed (best-effort)");
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -262,6 +289,10 @@ impl InferenceBackend for SgLangBackend {
         &self.base_url
     }
 
+    fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
+    }
+
     async fn load_adapter(&self, model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
         let adapter_ref = format!("adapter-{model_id}");
         let url = format!("{}/load_lora", self.base_url);
@@ -298,14 +329,22 @@ impl InferenceBackend for SgLangBackend {
 
     async fn unload_adapter(&self, adapter_ref: &str) -> AppResult<()> {
         let url = format!("{}/unload_lora", self.base_url);
-        if let Err(e) = self
+        match self
             .http_client
             .post(&url)
             .json(&serde_json::json!({"lora_name": adapter_ref}))
             .send()
             .await
         {
-            tracing::warn!(adapter_ref, error = %e, "SGLang unload request failed (best-effort)");
+            Ok(resp) if !resp.status().is_success() => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(adapter_ref, %status, body = %body, "SGLang unload returned error (best-effort)");
+            }
+            Err(e) => {
+                tracing::warn!(adapter_ref, error = %e, "SGLang unload request failed (best-effort)");
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -323,7 +362,8 @@ pub fn build_backend(
     http_client: reqwest::Client,
     circuit_breaker: CircuitBreaker,
 ) -> Arc<dyn InferenceBackend> {
-    match backend_type {
+    let normalized = backend_type.trim().to_lowercase();
+    match normalized.as_str() {
         "tgi" => {
             tracing::info!(%server_url, "Inference backend: TGI");
             Arc::new(TgiBackend::new(server_url, http_client, circuit_breaker))
@@ -335,7 +375,7 @@ pub fn build_backend(
         other => {
             if other != "vllm" {
                 tracing::warn!(
-                    backend_type = other,
+                    backend_type = %other,
                     "Unknown INFERENCE_BACKEND_TYPE — defaulting to vLLM"
                 );
             }
