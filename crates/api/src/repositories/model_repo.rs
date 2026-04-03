@@ -124,15 +124,17 @@ impl ModelRepository for PgModelRepo {
     ) -> BoxFuture<'_, AppResult<bool>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
-            // Atomic: UPDATE only succeeds if the subquery count is below the limit.
-            // No TOCTOU race — PostgreSQL evaluates the WHERE in a single statement.
+            // Atomic slot claim: counts both 'active' AND 'deploying' models to
+            // prevent two concurrent deploys from both slipping through when
+            // neither has reached 'active' yet.
             let result = sqlx::query(
                 r#"
                 UPDATE models
                 SET deployment_status = 'deploying', updated_at = NOW()
                 WHERE id = $1 AND tenant_id = $2
                   AND (SELECT COUNT(*) FROM models
-                       WHERE base_model = $3 AND deployment_status = 'active') < $4
+                       WHERE base_model = $3
+                         AND deployment_status IN ('active', 'deploying')) < $4
                 "#,
             )
             .bind(model_id)

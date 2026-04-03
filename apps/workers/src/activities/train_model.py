@@ -1153,15 +1153,18 @@ async def _get_project_id(db, job_id: str) -> str:
 
 
 async def _maybe_void_billing(db, job_id: str, settings) -> None:
-    """Zero out actual_cost for a failed training job that ran less than MIN_BILLABLE_SECONDS.
+    """Set actual_cost on a failed training job based on elapsed GPU time.
 
-    Training billing lives on training_jobs.actual_cost (set on completion),
-    NOT in billing_events. So voiding means setting actual_cost = 0 on the
-    job row — no negative ledger entries needed.
+    - If elapsed < MIN_BILLABLE_SECONDS: set actual_cost = 0 (voided — too short to bill)
+    - If elapsed >= MIN_BILLABLE_SECONDS: compute actual_cost from elapsed hours x GPU rate
+      (so users are billed fairly for GPU time consumed, even on failure)
+
+    Training billing lives on training_jobs.actual_cost, NOT billing_events.
     """
     try:
         row = await db.fetchrow(
-            "SELECT started_at, completed_at FROM training_jobs WHERE id = $1",
+            "SELECT started_at, completed_at, gpu_class "
+            "FROM training_jobs WHERE id = $1",
             job_id,
         )
         if row is None or row["started_at"] is None or row["completed_at"] is None:
@@ -1171,19 +1174,37 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
         min_billable = getattr(settings, "min_billable_seconds", 300)
 
         if elapsed < min_billable:
+            # Too short — void entirely
             await db.execute(
                 "UPDATE training_jobs SET actual_cost = 0 WHERE id = $1",
                 job_id,
             )
             logger.info(
                 "Voided billing for job %s (ran %.1fs < %ds threshold)",
-                job_id,
-                elapsed,
-                min_billable,
+                job_id, elapsed, min_billable,
+            )
+        else:
+            # Ran long enough — bill for actual GPU time consumed
+            gpu_rates = {
+                "t4": 0.80, "a10g": 1.20, "l40s": 1.80,
+                "a10040gb": 2.00, "a10080gb": 3.00, "h100": 4.50,
+            }
+            gpu_class = (row["gpu_class"] or "").lower()
+            rate = gpu_rates.get(gpu_class, 0.80)  # default $0.80/hr
+            elapsed_hours = elapsed / 3600.0
+            actual_cost = round(elapsed_hours * rate, 2)
+
+            await db.execute(
+                "UPDATE training_jobs SET actual_cost = $2 WHERE id = $1",
+                job_id, actual_cost,
+            )
+            logger.info(
+                "Billed failed job %s for actual GPU time: %.1fs = $%.2f (%s @ $%.2f/hr)",
+                job_id, elapsed, actual_cost, gpu_class or "default", rate,
             )
     except Exception as e:
-        # Billing void is best-effort — never block the failure path
-        logger.warning("Failed to void billing for job %s: %s", job_id, e)
+        # Billing is best-effort — never block the failure path
+        logger.warning("Failed to update billing for job %s: %s", job_id, e)
 
 
 def _is_bf16_supported() -> bool:
