@@ -29,6 +29,10 @@ use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
+use crate::services::feature_flags::{
+    FeatureFlags, FlagContext, INFERENCE_BACKEND_TGI_ENABLED,
+    NOTIFICATIONS_DELIVERY_WORKER_ENABLED, build_feature_flags,
+};
 use crate::services::inference_backend::{InferenceBackend, build_backend};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
@@ -68,6 +72,7 @@ struct AppStateInner {
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
     pub inference_backend: Arc<dyn InferenceBackend>,
+    pub feature_flags: Arc<FeatureFlags>,
     pub billing_batcher: Arc<BillingBatcher>,
     pub delivery_worker: Arc<DeliveryWorker>,
 }
@@ -189,6 +194,19 @@ impl AppState {
                 Arc::new(NoOpBillingProvider)
             };
 
+        // Feature flags: static config-backed today, provider-pluggable later.
+        let feature_flags = Arc::new(build_feature_flags(&config)?);
+        let startup_flag_context = FlagContext::default();
+
+        if config.inference_backend_type == "tgi"
+            && !feature_flags.is_enabled(INFERENCE_BACKEND_TGI_ENABLED, &startup_flag_context)
+        {
+            return Err(anyhow::anyhow!(
+                "TGI backend selected but feature flag '{}' is disabled",
+                INFERENCE_BACKEND_TGI_ENABLED
+            ));
+        }
+
         // Inference backend — pluggable serving engine (vLLM / TGI / SGLang).
         // Circuit breaker wraps load_adapter calls; unload is always best-effort.
         let inference_circuit_breaker = CircuitBreaker::new(
@@ -219,11 +237,23 @@ impl AppState {
             .map_err(|e| anyhow::anyhow!("Failed to build webhook HTTP client: {e}"))?;
 
         // Notification delivery worker (configurable poll interval) {Current: polls every 10s for pending webhook deliveries)
-        let delivery_worker = Arc::new(DeliveryWorker::new(
-            Arc::clone(&notification_repo),
-            webhook_http_client,
-            Duration::from_secs(config.delivery_poll_interval_secs),
-        ));
+        let delivery_worker = if feature_flags.bool_variation(
+            NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
+            true,
+            &startup_flag_context,
+        ) {
+            Arc::new(DeliveryWorker::new(
+                Arc::clone(&notification_repo),
+                webhook_http_client,
+                Duration::from_secs(config.delivery_poll_interval_secs),
+            ))
+        } else {
+            tracing::warn!(
+                flag = NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
+                "Notification delivery worker disabled by feature flag"
+            );
+            Arc::new(DeliveryWorker::disabled())
+        };
 
         tracing::info!(
             "Infrastructure hardening initialized (circuit breaker + billing batcher + delivery worker)"
@@ -255,6 +285,7 @@ impl AppState {
                 tenant_repo,
                 billing_provider,
                 inference_backend,
+                feature_flags,
                 billing_batcher,
                 delivery_worker,
             }),
@@ -355,6 +386,10 @@ impl AppState {
 
     pub fn inference_backend(&self) -> &dyn InferenceBackend {
         &*self.inner.inference_backend
+    }
+
+    pub fn feature_flags(&self) -> &FeatureFlags {
+        &self.inner.feature_flags
     }
 
     pub fn billing_batcher(&self) -> &BillingBatcher {

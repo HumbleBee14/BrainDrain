@@ -194,6 +194,40 @@ pub struct Config {
     /// OTEL Collector gRPC endpoint.
     #[serde(default = "default_otel_endpoint")]
     pub otel_endpoint: String,
+
+    // -- Feature Flags --
+    /// Feature flag provider backend. Current supported value: `static`.
+    #[serde(default = "default_feature_flags_provider")]
+    pub feature_flags_provider: String,
+
+    /// Inline JSON object of boolean flags for the static provider.
+    /// Example: {"billing.outbox.enabled":true,"idempotency.enforced":false}
+    #[serde(default)]
+    pub feature_flags_json: Option<String>,
+
+    /// Optional path to a JSON file of boolean flags for the static provider.
+    #[serde(default)]
+    pub feature_flags_file: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: server URL.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub unleash_url: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: API token or client token.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub unleash_api_token: Option<String>,
+
+    /// Future Unleash/OpenFeature integration: application name.
+    #[serde(default = "default_unleash_app_name")]
+    #[allow(dead_code)]
+    pub unleash_app_name: String,
+
+    /// Future Unleash/OpenFeature integration: environment name.
+    #[serde(default = "default_unleash_environment")]
+    #[allow(dead_code)]
+    pub unleash_environment: String,
 }
 
 impl Config {
@@ -216,6 +250,24 @@ impl Config {
     /// Whether we're running in development mode.
     pub fn is_dev(&self) -> bool {
         self.environment == "development"
+    }
+
+    /// Build a Config with all defaults populated, only requiring the fields
+    /// that have no default (database_url, s3 keys). Used by tests so they
+    /// don't break every time a new field is added to Config.
+    #[cfg(test)]
+    pub fn test_default() -> Self {
+        // Deserialize from a minimal set of key-value pairs.
+        // All other fields use their serde defaults.
+        let pairs: Vec<(String, String)> = vec![
+            (
+                "DATABASE_URL".into(),
+                "postgres://test:test@localhost/test".into(),
+            ),
+            ("S3_ACCESS_KEY".into(), "test-key".into()),
+            ("S3_SECRET_KEY".into(), "test-secret".into()),
+        ];
+        envy::from_iter(pairs).expect("Config::test_default should always work")
     }
 }
 
@@ -269,6 +321,15 @@ fn default_hsts_max_age() -> u64 {
 }
 fn default_otel_endpoint() -> String {
     "http://localhost:4317".to_string()
+}
+fn default_feature_flags_provider() -> String {
+    "static".to_string()
+}
+fn default_unleash_app_name() -> String {
+    "platform-api".to_string()
+}
+fn default_unleash_environment() -> String {
+    "development".to_string()
 }
 fn default_rate_limit_enabled() -> bool {
     true

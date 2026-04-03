@@ -10,6 +10,7 @@ pub mod deployment_service;
 pub mod document_service;
 pub mod evaluation_service;
 pub mod export_service;
+pub mod feature_flags;
 pub mod inference_backend;
 pub mod model_service;
 pub mod notification_service;

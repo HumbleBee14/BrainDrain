@@ -24,6 +24,10 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use app_state::AppState;
 use config::Config;
+use services::feature_flags::{
+    BILLING_OUTBOX_ENABLED, DEPLOYMENTS_MULTI_INSTANCE_ENABLED, FlagContext, IDEMPOTENCY_ENFORCED,
+    INFERENCE_BACKEND_TGI_ENABLED, NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -60,6 +64,28 @@ async fn main() -> anyhow::Result<()> {
             "Failed to ensure billing partitions: {e} — billing inserts for future months may fail"
         );
     }
+
+    let default_flag_context = FlagContext::default();
+    tracing::info!(
+        billing_outbox = state
+            .feature_flags()
+            .is_enabled(BILLING_OUTBOX_ENABLED, &default_flag_context),
+        idempotency = state
+            .feature_flags()
+            .is_enabled(IDEMPOTENCY_ENFORCED, &default_flag_context),
+        deployments_multi_instance = state
+            .feature_flags()
+            .is_enabled(DEPLOYMENTS_MULTI_INSTANCE_ENABLED, &default_flag_context),
+        delivery_worker = state.feature_flags().bool_variation(
+            NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
+            true,
+            &default_flag_context,
+        ),
+        tgi_backend = state
+            .feature_flags()
+            .is_enabled(INFERENCE_BACKEND_TGI_ENABLED, &default_flag_context),
+        "Feature flags initialized"
+    );
 
     // Build middleware stack
     let cors_origins = config.cors_origins_list();
