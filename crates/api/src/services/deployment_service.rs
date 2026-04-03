@@ -150,22 +150,25 @@ impl DeploymentService {
             });
         }
 
-        // Warn if the model was deployed on a different backend than what's currently running.
-        // We still proceed with undeploy (DB status update) but the unload call may no-op.
+        // Hard fail if the model was deployed on a different backend.
         if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
             && deployed_backend != backend.name()
         {
-            tracing::warn!(
-                model_id = %model_id,
-                deployed_on = deployed_backend,
-                current = backend.name(),
-                "Undeploying model from a different backend than it was deployed on"
-            );
+            return Err(AppError::BadRequest {
+                message: format!(
+                    "Model was deployed on '{}' but current backend is '{}'. \
+                     Cannot undeploy from a different backend.",
+                    deployed_backend,
+                    backend.name()
+                ),
+            });
         }
 
         let adapter_ref = model.deployment_config["adapter_ref"]
             .as_str()
-            .unwrap_or(&format!("adapter-{model_id}"))
+            .ok_or(AppError::Internal(anyhow::anyhow!(
+                "Model deployment config missing adapter_ref"
+            )))?
             .to_string();
 
         // Best-effort — backend errors are logged but never surface as HTTP errors.
