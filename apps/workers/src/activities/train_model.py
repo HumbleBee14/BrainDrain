@@ -38,7 +38,7 @@ from src.activities.training_engine import (
     get_strategy,
     register_strategy,
 )
-from src.constants import TrainingJobStatus
+from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
 from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
 
@@ -1185,12 +1185,8 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
             )
         else:
             # Ran long enough — bill for actual GPU time consumed
-            gpu_rates = {
-                "t4": 0.80, "a10g": 1.20, "l40s": 1.80,
-                "a10040gb": 2.00, "a10080gb": 3.00, "h100": 4.50,
-            }
             gpu_class = (row["gpu_class"] or "").lower()
-            rate = gpu_rates.get(gpu_class, 0.80)  # default $0.80/hr
+            rate = GPU_HOURLY_RATES.get(gpu_class, GPU_DEFAULT_HOURLY_RATE)
             elapsed_hours = elapsed / 3600.0
             actual_cost = round(elapsed_hours * rate, 2)
 
