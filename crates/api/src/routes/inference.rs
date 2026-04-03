@@ -126,11 +126,14 @@ pub async fn chat_completions(
         });
     }
 
-    // Get the vLLM adapter name from deployment config
-    let adapter_name = model.deployment_config["vllm_adapter_name"]
+    // Read the adapter reference from deployment config.
+    // "adapter_ref" is the canonical key; "vllm_adapter_name" is the legacy key
+    // written by older deploys — we fall back to it for rolling update compat.
+    let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
+        .or_else(|| model.deployment_config["vllm_adapter_name"].as_str())
         .ok_or(AppError::Internal(anyhow::anyhow!(
-            "Model deployment config missing vllm_adapter_name"
+            "Model deployment config missing adapter_ref"
         )))?
         .to_string();
 
@@ -154,21 +157,20 @@ pub async fn chat_completions(
         vllm_request["stream_options"] = serde_json::json!({"include_usage": true});
     }
 
-    let vllm_url = state.config().vllm_api_url.clone();
+    let inference_url = format!(
+        "{}/v1/chat/completions",
+        state.inference_backend().base_url()
+    );
     let http_client = state.http_client().clone();
 
-    // Execute vLLM request through circuit breaker
-    let vllm_resp = state
-        .vllm_circuit_breaker()
-        .execute(|| async {
-            http_client
-                .post(format!("{vllm_url}/v1/chat/completions"))
-                .json(&vllm_request)
-                .send()
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach vLLM service: {e}")))
-        })
-        .await?;
+    let vllm_resp = http_client
+        .post(&inference_url)
+        .json(&vllm_request)
+        .send()
+        .await
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}"))
+        })?;
 
     if !vllm_resp.status().is_success() {
         let status = vllm_resp.status();
@@ -389,14 +391,18 @@ pub async fn batch_chat_completions(
         });
     }
 
-    let adapter_name = model.deployment_config["vllm_adapter_name"]
+    let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
+        .or_else(|| model.deployment_config["vllm_adapter_name"].as_str())
         .ok_or(AppError::Internal(anyhow::anyhow!(
-            "Model deployment config missing vllm_adapter_name"
+            "Model deployment config missing adapter_ref"
         )))?
         .to_string();
 
-    let vllm_url = state.config().vllm_api_url.clone();
+    let vllm_url = format!(
+        "{}/v1/chat/completions",
+        state.inference_backend().base_url()
+    );
     let http_client = state.http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
 
@@ -406,7 +412,6 @@ pub async fn batch_chat_completions(
             let adapter = adapter_name.clone();
             let url = vllm_url.clone();
             let client = http_client.clone();
-            let cb = state.vllm_circuit_breaker();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
@@ -419,20 +424,12 @@ pub async fn batch_chat_completions(
                     "stream": false,
                 });
 
-                let resp = cb
-                    .execute(|| async {
-                        client
-                            .post(format!("{url}/v1/chat/completions"))
-                            .json(&vllm_request)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                AppError::Internal(anyhow::anyhow!(
-                                    "Cannot reach vLLM service: {e}"
-                                ))
-                            })
-                    })
-                    .await;
+                let resp = client
+                    .post(&url)
+                    .json(&vllm_request)
+                    .send()
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}")));
 
                 match resp {
                     Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {

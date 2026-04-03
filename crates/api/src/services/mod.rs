@@ -1,4 +1,5 @@
 pub mod api_key_service;
+pub mod inference_backend;
 pub mod audit_logger;
 pub mod billing_batcher;
 pub mod billing_provider;

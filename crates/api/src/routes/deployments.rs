@@ -52,8 +52,7 @@ pub async fn deploy_model(
     let result = DeploymentService::deploy(
         state.model_repo(),
         state.billing_event_repo(),
-        state.http_client(),
-        state.vllm_circuit_breaker(),
+        state.inference_backend(),
         state.config(),
         user.tenant_id,
         model_id,
@@ -93,8 +92,7 @@ pub async fn undeploy_model(
     require_role(&user, TeamRole::Member)?;
     let result = DeploymentService::undeploy(
         state.model_repo(),
-        state.http_client(),
-        state.config(),
+        state.inference_backend(),
         user.tenant_id,
         model_id,
     )

@@ -29,6 +29,7 @@ use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
+use crate::services::inference_backend::{InferenceBackend, build_backend};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -66,7 +67,7 @@ struct AppStateInner {
     pub notification_repo: Arc<dyn NotificationRepository>,
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
-    pub vllm_circuit_breaker: CircuitBreaker,
+    pub inference_backend: Arc<dyn InferenceBackend>,
     pub billing_batcher: Arc<BillingBatcher>,
     pub delivery_worker: Arc<DeliveryWorker>,
 }
@@ -188,10 +189,17 @@ impl AppState {
                 Arc::new(NoOpBillingProvider)
             };
 
-        // Circuit breaker for vLLM calls (configurable via VLLM_CB_FAILURE_THRESHOLD / VLLM_CB_RECOVERY_TIMEOUT_SECS)
-        let vllm_circuit_breaker = CircuitBreaker::new(
+        // Inference backend — pluggable serving engine (vLLM / TGI / SGLang).
+        // Circuit breaker wraps load_adapter calls; unload is always best-effort.
+        let inference_circuit_breaker = CircuitBreaker::new(
             config.vllm_cb_failure_threshold,
             Duration::from_secs(config.vllm_cb_recovery_timeout_secs),
+        );
+        let inference_backend = build_backend(
+            &config.inference_backend_type,
+            config.inference_server_url.clone(),
+            http_client.clone(),
+            inference_circuit_breaker,
         );
 
         // Billing micro-batcher (configurable via env vars) (Current: 10K channel capacity, flush every 5s or 1000 events)
@@ -246,7 +254,7 @@ impl AppState {
                 notification_repo,
                 tenant_repo,
                 billing_provider,
-                vllm_circuit_breaker,
+                inference_backend,
                 billing_batcher,
                 delivery_worker,
             }),
@@ -345,8 +353,8 @@ impl AppState {
         &*self.inner.billing_provider
     }
 
-    pub fn vllm_circuit_breaker(&self) -> &CircuitBreaker {
-        &self.inner.vllm_circuit_breaker
+    pub fn inference_backend(&self) -> &dyn InferenceBackend {
+        &*self.inner.inference_backend
     }
 
     pub fn billing_batcher(&self) -> &BillingBatcher {

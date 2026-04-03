@@ -84,13 +84,22 @@ pub struct Config {
     #[serde(default = "default_inference_max_tokens")]
     pub inference_max_tokens: i64,
 
-    // ── vLLM ──
-    /// vLLM server URL for model inference.
-    #[serde(default = "default_vllm_api_url")]
-    pub vllm_api_url: String,
+    // ── Inference Backend ──
+    /// Serving engine type. Supported: `vllm` (default), `tgi`, `sglang`.
+    /// Set via INFERENCE_BACKEND_TYPE env var.
+    #[serde(default = "default_inference_backend_type")]
+    pub inference_backend_type: String,
 
-    /// Maximum number of LoRA adapters served simultaneously on one vLLM instance.
-    /// Must match the `--max-loras` flag passed to vLLM.
+    /// Base URL for the inference serving engine.
+    /// Maps to INFERENCE_SERVER_URL (legacy alias: VLLM_API_URL still accepted).
+    #[serde(
+        alias = "vllm_api_url",
+        default = "default_inference_server_url"
+    )]
+    pub inference_server_url: String,
+
+    /// Maximum number of LoRA adapters served simultaneously.
+    /// Must match `--max-loras` on vLLM or equivalent for other engines.
     #[serde(default = "default_vllm_max_loras")]
     pub vllm_max_loras: i64,
 
@@ -247,7 +256,10 @@ fn default_temporal_host() -> String {
 fn default_temporal_namespace() -> String {
     "default".to_string()
 }
-fn default_vllm_api_url() -> String {
+fn default_inference_backend_type() -> String {
+    "vllm".to_string()
+}
+fn default_inference_server_url() -> String {
     "http://localhost:8080".to_string()
 }
 fn default_cors_origins() -> String {
