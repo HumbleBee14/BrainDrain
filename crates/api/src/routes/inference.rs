@@ -133,28 +133,41 @@ pub async fn chat_completions(
         )))?
         .to_string();
 
+    // Validate the model was deployed on the same backend we're currently running.
+    let backend = state.inference_backend();
+    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
+        && deployed_backend != backend.name()
+    {
+        return Err(AppError::BadRequest {
+            message: format!(
+                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
+                deployed_backend,
+                backend.name()
+            ),
+        });
+    }
+
     // Cap max_tokens to prevent GPU abuse (configurable via INFERENCE_MAX_TOKENS)
     let max_tokens = body.max_tokens.min(state.config().inference_max_tokens);
 
     let is_streaming = body.stream.unwrap_or(false);
 
-    // Build the inference request — use the adapter name as the "model" field
-    let mut vllm_request = serde_json::json!({
-        "model": adapter_name,
-        "messages": body.messages,
-        "temperature": body.temperature,
-        "max_tokens": max_tokens,
-        "top_p": body.top_p.unwrap_or(1.0),
-        "stream": is_streaming,
-    });
+    // Build the inference request via the backend (handles adapter selection correctly)
+    let mut inference_request = backend.build_inference_body(
+        &adapter_name,
+        &serde_json::json!(body.messages),
+        body.temperature,
+        max_tokens,
+        body.top_p.unwrap_or(1.0),
+        is_streaming,
+    );
 
     // For streaming, request usage in the final chunk
     if is_streaming {
-        vllm_request["stream_options"] = serde_json::json!({"include_usage": true});
+        inference_request["stream_options"] = serde_json::json!({"include_usage": true});
     }
 
-    let backend = state.inference_backend();
-    let inference_url = format!("{}/v1/chat/completions", backend.base_url());
+    let inference_url = backend.chat_completions_url();
     let http_client = state.http_client().clone();
 
     let vllm_resp = backend
@@ -162,7 +175,7 @@ pub async fn chat_completions(
         .execute(|| async {
             http_client
                 .post(&inference_url)
-                .json(&vllm_request)
+                .json(&inference_request)
                 .send()
                 .await
                 .map_err(|e| {
@@ -398,7 +411,21 @@ pub async fn batch_chat_completions(
         .to_string();
 
     let batch_backend = state.inference_backend();
-    let vllm_url = format!("{}/v1/chat/completions", batch_backend.base_url());
+
+    // Validate backend matches what the model was deployed on
+    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
+        && deployed_backend != batch_backend.name()
+    {
+        return Err(AppError::BadRequest {
+            message: format!(
+                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
+                deployed_backend,
+                batch_backend.name()
+            ),
+        });
+    }
+
+    let batch_url = batch_backend.chat_completions_url();
     let http_client = state.http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
 
@@ -406,26 +433,26 @@ pub async fn batch_chat_completions(
     let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
         .map(|item| {
             let adapter = adapter_name.clone();
-            let url = vllm_url.clone();
+            let url = batch_url.clone();
             let client = http_client.clone();
             let cb = batch_backend.circuit_breaker();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
-                let vllm_request = serde_json::json!({
-                    "model": adapter,
-                    "messages": item.messages,
-                    "temperature": item.temperature,
-                    "max_tokens": max_tokens,
-                    "top_p": item.top_p.unwrap_or(1.0),
-                    "stream": false,
-                });
+                let request_body = batch_backend.build_inference_body(
+                    &adapter,
+                    &serde_json::json!(item.messages),
+                    item.temperature,
+                    max_tokens,
+                    item.top_p.unwrap_or(1.0),
+                    false,
+                );
 
                 let resp = cb
                     .execute(|| async {
                         client
                             .post(&url)
-                            .json(&vllm_request)
+                            .json(&request_body)
                             .send()
                             .await
                             .map_err(|e| {
