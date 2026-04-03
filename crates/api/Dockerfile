@@ -14,7 +14,7 @@ RUN cargo build --release --bin platform-api
 # ── Stage 2: Runtime ──
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -r -s /bin/false appuser
 
@@ -29,6 +29,6 @@ ENV RUST_LOG=info
 EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
-  CMD ["platform-api", "--health-check"] || curl -f http://localhost:8000/health || exit 1
+  CMD curl -fsS http://localhost:8000/health || exit 1
 
 CMD ["platform-api"]
