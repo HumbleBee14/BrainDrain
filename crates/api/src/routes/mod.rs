@@ -1,6 +1,7 @@
 pub mod api_keys;
 pub mod audit_logs;
 pub mod billing;
+pub mod catalog;
 pub mod dashboard;
 pub mod datasets;
 pub mod deployments;
@@ -43,6 +44,7 @@ fn v1_router() -> Router<AppState> {
         .merge(pipeline::router())
         .merge(datasets::router())
         .merge(training::router())
+        .merge(catalog::router())
         .merge(evaluations::router())
         .merge(exports::router())
         .merge(api_keys::router())
@@ -92,6 +94,8 @@ fn v1_router() -> Router<AppState> {
         training::get_training_metrics,
         training::list_models,
         training::get_model,
+        // Catalog
+        catalog::get_catalog,
         // Evaluations
         evaluations::create_evaluation,
         evaluations::list_evaluations,
@@ -221,6 +225,10 @@ fn v1_router() -> Router<AppState> {
         crate::services::deployment_service::DeploymentStatusResponse,
         // Plan limits
         crate::services::plan_service::PlanLimits,
+        // Catalog
+        catalog::CatalogModel,
+        catalog::CatalogResponse,
+        catalog::CatalogQuery,
         // Shared enums
         platform_shared::enums::DocumentStatus,
         platform_shared::enums::DatasetStatus,
