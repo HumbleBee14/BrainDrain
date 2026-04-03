@@ -54,3 +54,19 @@ GPU_HOURLY_RATES: dict[str, float] = {
     "h100": 4.50,
 }
 GPU_DEFAULT_HOURLY_RATE: float = 0.80
+
+
+# ── AUTO-GENERATED FROM crates/shared/src/constants.rs ──
+# DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
+
+GPU_HOURLY_RATES: dict[str, float] = {
+    "t4": 0.8,
+    "a10g": 1.2,
+    "l40s": 1.8,
+    "a10040gb": 2.0,
+    "a10080gb": 3.0,
+    "h100": 4.5,
+}
+GPU_DEFAULT_HOURLY_RATE: float = 0.8
+
+# ── END AUTO-GENERATED ──

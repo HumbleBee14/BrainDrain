@@ -44,3 +44,20 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgP
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     sqlx::migrate!("src/migrations").run(pool).await
 }
+
+/// Ensure billing partitions exist for the next N months.
+///
+/// Calls the `create_billing_partition(date)` PG function created by migration 003.
+/// Idempotent — safe to call on every startup. Without this, inserts into future
+/// months fail on the partitioned billing_events table.
+pub async fn ensure_billing_partitions(pool: &PgPool, months_ahead: u32) -> Result<(), sqlx::Error> {
+    for i in 0..months_ahead {
+        sqlx::query(
+            "SELECT create_billing_partition((date_trunc('month', CURRENT_DATE) + make_interval(months => $1))::date)",
+        )
+        .bind(i as i32)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}

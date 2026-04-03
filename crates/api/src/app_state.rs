@@ -194,7 +194,7 @@ impl AppState {
             Duration::from_secs(config.vllm_cb_recovery_timeout_secs),
         );
 
-        // Billing micro-batcher (configurable via env vars)
+        // Billing micro-batcher (configurable via env vars) (Current: 10K channel capacity, flush every 5s or 1000 events)
         let billing_batcher = Arc::new(BillingBatcher::new(
             db.clone(),
             config.billing_channel_capacity,
@@ -210,7 +210,7 @@ impl AppState {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build webhook HTTP client: {e}"))?;
 
-        // Notification delivery worker (configurable poll interval)
+        // Notification delivery worker (configurable poll interval) {Current: polls every 10s for pending webhook deliveries)
         let delivery_worker = Arc::new(DeliveryWorker::new(
             Arc::clone(&notification_repo),
             webhook_http_client,

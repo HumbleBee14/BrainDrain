@@ -9,7 +9,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-RUN cargo build --release --bin platform-api
+RUN cargo build --release --bin platform-api --bin migrate
 
 # ── Stage 2: Runtime ──
 FROM debian:bookworm-slim AS runtime
@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 RUN useradd -r -s /bin/false appuser
 
 COPY --from=builder /app/target/release/platform-api /usr/local/bin/platform-api
+COPY --from=builder /app/target/release/migrate /usr/local/bin/platform-migrate
 
 # Copy migrations for runtime migration execution
 COPY crates/db/src/migrations/ /app/migrations/

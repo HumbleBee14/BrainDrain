@@ -134,6 +134,22 @@ services:
       retries: 10
       start_period: 30s
 
+  # ── Database Migrations ──
+  # Runs once on deploy, then exits. Must complete before API starts.
+  # Uses the same build image as the API (migration binary is included).
+
+  migrate:
+    build:
+      context: .
+      dockerfile: crates/api/Dockerfile
+    entrypoint: ["platform-migrate"]
+    environment:
+      DATABASE_URL: postgres://platform:${DB_PASSWORD}@postgres:5432/platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   # ── Application Services ──
 
   api:
