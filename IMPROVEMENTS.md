@@ -215,11 +215,11 @@ of the `ObjectStorage` trait makes testing slow and environment-dependent.
 | 6 | Per-API-key rate limiting | Medium | ✅ Done (already implemented) |
 | 7 | RLS enforcement | Medium | ✅ Done — before_acquire + migration 009 |
 | 8 | Streaming inference (SSE) | Medium | ✅ Done (already implemented) |
-| 9 | Multi-adapter serving | High | Pending |
-| 10 | Smart defaults / auto-config | High | Pending |
+| 9 | Multi-adapter serving | High | ✅ Done — adapter limit enforcement + VLLM_MAX_LORAS |
+| 10 | Smart defaults / auto-config | High | ✅ Done — GET /api/v1/models/catalog + auto-suggest |
 | 11 | Training ETA display | Low | ✅ Done — eta_seconds in metrics stream |
-| 12 | Onboarding wizard | High | Pending |
+| 12 | Onboarding wizard | High | ✅ Done (already implemented — onboarding-banner.tsx) |
 | 13 | Team query O(1) fix | Trivial | ✅ Done — SELECT EXISTS |
-| 14 | Billing credit-back | Medium | Pending |
-| 15 | In-memory storage mock | Low | Pending |
+| 14 | Billing credit-back | Medium | ✅ Done — _maybe_void_billing + MIN_BILLABLE_SECONDS |
+| 15 | In-memory storage mock | Low | ✅ Done — InMemoryStorage + 10 tests |
 | 16 | Safety benchmark coverage | Low | ✅ Done — 30 → 65 prompts, 5 categories |
