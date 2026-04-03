@@ -260,7 +260,10 @@ impl Config {
         // Deserialize from a minimal set of key-value pairs.
         // All other fields use their serde defaults.
         let pairs: Vec<(String, String)> = vec![
-            ("DATABASE_URL".into(), "postgres://test:test@localhost/test".into()),
+            (
+                "DATABASE_URL".into(),
+                "postgres://test:test@localhost/test".into(),
+            ),
             ("S3_ACCESS_KEY".into(), "test-key".into()),
             ("S3_SECRET_KEY".into(), "test-secret".into()),
         ];

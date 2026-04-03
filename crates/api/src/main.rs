@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
         idempotency = state
             .feature_flags()
             .is_enabled(IDEMPOTENCY_ENFORCED, &default_flag_context),
-        multi_instance_inference = state
+        deployments_multi_instance = state
             .feature_flags()
             .is_enabled(DEPLOYMENTS_MULTI_INSTANCE_ENABLED, &default_flag_context),
         delivery_worker = state.feature_flags().bool_variation(

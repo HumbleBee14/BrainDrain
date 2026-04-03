@@ -88,12 +88,14 @@ pub struct StaticFeatureFlagProvider {
 
 impl StaticFeatureFlagProvider {
     pub fn from_config(config: &Config) -> anyhow::Result<Self> {
-        if let Some(path) = config.feature_flags_file.as_deref()
-            && !path.trim().is_empty()
-        {
-            let contents = std::fs::read_to_string(path)
-                .map_err(|e| anyhow::anyhow!("Failed to read FEATURE_FLAGS_FILE '{path}': {e}"))?;
-            return Self::from_json(&contents);
+        if let Some(raw_path) = config.feature_flags_file.as_deref() {
+            let path = raw_path.trim();
+            if !path.is_empty() {
+                let contents = std::fs::read_to_string(path).map_err(|e| {
+                    anyhow::anyhow!("Failed to read FEATURE_FLAGS_FILE '{path}': {e}")
+                })?;
+                return Self::from_json(&contents);
+            }
         }
 
         if let Some(raw_json) = config.feature_flags_json.as_deref() {
