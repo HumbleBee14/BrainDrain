@@ -126,12 +126,8 @@ pub async fn chat_completions(
         });
     }
 
-    // Read the adapter reference from deployment config.
-    // "adapter_ref" is the canonical key; "vllm_adapter_name" is the legacy key
-    // written by older deploys — we fall back to it for rolling update compat.
     let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
-        .or_else(|| model.deployment_config["vllm_adapter_name"].as_str())
         .ok_or(AppError::Internal(anyhow::anyhow!(
             "Model deployment config missing adapter_ref"
         )))?
@@ -393,7 +389,6 @@ pub async fn batch_chat_completions(
 
     let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
-        .or_else(|| model.deployment_config["vllm_adapter_name"].as_str())
         .ok_or(AppError::Internal(anyhow::anyhow!(
             "Model deployment config missing adapter_ref"
         )))?

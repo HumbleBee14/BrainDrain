@@ -71,10 +71,7 @@ impl DeploymentService {
         match load_result {
             Ok(handle) => {
                 let deployment_config = serde_json::json!({
-                    // "adapter_ref" is the generic key; "vllm_adapter_name" kept for
-                    // backward-compat with already-deployed models during a rolling update.
                     "adapter_ref": handle.adapter_ref,
-                    "vllm_adapter_name": handle.adapter_ref,
                     "adapter_path": adapter_path,
                     "base_model": model.base_model,
                     "backend": backend.name(),
@@ -154,10 +151,8 @@ impl DeploymentService {
             });
         }
 
-        // Read adapter_ref; fall back to legacy vllm_adapter_name for rolling updates.
         let adapter_ref = model.deployment_config["adapter_ref"]
             .as_str()
-            .or_else(|| model.deployment_config["vllm_adapter_name"].as_str())
             .unwrap_or(&format!("adapter-{model_id}"))
             .to_string();
 
