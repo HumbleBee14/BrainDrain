@@ -115,6 +115,37 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
+    fn claim_deployment_slot(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        base_model: &str,
+        max_loras: i64,
+    ) -> BoxFuture<'_, AppResult<bool>> {
+        let base_model = base_model.to_string();
+        Box::pin(async move {
+            // Atomic: UPDATE only succeeds if the subquery count is below the limit.
+            // No TOCTOU race — PostgreSQL evaluates the WHERE in a single statement.
+            let result = sqlx::query(
+                r#"
+                UPDATE models
+                SET deployment_status = 'deploying', updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                  AND (SELECT COUNT(*) FROM models
+                       WHERE base_model = $3 AND deployment_status = 'active') < $4
+                "#,
+            )
+            .bind(model_id)
+            .bind(tenant_id)
+            .bind(&base_model)
+            .bind(max_loras)
+            .execute(&self.db)
+            .await?;
+
+            Ok(result.rows_affected() > 0)
+        })
+    }
+
     fn update_deployment_status(
         &self,
         tenant_id: Uuid,

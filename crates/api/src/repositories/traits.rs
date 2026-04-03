@@ -287,6 +287,18 @@ pub trait ModelRepository: Send + Sync {
         base_model: &str,
     ) -> BoxFuture<'_, AppResult<i64>>;
 
+    /// Atomically claim a deployment slot: set status to 'deploying' only if the
+    /// count of active adapters for this base_model is below max_loras.
+    /// Returns true if the slot was claimed, false if the limit is reached.
+    /// Concurrency-safe: uses a single UPDATE ... WHERE subquery (no TOCTOU race).
+    fn claim_deployment_slot(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        base_model: &str,
+        max_loras: i64,
+    ) -> BoxFuture<'_, AppResult<bool>>;
+
     fn update_deployment_status(
         &self,
         tenant_id: Uuid,

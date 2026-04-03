@@ -31,8 +31,8 @@ pub struct CatalogModel {
     pub recommended_for: Vec<String>,
     /// Whether this model requires a HuggingFace token (gated model)
     pub gated: bool,
-    /// Suggested training mode based on model characteristics
-    pub suggested_mode: String,
+    /// Default training mode for this model (static metadata, not pair-count-based)
+    pub default_mode: String,
     /// Estimated training time in hours (for 1K pairs on A10G)
     pub est_hours_1k_pairs: f32,
     /// Estimated cost in USD (for 1K pairs on A10G at $1.10/hr)
@@ -62,6 +62,9 @@ pub struct CatalogQuery {
 ///
 /// Returns a curated catalog of recommended base models with auto-suggestions.
 /// Pass `?task_type=question_answering&pair_count=500` for smart defaults.
+///
+/// This endpoint is intentionally public (no auth required) — the catalog
+/// contains no tenant data, just static model metadata.
 #[utoipa::path(
     get,
     path = "/api/v1/models/catalog",
@@ -73,7 +76,6 @@ pub struct CatalogQuery {
     responses(
         (status = 200, description = "Model catalog with suggestions", body = CatalogResponse),
     ),
-    security(("jwt" = []))
 )]
 pub async fn get_catalog(
     State(_state): State<AppState>,
@@ -132,7 +134,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             ],
             recommended_for: vec!["question_answering".into(), "instruction_following".into()],
             gated: true,
-            suggested_mode: "quick".into(),
+            default_mode: "quick".into(),
             est_hours_1k_pairs: 1.5,
             est_cost_1k_pairs: 1.65,
         },
@@ -145,7 +147,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             best_for: vec!["Instruction following".into(), "Fast inference".into()],
             recommended_for: vec!["instruction_following".into()],
             gated: false,
-            suggested_mode: "quick".into(),
+            default_mode: "quick".into(),
             est_hours_1k_pairs: 1.2,
             est_cost_1k_pairs: 1.32,
         },
@@ -158,7 +160,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             best_for: vec!["Lightweight".into(), "Low latency".into(), "Edge deployment".into()],
             recommended_for: vec!["custom".into()],
             gated: false,
-            suggested_mode: "quick".into(),
+            default_mode: "quick".into(),
             est_hours_1k_pairs: 0.8,
             est_cost_1k_pairs: 0.88,
         },
@@ -171,7 +173,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             best_for: vec!["Multilingual".into(), "Strong reasoning".into()],
             recommended_for: vec!["reasoning".into()],
             gated: true,
-            suggested_mode: "aligned".into(),
+            default_mode: "aligned".into(),
             est_hours_1k_pairs: 2.0,
             est_cost_1k_pairs: 2.20,
         },
@@ -184,7 +186,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             best_for: vec!["Code".into(), "Reasoning".into(), "Math".into()],
             recommended_for: vec!["reasoning".into()],
             gated: false,
-            suggested_mode: "reasoning".into(),
+            default_mode: "reasoning".into(),
             est_hours_1k_pairs: 1.5,
             est_cost_1k_pairs: 1.65,
         },
@@ -201,7 +203,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             ],
             recommended_for: vec!["custom".into()],
             gated: true,
-            suggested_mode: "quick".into(),
+            default_mode: "quick".into(),
             est_hours_1k_pairs: 0.3,
             est_cost_1k_pairs: 0.33,
         },
@@ -218,7 +220,7 @@ fn build_catalog() -> Vec<CatalogModel> {
             ],
             recommended_for: vec!["instruction_following".into()],
             gated: false,
-            suggested_mode: "quick".into(),
+            default_mode: "quick".into(),
             est_hours_1k_pairs: 1.5,
             est_cost_1k_pairs: 1.65,
         },

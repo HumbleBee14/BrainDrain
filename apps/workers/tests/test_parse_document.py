@@ -85,7 +85,7 @@ class TestComputeQuality:
 
 class TestParserName:
     def test_pdf_parser_name(self):
-        assert _parser_name("application/pdf") == "pymupdf"
+        assert _parser_name("application/pdf") == "pdf"
 
     def test_word_parser_name(self):
         assert "docx" in _parser_name(

@@ -1153,15 +1153,15 @@ async def _get_project_id(db, job_id: str) -> str:
 
 
 async def _maybe_void_billing(db, job_id: str, settings) -> None:
-    """Void billing for a failed training job if it ran less than MIN_BILLABLE_SECONDS.
+    """Zero out actual_cost for a failed training job that ran less than MIN_BILLABLE_SECONDS.
 
-    Inserts a negative cost_usd billing event to cancel the original estimate.
-    Jobs that ran long enough are still billed for actual GPU time consumed.
+    Training billing lives on training_jobs.actual_cost (set on completion),
+    NOT in billing_events. So voiding means setting actual_cost = 0 on the
+    job row — no negative ledger entries needed.
     """
     try:
         row = await db.fetchrow(
-            "SELECT tenant_id, started_at, completed_at, cost_estimate "
-            "FROM training_jobs WHERE id = $1",
+            "SELECT started_at, completed_at FROM training_jobs WHERE id = $1",
             job_id,
         )
         if row is None or row["started_at"] is None or row["completed_at"] is None:
@@ -1171,31 +1171,15 @@ async def _maybe_void_billing(db, job_id: str, settings) -> None:
         min_billable = getattr(settings, "min_billable_seconds", 300)
 
         if elapsed < min_billable:
-            cost_estimate = float(row["cost_estimate"] or 0)
-            if cost_estimate <= 0:
-                return
-
-            # Insert a negative billing event to void the original charge
             await db.execute(
-                """INSERT INTO billing_events
-                   (tenant_id, operation, resource_id, tokens_in, tokens_out,
-                    gpu_seconds, cost_usd, metadata)
-                   VALUES ($1, 'training_void', $2::uuid, 0, 0, 0, $3, $4::jsonb)""",
-                str(row["tenant_id"]),
+                "UPDATE training_jobs SET actual_cost = 0 WHERE id = $1",
                 job_id,
-                -cost_estimate,
-                json.dumps({
-                    "reason": "failed_job_credit",
-                    "elapsed_seconds": round(elapsed, 1),
-                    "min_billable_seconds": min_billable,
-                }),
             )
             logger.info(
-                "Voided billing for job %s (ran %.1fs < %ds threshold, credited $%.2f)",
+                "Voided billing for job %s (ran %.1fs < %ds threshold)",
                 job_id,
                 elapsed,
                 min_billable,
-                cost_estimate,
             )
     except Exception as e:
         # Billing void is best-effort — never block the failure path

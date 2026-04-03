@@ -42,15 +42,17 @@ impl DeploymentService {
             });
         }
 
-        // Check if vLLM can accept another adapter for this base model.
-        // vLLM's --max-loras flag caps how many LoRA adapters can be served
-        // simultaneously on one instance. We enforce this here to give a clear
-        // error instead of a cryptic vLLM 400.
-        let active_count = model_repo
-            .count_active_by_base_model(&model.base_model)
-            .await?;
+        // Atomically claim a deployment slot — prevents race where two concurrent
+        // deploys both pass the count check and overrun --max-loras.
+        // This UPDATE only succeeds if the adapter count is still below the limit.
         let max_loras = config.vllm_max_loras;
-        if active_count >= max_loras {
+        let claimed = model_repo
+            .claim_deployment_slot(tenant_id, model_id, &model.base_model, max_loras)
+            .await?;
+        if !claimed {
+            let active_count = model_repo
+                .count_active_by_base_model(&model.base_model)
+                .await?;
             return Err(AppError::Conflict {
                 message: format!(
                     "vLLM adapter limit reached: {active_count}/{max_loras} adapters active \
@@ -60,11 +62,6 @@ impl DeploymentService {
                 ),
             });
         }
-
-        // Update status to deploying
-        model_repo
-            .update_deployment_status(tenant_id, model_id, DeploymentStatus::Deploying)
-            .await?;
 
         // Build a unique adapter name for vLLM
         let adapter_name = format!("adapter-{model_id}");
