@@ -26,9 +26,28 @@ use crate::app_state::AppState;
 use crate::config::Config;
 
 /// Build the complete API router with all versioned routes.
-pub fn router() -> Router<AppState> {
+///
+/// Auth + idempotency middleware are applied to the v1 sub-router only.
+/// Health, inference (API key auth), and webhook (HMAC auth) routes are excluded.
+///
+/// Layer order (outside-in): auth runs first → idempotency reads from
+/// extensions → handler reads from extensions. Single auth execution path.
+pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
-        .nest("/api/v1", v1_router())
+        .nest(
+            "/api/v1",
+            v1_router()
+                // Idempotency: outer layer, runs second (reads auth from extensions)
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::services::idempotency::idempotency_middleware,
+                ))
+                // Auth: inner layer, runs first (inserts user into extensions)
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::auth::auth_middleware,
+                )),
+        )
         .merge(health::router())
         // Inference routes at /v1/ (OpenAI-compatible, API key auth)
         .merge(inference::router())

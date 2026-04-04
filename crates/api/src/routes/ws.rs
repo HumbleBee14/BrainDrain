@@ -70,7 +70,8 @@ async fn ws_handler(
         .as_deref()
         .ok_or(crate::error::AppError::Unauthorized)?;
 
-    let user = state.auth_chain().authenticate(token, state.db()).await?;
+    let mut user = state.auth_chain().authenticate(token, state.db()).await?;
+    crate::auth::resolve_role_and_bootstrap(&state, &mut user).await?;
 
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, user, state)))
 }

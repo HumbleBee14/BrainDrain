@@ -132,11 +132,9 @@ async fn main() -> anyhow::Result<()> {
     let delivery_worker = state.delivery_worker_handle();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
-    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → idempotency → handler
-    let mut app = routes::router().layer(axum::middleware::from_fn_with_state(
-        state.clone(),
-        services::idempotency::idempotency_middleware,
-    ));
+    // Auth + idempotency middleware are applied inside v1_router (see routes/mod.rs).
+    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → [v1: auth → idempotency →] handler
+    let mut app = routes::router(&state);
 
     // Mount Swagger UI docs in non-production environments
     if let Some(docs) = routes::docs_router(&config) {

@@ -7,10 +7,9 @@
 //! `principal_id` = `"{user_id}:{tenant_id}"` from a fully verified auth context.
 //! This prevents cross-user, cross-tenant, and cross-endpoint replay.
 //!
-//! # Auth verification
-//! The middleware calls `auth_chain.authenticate()` to verify the JWT signature
-//! and resolve the tenant BEFORE writing any idempotency rows. Forged tokens
-//! are rejected — no rows are created for unauthenticated requests.
+//! # Auth
+//! Reads `AuthenticatedUser` from request extensions (inserted by the auth
+//! middleware layer). No duplicate auth — single execution path.
 //!
 //! # Body handling
 //! Request and response bodies are only buffered when `Content-Length` is present
@@ -170,24 +169,11 @@ pub async fn idempotency_middleware(
         None => return next.run(request).await,
     };
 
-    // Fully verify the JWT and resolve tenant BEFORE writing any rows.
-    // This prevents forged tokens from creating idempotency rows.
-    let token = match request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-    {
-        Some(t) => t.to_string(),
+    // Read verified auth from extensions (inserted by auth middleware).
+    // If no user in extensions, skip idempotency — handler will return 401.
+    let auth_user = match request.extensions().get::<crate::auth::AuthenticatedUser>() {
+        Some(user) => user.clone(),
         None => return next.run(request).await,
-    };
-
-    let auth_user = match state.auth_chain().authenticate(&token, state.db()).await {
-        Ok(user) => user,
-        Err(_) => {
-            // Auth failed — skip idempotency, let handler return 401 naturally.
-            return next.run(request).await;
-        }
     };
 
     let principal_id = format!("{}:{}", auth_user.user_id, auth_user.tenant_id);

@@ -4,8 +4,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::FromRequestParts;
+use axum::body::Body;
+use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
+use axum::http::{Request, Response};
+use axum::middleware::Next;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
 use platform_shared::enums::TeamRole;
 use serde::{Deserialize, Serialize};
@@ -335,97 +338,124 @@ impl InternalTokenAuthProvider {
 // FromRequestParts extractor
 // ---------------------------------------------------------------------------
 
-impl FromRequestParts<AppState> for AuthenticatedUser {
-    type Rejection = AppError;
+// ---------------------------------------------------------------------------
+// Auth middleware — runs once per request, stores result in extensions
+// ---------------------------------------------------------------------------
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let auth_header = parts
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .ok_or(AppError::Unauthorized)?;
+/// Axum middleware that authenticates the request and stores the
+/// `AuthenticatedUser` in request extensions.
+///
+/// Does NOT reject unauthenticated requests — that's the extractor's job.
+/// This allows routes that optionally use auth (WebSocket via query param)
+/// to coexist under the same router without exclusion lists.
+pub async fn auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    let token = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "));
 
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or(AppError::Unauthorized)?;
+    if let Some(token) = token {
+        // Try internal token first (worker → API calls, path-scoped)
+        let auth_result = if let Some(internal_provider) = state.internal_auth() {
+            if let Some(result) = internal_provider.authenticate_with_headers(
+                token,
+                request.headers(),
+                request.uri().path(),
+            ) {
+                Some(result)
+            } else {
+                Some(state.auth_chain().authenticate(token, state.db()).await)
+            }
+        } else {
+            Some(state.auth_chain().authenticate(token, state.db()).await)
+        };
 
-        // Try internal token first (worker → API calls, scoped to allowed paths)
-        if let Some(internal_provider) = state.internal_auth()
-            && let Some(result) =
-                internal_provider.authenticate_with_headers(token, &parts.headers, parts.uri.path())
-        {
-            return result;
-        }
-
-        let mut user = state.auth_chain().authenticate(token, state.db()).await?;
-
-        // Dev tokens keep their assigned role (Owner) — skip role lookup.
-        if user.role != TeamRole::Owner || user.org_id.is_some() {
-            // Look up actual role from team_members table.
-            match state
-                .team_member_repo()
-                .get_role(user.tenant_id, &user.user_id)
-                .await?
-            {
-                Some(role_str) => {
-                    user.role = match role_str.parse() {
-                        Ok(r) => r,
-                        Err(_) => {
-                            tracing::error!(
-                                tenant_id = %user.tenant_id,
-                                user_id = %user.user_id,
-                                role = %role_str,
-                                "Corrupted role in team_members — defaulting to Member"
-                            );
-                            TeamRole::Member
-                        }
-                    };
+        if let Some(Ok(mut user)) = auth_result {
+            // Resolve role from team_members + auto-bootstrap first user
+            match resolve_role_and_bootstrap(&state, &mut user).await {
+                Ok(()) => {
+                    request.extensions_mut().insert(user);
                 }
-                None => {
-                    // No team_member row — auto-bootstrap if tenant has zero members.
-                    let count = state
-                        .team_member_repo()
-                        .count_by_tenant(user.tenant_id)
-                        .await?;
-                    if count == 0 {
-                        // First user for this tenant becomes Owner.
-                        // Check the result — ON CONFLICT DO NOTHING means a concurrent
-                        // request may have won the race. The create() implementation
-                        // returns the existing row on conflict, so we verify the returned
-                        // row actually belongs to this user.
-                        match state
-                            .team_member_repo()
-                            .create(
-                                user.tenant_id,
-                                &user.user_id,
-                                "", // email not available from JWT — updated on next profile sync
-                                "owner",
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(member) => {
-                                // Verify the returned member is actually this user
-                                // (ON CONFLICT DO NOTHING + fetch returns the existing row)
-                                if member.user_id == user.user_id {
-                                    user.role = member.role.parse().unwrap_or(TeamRole::Owner);
-                                } else {
-                                    return Err(AppError::Forbidden {
-                                        message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
-                                    });
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, tenant_id = %user.tenant_id, "Owner auto-bootstrap failed");
-                                return Err(AppError::Forbidden {
-                                    message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
-                                });
-                            }
+                Err(e) => {
+                    // Role resolution failed (forbidden, DB error) — don't store user.
+                    // The handler extractor will return 401/403 when it can't find the user.
+                    tracing::debug!(error = %e, "Auth middleware: role resolution failed");
+                }
+            }
+        }
+        // Auth failed — don't reject, let handler extractor return 401.
+    }
+
+    next.run(request).await
+}
+
+/// Resolve the user's role from `team_members` and auto-bootstrap the first
+/// user as Owner if the tenant has no members yet.
+///
+/// Public so the WebSocket handler (which authenticates via query param) can
+/// reuse the same logic.
+pub async fn resolve_role_and_bootstrap(
+    state: &AppState,
+    user: &mut AuthenticatedUser,
+) -> Result<(), AppError> {
+    // Dev tokens keep their assigned role (Owner) — skip role lookup.
+    if user.role == TeamRole::Owner && user.org_id.is_none() {
+        return Ok(());
+    }
+
+    match state
+        .team_member_repo()
+        .get_role(user.tenant_id, &user.user_id)
+        .await?
+    {
+        Some(role_str) => {
+            user.role = match role_str.parse() {
+                Ok(r) => r,
+                Err(_) => {
+                    tracing::error!(
+                        tenant_id = %user.tenant_id,
+                        user_id = %user.user_id,
+                        role = %role_str,
+                        "Corrupted role in team_members — defaulting to Member"
+                    );
+                    TeamRole::Member
+                }
+            };
+        }
+        None => {
+            // No team_member row — auto-bootstrap if tenant has zero members.
+            let count = state
+                .team_member_repo()
+                .count_by_tenant(user.tenant_id)
+                .await?;
+            if count == 0 {
+                match state
+                    .team_member_repo()
+                    .create(
+                        user.tenant_id,
+                        &user.user_id,
+                        "", // email not available from JWT
+                        "owner",
+                        None,
+                    )
+                    .await
+                {
+                    Ok(member) => {
+                        if member.user_id == user.user_id {
+                            user.role = member.role.parse().unwrap_or(TeamRole::Owner);
+                        } else {
+                            return Err(AppError::Forbidden {
+                                message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                            });
                         }
-                    } else {
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, tenant_id = %user.tenant_id, "Owner auto-bootstrap failed");
                         return Err(AppError::Forbidden {
                             message:
                                 "You are not a member of this team. Ask an admin for an invitation."
@@ -433,10 +463,34 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                         });
                     }
                 }
+            } else {
+                return Err(AppError::Forbidden {
+                    message: "You are not a member of this team. Ask an admin for an invitation."
+                        .to_string(),
+                });
             }
         }
+    }
 
-        Ok(user)
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Handler extractor — reads from extensions (zero-cost after middleware)
+// ---------------------------------------------------------------------------
+
+impl FromRequestParts<AppState> for AuthenticatedUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthenticatedUser>()
+            .cloned()
+            .ok_or(AppError::Unauthorized)
     }
 }
 
