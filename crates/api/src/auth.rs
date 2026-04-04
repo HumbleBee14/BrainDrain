@@ -339,6 +339,47 @@ impl InternalTokenAuthProvider {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Auth helpers — reusable primitives for all auth paths
+// ---------------------------------------------------------------------------
+
+/// Extract the Bearer token from an Authorization header value.
+pub fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+}
+
+/// Authenticate a bearer token and return the identity.
+///
+/// Tries internal token auth first (path-scoped), then falls through to the
+/// auth provider chain. Returns the raw identity — call
+/// `resolve_role_and_bootstrap` to get the full app principal with team role.
+pub async fn authenticate_token(
+    state: &AppState,
+    token: &str,
+    headers: &axum::http::HeaderMap,
+    path: &str,
+) -> Result<AuthenticatedUser, AppError> {
+    // Internal token auth (worker → API calls, path-scoped)
+    if let Some(internal_provider) = state.internal_auth()
+        && let Some(result) = internal_provider.authenticate_with_headers(token, headers, path)
+    {
+        return result;
+    }
+
+    state.auth_chain().authenticate(token, state.db()).await
+}
+
+/// Canonical accessor for the authenticated principal from request extensions.
+///
+/// All middleware and helpers should use this instead of reaching into
+/// `extensions()` directly — one read path, easy to find and refactor.
+pub fn request_principal(parts: &Parts) -> Option<&AuthenticatedUser> {
+    parts.extensions.get::<AuthenticatedUser>()
+}
+
+// ---------------------------------------------------------------------------
 // Auth middleware — runs once per request, stores result in extensions
 // ---------------------------------------------------------------------------
 
@@ -353,42 +394,21 @@ pub async fn auth_middleware(
     mut request: Request<Body>,
     next: Next,
 ) -> Response<Body> {
-    let token = request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-
-    if let Some(token) = token {
-        // Try internal token first (worker → API calls, path-scoped)
-        let auth_result = if let Some(internal_provider) = state.internal_auth() {
-            if let Some(result) = internal_provider.authenticate_with_headers(
-                token,
-                request.headers(),
-                request.uri().path(),
-            ) {
-                Some(result)
-            } else {
-                Some(state.auth_chain().authenticate(token, state.db()).await)
-            }
-        } else {
-            Some(state.auth_chain().authenticate(token, state.db()).await)
-        };
-
-        if let Some(Ok(mut user)) = auth_result {
-            // Resolve role from team_members + auto-bootstrap first user
-            match resolve_role_and_bootstrap(&state, &mut user).await {
+    if let Some(token) = extract_bearer_token(request.headers()) {
+        let token = token.to_string(); // own it before borrowing request mutably
+        match authenticate_token(&state, &token, request.headers(), request.uri().path()).await {
+            Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
                 Ok(()) => {
                     request.extensions_mut().insert(user);
                 }
                 Err(e) => {
-                    // Role resolution failed (forbidden, DB error) — don't store user.
-                    // The handler extractor will return 401/403 when it can't find the user.
                     tracing::debug!(error = %e, "Auth middleware: role resolution failed");
                 }
+            },
+            Err(_) => {
+                // Auth failed — don't reject, let handler extractor return 401.
             }
         }
-        // Auth failed — don't reject, let handler extractor return 401.
     }
 
     next.run(request).await
@@ -486,9 +506,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         _state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<AuthenticatedUser>()
+        request_principal(parts)
             .cloned()
             .ok_or(AppError::Unauthorized)
     }

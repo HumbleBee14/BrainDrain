@@ -32,7 +32,7 @@ use crate::config::Config;
 ///
 /// Layer order (outside-in): auth runs first → idempotency reads from
 /// extensions → handler reads from extensions. Single auth execution path.
-pub fn router(state: &AppState) -> Router<AppState> {
+pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .nest(
             "/api/v1",
@@ -44,7 +44,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
                 ))
                 // Auth: inner layer, runs first (inserts user into extensions)
                 .layer(axum::middleware::from_fn_with_state(
-                    state.clone(),
+                    state,
                     crate::auth::auth_middleware,
                 )),
         )
