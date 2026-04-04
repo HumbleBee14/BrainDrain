@@ -386,12 +386,22 @@ impl From<&AppError> for AuthError {
     fn from(e: &AppError) -> Self {
         use axum::http::StatusCode;
         let (status, message) = match e {
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Authentication required".into()),
             AppError::Forbidden { message } => (StatusCode::FORBIDDEN, message.clone()),
             AppError::BadRequest { message } => (StatusCode::BAD_REQUEST, message.clone()),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Authentication required".into()),
+            // Infrastructure failures (DB down, storage error, etc.) → 500.
+            // Never collapse these to 401 — they are server errors, not auth errors.
+            AppError::Database(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service unavailable: {e}"),
+            ),
+            AppError::Internal(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service error: {e}"),
+            ),
             other => (
-                StatusCode::UNAUTHORIZED,
-                format!("Authentication failed: {other}"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service error: {other}"),
             ),
         };
         Self { status, message }
@@ -404,6 +414,9 @@ impl From<AuthError> for AppError {
         match e.status {
             StatusCode::FORBIDDEN => AppError::Forbidden { message: e.message },
             StatusCode::BAD_REQUEST => AppError::BadRequest { message: e.message },
+            StatusCode::INTERNAL_SERVER_ERROR => {
+                AppError::Internal(anyhow::anyhow!("{}", e.message))
+            }
             _ => AppError::Unauthorized,
         }
     }
