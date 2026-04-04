@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS billing_outbox (
     tokens_in       BIGINT NOT NULL DEFAULT 0,
     tokens_out      BIGINT NOT NULL DEFAULT 0,
     gpu_seconds     INT NOT NULL DEFAULT 0,
-    cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cost_usd        DECIMAL(10,4) NOT NULL DEFAULT 0,
     metadata        JSONB NOT NULL DEFAULT '{}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at    TIMESTAMPTZ,

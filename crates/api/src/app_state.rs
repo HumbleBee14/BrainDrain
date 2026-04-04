@@ -433,8 +433,11 @@ impl AppState {
 
     /// Record a billing event through the durable outbox (if enabled) or
     /// the in-memory batcher (fallback). Single entry point for all billing writes.
+    ///
+    /// When the outbox is enabled, the INSERT is awaited — the event is on disk
+    /// before this method returns. This is the crash-safety guarantee.
     #[allow(clippy::too_many_arguments)]
-    pub fn record_billing_event(
+    pub async fn record_billing_event(
         &self,
         tenant_id: uuid::Uuid,
         operation: &str,
@@ -446,28 +449,24 @@ impl AppState {
         metadata: serde_json::Value,
     ) {
         if self.inner.billing_outbox_relay.is_some() {
-            // Durable path: write to outbox table
-            let db = self.inner.db.clone();
-            let operation = operation.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = crate::services::billing_outbox::enqueue(
-                    &db,
-                    tenant_id,
-                    &operation,
-                    resource_id,
-                    tokens_in,
-                    tokens_out,
-                    gpu_seconds,
-                    cost_usd,
-                    metadata,
-                )
-                .await
-                {
-                    tracing::error!(error = %e, "Failed to enqueue billing event to outbox");
-                }
-            });
+            // Durable path: await the INSERT so the event is committed before returning
+            if let Err(e) = crate::services::billing_outbox::enqueue(
+                &self.inner.db,
+                tenant_id,
+                operation,
+                resource_id,
+                tokens_in,
+                tokens_out,
+                gpu_seconds,
+                cost_usd,
+                metadata,
+            )
+            .await
+            {
+                tracing::error!(error = %e, "Failed to enqueue billing event to outbox");
+            }
         } else {
-            // In-memory path: send to batcher channel
+            // In-memory path: send to batcher channel (non-blocking)
             self.inner
                 .billing_batcher
                 .send(crate::services::billing_batcher::BillingEvent {
