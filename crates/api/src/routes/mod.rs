@@ -37,12 +37,13 @@ pub fn router(state: AppState) -> Router<AppState> {
         .nest(
             "/api/v1",
             v1_router()
-                // Idempotency: outer layer, runs second (reads auth from extensions)
+                // Axum layers are outside-in: last .layer() runs first.
+                // 1. auth_middleware (outermost, runs first → inserts user into extensions)
+                // 2. idempotency (inner, runs second → reads auth from extensions)
                 .layer(axum::middleware::from_fn_with_state(
                     state.clone(),
                     crate::services::idempotency::idempotency_middleware,
                 ))
-                // Auth: inner layer, runs first (inserts user into extensions)
                 .layer(axum::middleware::from_fn_with_state(
                     state,
                     crate::auth::auth_middleware,

@@ -266,7 +266,7 @@ pub struct InternalTokenAuthProvider {
 }
 
 /// Exact path suffixes where internal token auth is allowed.
-/// Matched against the end of the path after stripping the UUID segment.
+/// Matched directly against the end of the full request path using `ends_with`.
 /// All other routes reject internal tokens and fall through to JWT auth.
 const INTERNAL_AUTH_ALLOWED_SUFFIXES: &[&str] = &[
     "/deploy",   // POST /api/v1/models/{id}/deploy
@@ -435,8 +435,11 @@ pub struct AuthOutcome(pub Result<AuthenticatedUser, AuthError>);
 
 /// Canonical accessor for the authenticated principal from request extensions.
 ///
-/// Returns `Some(&user)` if auth succeeded, `None` if no auth was attempted
-/// (no Bearer header). For the full error, use `AuthOutcome` from extensions.
+/// Returns `Some(&user)` if auth succeeded, `None` if either:
+/// - No Bearer header was present (unauthenticated request), or
+/// - Auth was attempted but failed (invalid token, forbidden, DB error).
+///
+/// To distinguish these cases, read `AuthOutcome` from extensions directly.
 #[allow(dead_code)] // Public API for future middleware (rate limiting, audit, feature flags)
 pub fn request_principal(parts: &Parts) -> Option<&AuthenticatedUser> {
     parts

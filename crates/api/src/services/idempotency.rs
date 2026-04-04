@@ -530,4 +530,71 @@ mod tests {
     fn normalize_route_preserves_non_uuid() {
         assert_eq!(normalize_route("/api/v1/projects"), "/api/v1/projects");
     }
+
+    // -- Auth extension interaction tests --
+
+    /// Helper: extract principal_id from AuthOutcome in extensions,
+    /// mirroring the middleware's logic at the decision point.
+    fn extract_principal_from_extensions(request: &Request<Body>) -> Option<String> {
+        match request.extensions().get::<crate::auth::AuthOutcome>() {
+            Some(crate::auth::AuthOutcome(Ok(user))) => {
+                Some(format!("{}:{}", user.user_id, user.tenant_id))
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn idempotency_extracts_principal_from_auth_outcome() {
+        use crate::auth::{AuthOutcome, AuthenticatedUser};
+        use platform_shared::enums::TeamRole;
+
+        let user = AuthenticatedUser {
+            user_id: "user_123".to_string(),
+            tenant_id: Uuid::nil(),
+            org_id: None,
+            role: TeamRole::Member,
+        };
+
+        let mut request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(AuthOutcome(Ok(user)));
+
+        let principal = extract_principal_from_extensions(&request);
+        assert_eq!(principal, Some(format!("user_123:{}", Uuid::nil())));
+    }
+
+    #[test]
+    fn idempotency_skips_when_no_auth_outcome() {
+        let request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(extract_principal_from_extensions(&request).is_none());
+    }
+
+    #[test]
+    fn idempotency_skips_when_auth_failed() {
+        use crate::auth::{AuthError, AuthOutcome};
+
+        let mut request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(AuthOutcome(Err(AuthError {
+            status: StatusCode::FORBIDDEN,
+            message: "Not a team member".to_string(),
+        })));
+
+        assert!(extract_principal_from_extensions(&request).is_none());
+    }
 }
