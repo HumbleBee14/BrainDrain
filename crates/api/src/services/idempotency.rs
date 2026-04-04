@@ -7,10 +7,9 @@
 //! `principal_id` = `"{user_id}:{tenant_id}"` from a fully verified auth context.
 //! This prevents cross-user, cross-tenant, and cross-endpoint replay.
 //!
-//! # Auth verification
-//! The middleware calls `auth_chain.authenticate()` to verify the JWT signature
-//! and resolve the tenant BEFORE writing any idempotency rows. Forged tokens
-//! are rejected — no rows are created for unauthenticated requests.
+//! # Auth
+//! Reads `AuthenticatedUser` from request extensions (inserted by the auth
+//! middleware layer). No duplicate auth — single execution path.
 //!
 //! # Body handling
 //! Request and response bodies are only buffered when `Content-Length` is present
@@ -129,7 +128,7 @@ fn response_content_length(response: &Response<Body>) -> Option<usize> {
 
 /// Axum middleware for idempotency enforcement.
 ///
-/// Uses `auth_chain.authenticate()` for fully verified JWT before writing rows.
+/// Reads verified `AuthOutcome` from request extensions (set by auth middleware).
 pub async fn idempotency_middleware(
     State(state): State<AppState>,
     request: Request<Body>,
@@ -170,24 +169,11 @@ pub async fn idempotency_middleware(
         None => return next.run(request).await,
     };
 
-    // Fully verify the JWT and resolve tenant BEFORE writing any rows.
-    // This prevents forged tokens from creating idempotency rows.
-    let token = match request
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-    {
-        Some(t) => t.to_string(),
-        None => return next.run(request).await,
-    };
-
-    let auth_user = match state.auth_chain().authenticate(&token, state.db()).await {
-        Ok(user) => user,
-        Err(_) => {
-            // Auth failed — skip idempotency, let handler return 401 naturally.
-            return next.run(request).await;
-        }
+    // Read verified auth from extensions (inserted by auth middleware).
+    // If auth failed or absent, skip idempotency — handler will return the error.
+    let auth_user = match request.extensions().get::<crate::auth::AuthOutcome>() {
+        Some(crate::auth::AuthOutcome(Ok(user))) => user.clone(),
+        _ => return next.run(request).await,
     };
 
     let principal_id = format!("{}:{}", auth_user.user_id, auth_user.tenant_id);
@@ -543,5 +529,72 @@ mod tests {
     #[test]
     fn normalize_route_preserves_non_uuid() {
         assert_eq!(normalize_route("/api/v1/projects"), "/api/v1/projects");
+    }
+
+    // -- Auth extension interaction tests --
+
+    /// Helper: extract principal_id from AuthOutcome in extensions,
+    /// mirroring the middleware's logic at the decision point.
+    fn extract_principal_from_extensions(request: &Request<Body>) -> Option<String> {
+        match request.extensions().get::<crate::auth::AuthOutcome>() {
+            Some(crate::auth::AuthOutcome(Ok(user))) => {
+                Some(format!("{}:{}", user.user_id, user.tenant_id))
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn idempotency_extracts_principal_from_auth_outcome() {
+        use crate::auth::{AuthOutcome, AuthenticatedUser};
+        use platform_shared::enums::TeamRole;
+
+        let user = AuthenticatedUser {
+            user_id: "user_123".to_string(),
+            tenant_id: Uuid::nil(),
+            org_id: None,
+            role: TeamRole::Member,
+        };
+
+        let mut request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(AuthOutcome(Ok(user)));
+
+        let principal = extract_principal_from_extensions(&request);
+        assert_eq!(principal, Some(format!("user_123:{}", Uuid::nil())));
+    }
+
+    #[test]
+    fn idempotency_skips_when_no_auth_outcome() {
+        let request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(extract_principal_from_extensions(&request).is_none());
+    }
+
+    #[test]
+    fn idempotency_skips_when_auth_failed() {
+        use crate::auth::{AuthError, AuthOutcome};
+
+        let mut request = Request::builder()
+            .uri("/api/v1/projects")
+            .method(Method::POST)
+            .header("idempotency-key", "test-key")
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(AuthOutcome(Err(AuthError {
+            status: StatusCode::FORBIDDEN,
+            message: "Not a team member".to_string(),
+        })));
+
+        assert!(extract_principal_from_extensions(&request).is_none());
     }
 }

@@ -4,8 +4,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::FromRequestParts;
+use axum::body::Body;
+use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
+use axum::http::{Method, Request, Response};
+use axum::middleware::Next;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
 use platform_shared::enums::TeamRole;
 use serde::{Deserialize, Serialize};
@@ -256,16 +259,18 @@ impl AuthProvider for ClerkAuthProvider {
 /// the tenant UUID from the header. The authenticated user gets `Owner` role
 /// but is restricted to specific API paths (deploy callbacks only).
 ///
-/// **Security:** Internal auth is scoped to `INTERNAL_AUTH_ALLOWED_PATHS` to
+/// **Security:** Internal auth is scoped to `INTERNAL_AUTH_ALLOWED_SUFFIXES` to
 /// prevent a compromised worker from accessing arbitrary tenant endpoints.
 pub struct InternalTokenAuthProvider {
     token: String,
 }
 
-/// Path prefixes where internal token auth is allowed.
-/// All other routes reject internal tokens and fall through to Clerk JWT auth.
-const INTERNAL_AUTH_ALLOWED_PATHS: &[&str] = &[
-    "/api/v1/models/", // deploy/undeploy callbacks
+/// Exact path suffixes where internal token auth is allowed.
+/// Matched directly against the end of the full request path using `ends_with`.
+/// All other routes reject internal tokens and fall through to JWT auth.
+const INTERNAL_AUTH_ALLOWED_SUFFIXES: &[&str] = &[
+    "/deploy",   // POST /api/v1/models/{id}/deploy
+    "/undeploy", // POST /api/v1/models/{id}/undeploy
 ];
 
 impl InternalTokenAuthProvider {
@@ -279,6 +284,7 @@ impl InternalTokenAuthProvider {
     pub fn authenticate_with_headers(
         &self,
         token: &str,
+        method: &Method,
         headers: &axum::http::HeaderMap,
         request_path: &str,
     ) -> Option<Result<AuthenticatedUser, AppError>> {
@@ -297,10 +303,11 @@ impl InternalTokenAuthProvider {
             return None;
         }
 
-        // Scope check: only allow internal auth on specific route prefixes
-        let path_allowed = INTERNAL_AUTH_ALLOWED_PATHS
-            .iter()
-            .any(|prefix| request_path.starts_with(prefix));
+        // Scope check: only allow internal auth on POST deploy/undeploy routes
+        let path_allowed = *method == Method::POST
+            && INTERNAL_AUTH_ALLOWED_SUFFIXES
+                .iter()
+                .any(|suffix| request_path.ends_with(suffix));
         if !path_allowed {
             tracing::warn!(
                 path = request_path,
@@ -335,97 +342,213 @@ impl InternalTokenAuthProvider {
 // FromRequestParts extractor
 // ---------------------------------------------------------------------------
 
-impl FromRequestParts<AppState> for AuthenticatedUser {
-    type Rejection = AppError;
+// ---------------------------------------------------------------------------
+// Auth helpers — reusable primitives for all auth paths
+// ---------------------------------------------------------------------------
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
-        let auth_header = parts
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .ok_or(AppError::Unauthorized)?;
+/// Extract the Bearer token from an Authorization header value.
+pub fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+}
 
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or(AppError::Unauthorized)?;
+/// Authenticate a bearer token and return the identity.
+///
+/// Tries internal token auth first (path-scoped), then falls through to the
+/// auth provider chain. Returns the raw identity — call
+/// `resolve_role_and_bootstrap` to get the full app principal with team role.
+pub async fn authenticate_token(
+    state: &AppState,
+    token: &str,
+    method: &Method,
+    headers: &axum::http::HeaderMap,
+    path: &str,
+) -> Result<AuthenticatedUser, AppError> {
+    // Internal token auth (worker → API calls, POST deploy/undeploy only)
+    if let Some(internal_provider) = state.internal_auth()
+        && let Some(result) =
+            internal_provider.authenticate_with_headers(token, method, headers, path)
+    {
+        return result;
+    }
 
-        // Try internal token first (worker → API calls, scoped to allowed paths)
-        if let Some(internal_provider) = state.internal_auth()
-            && let Some(result) =
-                internal_provider.authenticate_with_headers(token, &parts.headers, parts.uri.path())
-        {
-            return result;
+    state.auth_chain().authenticate(token, state.db()).await
+}
+
+/// A cloneable auth error stored in extensions when authentication or
+/// authorization fails. Preserves the original HTTP status code and message
+/// so the extractor can return 403/400 instead of collapsing to 401.
+#[derive(Debug, Clone)]
+pub struct AuthError {
+    pub status: axum::http::StatusCode,
+    pub message: String,
+}
+
+impl From<&AppError> for AuthError {
+    fn from(e: &AppError) -> Self {
+        use axum::http::StatusCode;
+        let (status, message) = match e {
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Authentication required".into()),
+            AppError::Forbidden { message } => (StatusCode::FORBIDDEN, message.clone()),
+            AppError::BadRequest { message } => (StatusCode::BAD_REQUEST, message.clone()),
+            // Infrastructure failures (DB down, storage error, etc.) → 500.
+            // Never collapse these to 401 — they are server errors, not auth errors.
+            AppError::Database(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service unavailable: {e}"),
+            ),
+            AppError::Internal(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service error: {e}"),
+            ),
+            other => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Authentication service error: {other}"),
+            ),
+        };
+        Self { status, message }
+    }
+}
+
+impl From<AuthError> for AppError {
+    fn from(e: AuthError) -> Self {
+        use axum::http::StatusCode;
+        match e.status {
+            StatusCode::FORBIDDEN => AppError::Forbidden { message: e.message },
+            StatusCode::BAD_REQUEST => AppError::BadRequest { message: e.message },
+            StatusCode::INTERNAL_SERVER_ERROR => {
+                AppError::Internal(anyhow::anyhow!("{}", e.message))
+            }
+            _ => AppError::Unauthorized,
         }
+    }
+}
 
-        let mut user = state.auth_chain().authenticate(token, state.db()).await?;
+/// The auth outcome stored in request extensions by the middleware.
+///
+/// Wraps the full `Result` so the extractor can return the original error
+/// (e.g., 403 Forbidden for non-members) instead of collapsing to 401.
+#[derive(Clone)]
+pub struct AuthOutcome(pub Result<AuthenticatedUser, AuthError>);
 
-        // Dev tokens keep their assigned role (Owner) — skip role lookup.
-        if user.role != TeamRole::Owner || user.org_id.is_some() {
-            // Look up actual role from team_members table.
-            match state
-                .team_member_repo()
-                .get_role(user.tenant_id, &user.user_id)
-                .await?
-            {
-                Some(role_str) => {
-                    user.role = match role_str.parse() {
-                        Ok(r) => r,
-                        Err(_) => {
-                            tracing::error!(
-                                tenant_id = %user.tenant_id,
-                                user_id = %user.user_id,
-                                role = %role_str,
-                                "Corrupted role in team_members — defaulting to Member"
-                            );
-                            TeamRole::Member
-                        }
-                    };
+/// Canonical accessor for the authenticated principal from request extensions.
+///
+/// Returns `Some(&user)` if auth succeeded, `None` if either:
+/// - No Bearer header was present (unauthenticated request), or
+/// - Auth was attempted but failed (invalid token, forbidden, DB error).
+///
+/// To distinguish these cases, read `AuthOutcome` from extensions directly.
+#[allow(dead_code)] // Public API for future middleware (rate limiting, audit, feature flags)
+pub fn request_principal(parts: &Parts) -> Option<&AuthenticatedUser> {
+    parts
+        .extensions
+        .get::<AuthOutcome>()
+        .and_then(|outcome| outcome.0.as_ref().ok())
+}
+
+// ---------------------------------------------------------------------------
+// Auth middleware — runs once per request, stores result in extensions
+// ---------------------------------------------------------------------------
+
+/// Axum middleware that authenticates the request and stores the
+/// `AuthenticatedUser` in request extensions.
+///
+/// Does NOT reject unauthenticated requests — that's the extractor's job.
+/// This allows routes that optionally use auth (WebSocket via query param)
+/// to coexist under the same router without exclusion lists.
+pub async fn auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    if let Some(token) = extract_bearer_token(request.headers()) {
+        let token = token.to_string();
+        let outcome = match authenticate_token(
+            &state,
+            &token,
+            request.method(),
+            request.headers(),
+            request.uri().path(),
+        )
+        .await
+        {
+            Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
+                Ok(()) => AuthOutcome(Ok(user)),
+                Err(e) => AuthOutcome(Err(AuthError::from(&e))),
+            },
+            Err(e) => AuthOutcome(Err(AuthError::from(&e))),
+        };
+        request.extensions_mut().insert(outcome);
+    }
+    // No Bearer header → no AuthOutcome in extensions → extractor returns 401.
+
+    next.run(request).await
+}
+
+/// Resolve the user's role from `team_members` and auto-bootstrap the first
+/// user as Owner if the tenant has no members yet.
+///
+/// Public so the WebSocket handler (which authenticates via query param) can
+/// reuse the same logic.
+pub async fn resolve_role_and_bootstrap(
+    state: &AppState,
+    user: &mut AuthenticatedUser,
+) -> Result<(), AppError> {
+    // Dev tokens keep their assigned role (Owner) — skip role lookup.
+    if user.role == TeamRole::Owner && user.org_id.is_none() {
+        return Ok(());
+    }
+
+    match state
+        .team_member_repo()
+        .get_role(user.tenant_id, &user.user_id)
+        .await?
+    {
+        Some(role_str) => {
+            user.role = match role_str.parse() {
+                Ok(r) => r,
+                Err(_) => {
+                    tracing::error!(
+                        tenant_id = %user.tenant_id,
+                        user_id = %user.user_id,
+                        role = %role_str,
+                        "Corrupted role in team_members — defaulting to Member"
+                    );
+                    TeamRole::Member
                 }
-                None => {
-                    // No team_member row — auto-bootstrap if tenant has zero members.
-                    let count = state
-                        .team_member_repo()
-                        .count_by_tenant(user.tenant_id)
-                        .await?;
-                    if count == 0 {
-                        // First user for this tenant becomes Owner.
-                        // Check the result — ON CONFLICT DO NOTHING means a concurrent
-                        // request may have won the race. The create() implementation
-                        // returns the existing row on conflict, so we verify the returned
-                        // row actually belongs to this user.
-                        match state
-                            .team_member_repo()
-                            .create(
-                                user.tenant_id,
-                                &user.user_id,
-                                "", // email not available from JWT — updated on next profile sync
-                                "owner",
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(member) => {
-                                // Verify the returned member is actually this user
-                                // (ON CONFLICT DO NOTHING + fetch returns the existing row)
-                                if member.user_id == user.user_id {
-                                    user.role = member.role.parse().unwrap_or(TeamRole::Owner);
-                                } else {
-                                    return Err(AppError::Forbidden {
-                                        message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
-                                    });
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, tenant_id = %user.tenant_id, "Owner auto-bootstrap failed");
-                                return Err(AppError::Forbidden {
-                                    message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
-                                });
-                            }
+            };
+        }
+        None => {
+            // No team_member row — auto-bootstrap if tenant has zero members.
+            let count = state
+                .team_member_repo()
+                .count_by_tenant(user.tenant_id)
+                .await?;
+            if count == 0 {
+                match state
+                    .team_member_repo()
+                    .create(
+                        user.tenant_id,
+                        &user.user_id,
+                        "", // email not available from JWT
+                        "owner",
+                        None,
+                    )
+                    .await
+                {
+                    Ok(member) => {
+                        if member.user_id == user.user_id {
+                            user.role = member.role.parse().unwrap_or(TeamRole::Owner);
+                        } else {
+                            return Err(AppError::Forbidden {
+                                message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),
+                            });
                         }
-                    } else {
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, tenant_id = %user.tenant_id, "Owner auto-bootstrap failed");
                         return Err(AppError::Forbidden {
                             message:
                                 "You are not a member of this team. Ask an admin for an invitation."
@@ -433,10 +556,34 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                         });
                     }
                 }
+            } else {
+                return Err(AppError::Forbidden {
+                    message: "You are not a member of this team. Ask an admin for an invitation."
+                        .to_string(),
+                });
             }
         }
+    }
 
-        Ok(user)
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Handler extractor — reads from extensions (zero-cost after middleware)
+// ---------------------------------------------------------------------------
+
+impl FromRequestParts<AppState> for AuthenticatedUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        match parts.extensions.get::<AuthOutcome>() {
+            Some(AuthOutcome(Ok(user))) => Ok(user.clone()),
+            Some(AuthOutcome(Err(e))) => Err(AppError::from(e.clone())),
+            None => Err(AppError::Unauthorized),
+        }
     }
 }
 
