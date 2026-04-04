@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use axum::body::Body;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
-use axum::http::{Request, Response};
+use axum::http::{Method, Request, Response};
 use axum::middleware::Next;
 use jsonwebtoken::{DecodingKey, TokenData, Validation, decode};
 use platform_shared::enums::TeamRole;
@@ -284,6 +284,7 @@ impl InternalTokenAuthProvider {
     pub fn authenticate_with_headers(
         &self,
         token: &str,
+        method: &Method,
         headers: &axum::http::HeaderMap,
         request_path: &str,
     ) -> Option<Result<AuthenticatedUser, AppError>> {
@@ -302,10 +303,11 @@ impl InternalTokenAuthProvider {
             return None;
         }
 
-        // Scope check: only allow internal auth on exact deploy/undeploy routes
-        let path_allowed = INTERNAL_AUTH_ALLOWED_SUFFIXES
-            .iter()
-            .any(|suffix| request_path.ends_with(suffix));
+        // Scope check: only allow internal auth on POST deploy/undeploy routes
+        let path_allowed = *method == Method::POST
+            && INTERNAL_AUTH_ALLOWED_SUFFIXES
+                .iter()
+                .any(|suffix| request_path.ends_with(suffix));
         if !path_allowed {
             tracing::warn!(
                 path = request_path,
@@ -360,12 +362,14 @@ pub fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 pub async fn authenticate_token(
     state: &AppState,
     token: &str,
+    method: &Method,
     headers: &axum::http::HeaderMap,
     path: &str,
 ) -> Result<AuthenticatedUser, AppError> {
-    // Internal token auth (worker → API calls, path-scoped)
+    // Internal token auth (worker → API calls, POST deploy/undeploy only)
     if let Some(internal_provider) = state.internal_auth()
-        && let Some(result) = internal_provider.authenticate_with_headers(token, headers, path)
+        && let Some(result) =
+            internal_provider.authenticate_with_headers(token, method, headers, path)
     {
         return result;
     }
@@ -458,15 +462,21 @@ pub async fn auth_middleware(
 ) -> Response<Body> {
     if let Some(token) = extract_bearer_token(request.headers()) {
         let token = token.to_string();
-        let outcome =
-            match authenticate_token(&state, &token, request.headers(), request.uri().path()).await
-            {
-                Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
-                    Ok(()) => AuthOutcome(Ok(user)),
-                    Err(e) => AuthOutcome(Err(AuthError::from(&e))),
-                },
+        let outcome = match authenticate_token(
+            &state,
+            &token,
+            request.method(),
+            request.headers(),
+            request.uri().path(),
+        )
+        .await
+        {
+            Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
+                Ok(()) => AuthOutcome(Ok(user)),
                 Err(e) => AuthOutcome(Err(AuthError::from(&e))),
-            };
+            },
+            Err(e) => AuthOutcome(Err(AuthError::from(&e))),
+        };
         request.extensions_mut().insert(outcome);
     }
     // No Bearer header → no AuthOutcome in extensions → extractor returns 401.

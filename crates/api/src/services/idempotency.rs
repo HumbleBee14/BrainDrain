@@ -128,7 +128,7 @@ fn response_content_length(response: &Response<Body>) -> Option<usize> {
 
 /// Axum middleware for idempotency enforcement.
 ///
-/// Uses `auth_chain.authenticate()` for fully verified JWT before writing rows.
+/// Reads verified `AuthOutcome` from request extensions (set by auth middleware).
 pub async fn idempotency_middleware(
     State(state): State<AppState>,
     request: Request<Body>,
