@@ -40,7 +40,7 @@ billing_outbox
 ├── tokens_in       BIGINT
 ├── tokens_out      BIGINT
 ├── gpu_seconds     INT
-├── cost_usd        DOUBLE PRECISION (CHECK >= 0)
+├── cost_usd        DECIMAL(10,4) (CHECK >= 0)
 ├── metadata        JSONB (api_key_id, batch info, etc.)
 ├── created_at      TIMESTAMPTZ
 ├── delivered_at    TIMESTAMPTZ (NULL until relay delivers)
@@ -88,7 +88,7 @@ Separating write surface from read surface means:
 - Handler writes are simple single-table INSERTs (fast, no partition logic)
 - Reporting queries never contend with high-frequency writes
 - If the ledger has issues (missing partition, index bloat), the outbox buffers safely
-- The relay can batch 500 rows at a time into the ledger (much faster than per-request)
+- The relay delivers rows asynchronously in batches of up to 500, decoupling request handling from ledger writes
 
 ---
 

@@ -435,7 +435,9 @@ impl AppState {
     /// the in-memory batcher (fallback). Single entry point for all billing writes.
     ///
     /// When the outbox is enabled, the INSERT is awaited — the event is on disk
-    /// before this method returns. This is the crash-safety guarantee.
+    /// before this method returns. Errors are logged but not propagated, because
+    /// billing failures should not block user-facing requests (best-effort at the
+    /// handler level, durable at the storage level).
     #[allow(clippy::too_many_arguments)]
     pub async fn record_billing_event(
         &self,

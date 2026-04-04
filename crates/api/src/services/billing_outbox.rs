@@ -4,17 +4,14 @@
 //! All billing-producing operations write to `billing_outbox` transactionally.
 //! A background relay worker moves rows into `billing_events` (the reporting ledger).
 //!
-//! # Why not the in-memory batcher?
-//! The existing `BillingBatcher` uses an in-memory channel. Events in the channel
-//! are lost on process crash. The outbox ensures durability — the INSERT is committed
-//! before the handler returns, so no event can be lost.
-//!
 //! # Relay semantics
 //! - Uses a single connection for advisory lock + claim + deliver + unlock.
+//! - Advisory lock is always released on all exit paths (guard pattern).
 //! - `SELECT ... FOR UPDATE SKIP LOCKED` within a transaction for row-level safety.
-//! - Idempotent delivery: uses outbox row ID as billing_events PK with ON CONFLICT.
+//! - Idempotent delivery: uses outbox row's `(id, created_at)` as billing_events
+//!   composite PK with `ON CONFLICT ON CONSTRAINT billing_events_pkey DO NOTHING`.
+//! - `created_at` is preserved from outbox to ledger (correct partition routing).
 //! - Failed deliveries are retried every poll interval up to 5 attempts.
-//! - Delivered rows are cleaned up after 7 days.
 
 use sqlx::{Connection, PgPool};
 use std::sync::Mutex;
@@ -24,9 +21,7 @@ use uuid::Uuid;
 
 /// Enqueue a billing event into the durable outbox.
 ///
-/// This is the primary write path — called from inference, deploy, and training
-/// handlers. The INSERT is awaited so the event is on disk before the handler
-/// returns.
+/// The INSERT is awaited — the event is on disk before this returns.
 #[allow(clippy::too_many_arguments)]
 pub async fn enqueue(
     db: &PgPool,
@@ -67,17 +62,19 @@ struct ShutdownHandle {
     handle: tokio::task::JoinHandle<()>,
 }
 
-/// Maximum delivery attempts before giving up on an outbox row.
 const MAX_ATTEMPTS: i32 = 5;
-
-/// Batch size for relay processing.
 const RELAY_BATCH_SIZE: i64 = 500;
-
-/// Advisory lock ID for relay coordination.
 const RELAY_LOCK_ID: i64 = 900_200_001;
 
+/// Return type for process_batch distinguishing "no rows" from "lock held".
+enum BatchResult {
+    /// Processed N rows (0 = no pending rows).
+    Processed(usize),
+    /// Skipped because another instance holds the advisory lock.
+    LockHeld,
+}
+
 impl BillingOutboxRelay {
-    /// Spawn the relay worker.
     pub fn new(db: PgPool, poll_interval: Duration) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let handle = tokio::spawn(relay_loop(db, poll_interval, shutdown_rx));
@@ -89,7 +86,6 @@ impl BillingOutboxRelay {
         }
     }
 
-    /// Graceful shutdown: signal the relay to stop and drain all remaining events.
     pub async fn shutdown(&self) {
         let handle = self
             .shutdown
@@ -107,7 +103,6 @@ impl BillingOutboxRelay {
     }
 }
 
-/// Background loop: claim and deliver outbox batches.
 async fn relay_loop(db: PgPool, poll_interval: Duration, mut shutdown_rx: oneshot::Receiver<()>) {
     let mut interval = tokio::time::interval(poll_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -120,12 +115,17 @@ async fn relay_loop(db: PgPool, poll_interval: Duration, mut shutdown_rx: onesho
                 }
             }
             _ = &mut shutdown_rx => {
-                // Drain loop: keep processing until no rows remain or max 10 iterations
+                // Drain: keep processing until truly empty (not just lock-held)
                 tracing::info!("Billing outbox relay draining...");
                 for _ in 0..10 {
                     match process_batch(&db).await {
-                        Ok(0) => break, // No more rows
-                        Ok(_) => continue,
+                        Ok(BatchResult::Processed(0)) => break,
+                        Ok(BatchResult::Processed(_)) => continue,
+                        Ok(BatchResult::LockHeld) => {
+                            // Another instance has the lock — wait briefly and retry
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            continue;
+                        }
                         Err(e) => {
                             tracing::warn!(error = %e, "Drain batch failed");
                             break;
@@ -139,14 +139,8 @@ async fn relay_loop(db: PgPool, poll_interval: Duration, mut shutdown_rx: onesho
     }
 }
 
-/// Claim a batch of pending outbox rows and deliver them to billing_events.
-///
-/// All operations run on a single connection to ensure advisory lock and
-/// FOR UPDATE SKIP LOCKED are in the same session/transaction.
-///
-/// Returns the number of rows processed.
-async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
-    // Acquire a single connection for the entire operation
+/// Claim and deliver a batch. Advisory lock is always released on all exit paths.
+async fn process_batch(db: &PgPool) -> Result<BatchResult, sqlx::Error> {
     let mut conn = db.acquire().await?;
 
     // Try advisory lock on this connection
@@ -156,15 +150,30 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
         .await?;
 
     if !locked.0 {
-        return Ok(0); // Another instance is already relaying
+        return Ok(BatchResult::LockHeld);
     }
 
-    // Begin transaction — FOR UPDATE locks are held until commit/rollback
+    // Guard: always unlock on the same connection, even on error
+    let result = do_relay_work(&mut conn).await;
+
+    // Release advisory lock on the SAME connection that acquired it
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(RELAY_LOCK_ID)
+        .execute(&mut *conn)
+        .await;
+
+    result
+}
+
+/// The actual relay work, separated so the caller can guarantee advisory unlock.
+async fn do_relay_work(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+) -> Result<BatchResult, sqlx::Error> {
     let mut tx = conn.begin().await?;
 
     let rows = sqlx::query_as::<_, OutboxRow>(
         "SELECT id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
-                gpu_seconds, cost_usd, metadata \
+                gpu_seconds, cost_usd, metadata, created_at \
          FROM billing_outbox \
          WHERE delivered_at IS NULL AND attempt_count < $1 \
          ORDER BY created_at \
@@ -178,12 +187,7 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
 
     if rows.is_empty() {
         tx.commit().await?;
-        // Release advisory lock (on the original connection, outside tx)
-        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(RELAY_LOCK_ID)
-            .execute(db)
-            .await;
-        return Ok(0);
+        return Ok(BatchResult::Processed(0));
     }
 
     let count = rows.len();
@@ -197,7 +201,6 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
         }
     }
 
-    // Mark delivered rows within the same transaction
     if !delivered.is_empty() {
         sqlx::query("UPDATE billing_outbox SET delivered_at = NOW() WHERE id = ANY($1)")
             .bind(&delivered)
@@ -205,7 +208,6 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
             .await?;
     }
 
-    // Mark failed rows
     for (id, error) in &failed {
         sqlx::query(
             "UPDATE billing_outbox \
@@ -218,7 +220,6 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
         .await?;
     }
 
-    // Commit releases the FOR UPDATE locks
     tx.commit().await?;
 
     if !delivered.is_empty() {
@@ -229,29 +230,24 @@ async fn process_batch(db: &PgPool) -> Result<usize, sqlx::Error> {
         );
     }
 
-    // Release advisory lock
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(RELAY_LOCK_ID)
-        .execute(db)
-        .await;
-
-    Ok(count)
+    Ok(BatchResult::Processed(count))
 }
 
 /// Insert a single outbox row into the billing_events ledger.
 ///
-/// Uses the outbox row's ID as the billing_events PK. `ON CONFLICT DO NOTHING`
-/// makes delivery idempotent — if the relay crashes between insert and
-/// mark-delivered, the re-delivery is a no-op.
+/// Uses the outbox row's `(id, created_at)` as the billing_events composite PK.
+/// `ON CONFLICT ... DO NOTHING` makes delivery idempotent. `created_at` is
+/// preserved from the outbox so the row lands in the correct monthly partition.
 async fn deliver_to_ledger(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     row: &OutboxRow,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO billing_events \
-         (id, tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-         ON CONFLICT (id) DO NOTHING",
+         (id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
+          gpu_seconds, cost_usd, metadata, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+         ON CONFLICT ON CONSTRAINT billing_events_pkey DO NOTHING",
     )
     .bind(row.id)
     .bind(row.tenant_id)
@@ -262,13 +258,14 @@ async fn deliver_to_ledger(
     .bind(row.gpu_seconds)
     .bind(row.cost_usd)
     .bind(&row.metadata)
+    .bind(row.created_at)
     .execute(&mut **tx)
     .await?;
     Ok(())
 }
 
 /// Cleanup delivered outbox rows older than the retention period.
-#[allow(dead_code)] // Called by scheduled maintenance
+#[allow(dead_code)]
 pub async fn cleanup_delivered(db: &PgPool, retention_days: i32) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "DELETE FROM billing_outbox \
@@ -292,9 +289,9 @@ struct OutboxRow {
     gpu_seconds: i32,
     cost_usd: f64,
     metadata: serde_json::Value,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
-// Compile-time validation of configuration constants.
 const _: () = {
     assert!(MAX_ATTEMPTS > 0);
     assert!(MAX_ATTEMPTS <= 10);
