@@ -26,6 +26,7 @@ use crate::repositories::traits::{
     TenantRepository, TrainingJobRepository,
 };
 use crate::services::billing_batcher::BillingBatcher;
+use crate::services::billing_outbox::BillingOutboxRelay;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
@@ -74,6 +75,7 @@ struct AppStateInner {
     pub inference_backend: Arc<dyn InferenceBackend>,
     pub feature_flags: Arc<FeatureFlags>,
     pub billing_batcher: Arc<BillingBatcher>,
+    pub billing_outbox_relay: Option<Arc<BillingOutboxRelay>>,
     pub delivery_worker: Arc<DeliveryWorker>,
 }
 
@@ -220,13 +222,30 @@ impl AppState {
             inference_circuit_breaker,
         );
 
-        // Billing micro-batcher (configurable via env vars) (Current: 10K channel capacity, flush every 5s or 1000 events)
+        // Billing micro-batcher (in-memory, used when outbox is disabled)
         let billing_batcher = Arc::new(BillingBatcher::new(
             db.clone(),
             config.billing_channel_capacity,
             config.billing_batch_size,
             Duration::from_secs(config.billing_flush_interval_secs),
         ));
+
+        // Durable billing outbox relay (when feature flag is enabled)
+        let outbox_enabled = feature_flags.bool_variation(
+            crate::services::feature_flags::BILLING_OUTBOX_ENABLED,
+            false,
+            &crate::services::feature_flags::FlagContext::default(),
+        );
+        let billing_outbox_relay = if outbox_enabled {
+            tracing::info!("Billing outbox relay enabled (durable billing path)");
+            Some(Arc::new(BillingOutboxRelay::new(
+                db.clone(),
+                Duration::from_secs(config.billing_flush_interval_secs),
+            )))
+        } else {
+            tracing::info!("Billing outbox disabled — using in-memory batcher");
+            None
+        };
 
         // Webhook HTTP client: redirects disabled to prevent SSRF bypass via redirect to internal IPs.
         // Separate from the shared http_client since Stripe/Clerk may need redirect support.
@@ -287,6 +306,7 @@ impl AppState {
                 inference_backend,
                 feature_flags,
                 billing_batcher,
+                billing_outbox_relay,
                 delivery_worker,
             }),
         })
@@ -392,6 +412,7 @@ impl AppState {
         &self.inner.feature_flags
     }
 
+    #[allow(dead_code)] // Used internally by record_billing_event
     pub fn billing_batcher(&self) -> &BillingBatcher {
         &self.inner.billing_batcher
     }
@@ -401,8 +422,64 @@ impl AppState {
         Arc::clone(&self.inner.billing_batcher)
     }
 
+    pub fn billing_outbox_relay_handle(&self) -> Option<Arc<BillingOutboxRelay>> {
+        self.inner.billing_outbox_relay.as_ref().map(Arc::clone)
+    }
+
     /// Get a cloneable handle for explicit shutdown of the delivery worker.
     pub fn delivery_worker_handle(&self) -> Arc<DeliveryWorker> {
         Arc::clone(&self.inner.delivery_worker)
+    }
+
+    /// Record a billing event through the durable outbox (if enabled) or
+    /// the in-memory batcher (fallback). Single entry point for all billing writes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_billing_event(
+        &self,
+        tenant_id: uuid::Uuid,
+        operation: &str,
+        resource_id: Option<uuid::Uuid>,
+        tokens_in: i64,
+        tokens_out: i64,
+        gpu_seconds: i32,
+        cost_usd: f64,
+        metadata: serde_json::Value,
+    ) {
+        if self.inner.billing_outbox_relay.is_some() {
+            // Durable path: write to outbox table
+            let db = self.inner.db.clone();
+            let operation = operation.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = crate::services::billing_outbox::enqueue(
+                    &db,
+                    tenant_id,
+                    &operation,
+                    resource_id,
+                    tokens_in,
+                    tokens_out,
+                    gpu_seconds,
+                    cost_usd,
+                    metadata,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "Failed to enqueue billing event to outbox");
+                }
+            });
+        } else {
+            // In-memory path: send to batcher channel
+            self.inner
+                .billing_batcher
+                .send(crate::services::billing_batcher::BillingEvent {
+                    tenant_id,
+                    operation: operation.to_string(),
+                    resource_id,
+                    tokens_in,
+                    tokens_out,
+                    gpu_seconds,
+                    cost_usd,
+                    metadata,
+                });
+        }
     }
 }

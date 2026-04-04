@@ -12,7 +12,6 @@ use utoipa::ToSchema;
 use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::error::{AppError, AppResult};
-use crate::services::billing_batcher;
 use crate::services::token_estimator;
 
 /// Maximum number of items in a single batch request.
@@ -253,18 +252,16 @@ pub async fn chat_completions(
                 }
             };
 
-            batcher_state
-                .billing_batcher()
-                .send(billing_batcher::BillingEvent {
-                    tenant_id,
-                    operation: "inference".to_string(),
-                    resource_id: Some(model_id),
-                    tokens_in,
-                    tokens_out,
-                    gpu_seconds: 0,
-                    cost_usd: token_estimator::estimate_inference_cost(tokens_in, tokens_out),
-                    metadata: serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
-                });
+            batcher_state.record_billing_event(
+                tenant_id,
+                "inference",
+                Some(model_id),
+                tokens_in,
+                tokens_out,
+                0,
+                token_estimator::estimate_inference_cost(tokens_in, tokens_out),
+                serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
+            );
         });
 
         let body = Body::from_stream(forwarded_stream);
@@ -288,16 +285,16 @@ pub async fn chat_completions(
         let tokens_out = response["usage"]["completion_tokens"].as_i64().unwrap_or(0);
 
         if tokens_in > 0 || tokens_out > 0 {
-            state.billing_batcher().send(billing_batcher::BillingEvent {
-                tenant_id: api_key.tenant_id,
-                operation: "inference".to_string(),
-                resource_id: Some(api_key.model_id),
+            state.record_billing_event(
+                api_key.tenant_id,
+                "inference",
+                Some(api_key.model_id),
                 tokens_in,
                 tokens_out,
-                gpu_seconds: 0,
-                cost_usd: token_estimator::estimate_inference_cost(tokens_in, tokens_out),
-                metadata: serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
-            });
+                0,
+                token_estimator::estimate_inference_cost(tokens_in, tokens_out),
+                serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
+            );
         }
 
         Ok(Json(response).into_response())
@@ -523,20 +520,20 @@ pub async fn batch_chat_completions(
 
     // Bill aggregated tokens
     if total_prompt > 0 || total_completion > 0 {
-        state.billing_batcher().send(billing_batcher::BillingEvent {
-            tenant_id: api_key.tenant_id,
-            operation: "inference".to_string(),
-            resource_id: Some(api_key.model_id),
-            tokens_in: total_prompt,
-            tokens_out: total_completion,
-            gpu_seconds: 0,
-            cost_usd: token_estimator::estimate_inference_cost(total_prompt, total_completion),
-            metadata: serde_json::json!({
+        state.record_billing_event(
+            api_key.tenant_id,
+            "inference",
+            Some(api_key.model_id),
+            total_prompt,
+            total_completion,
+            0,
+            token_estimator::estimate_inference_cost(total_prompt, total_completion),
+            serde_json::json!({
                 "api_key_id": api_key.key_id.to_string(),
                 "batch": true,
                 "batch_size": results.len(),
             }),
-        });
+        );
     }
 
     Ok(Json(BatchChatCompletionResponse {
