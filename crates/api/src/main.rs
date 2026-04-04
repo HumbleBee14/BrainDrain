@@ -65,6 +65,36 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Spawn background task: cleanup expired + stale idempotency keys every hour.
+    let (idempotency_shutdown_tx, mut idempotency_shutdown_rx) =
+        tokio::sync::oneshot::channel::<()>();
+    {
+        let cleanup_db = state.db().clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match services::idempotency::cleanup_expired_keys(&cleanup_db).await {
+                            Ok(count) if count > 0 => {
+                                tracing::info!(count, "Cleaned up expired idempotency keys");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to cleanup idempotency keys");
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ = &mut idempotency_shutdown_rx => {
+                        tracing::info!("Idempotency cleanup task shutting down");
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
     let default_flag_context = FlagContext::default();
     tracing::info!(
         billing_outbox = state
@@ -102,8 +132,11 @@ async fn main() -> anyhow::Result<()> {
     let delivery_worker = state.delivery_worker_handle();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
-    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → handler
-    let mut app = routes::router();
+    // Request flow: set_request_id → cors → security_headers → trace → ip_rate_limit → http_metrics → propagate_request_id → inject_request_id_into_errors → idempotency → handler
+    let mut app = routes::router().layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        services::idempotency::idempotency_middleware,
+    ));
 
     // Mount Swagger UI docs in non-production environments
     if let Some(docs) = routes::docs_router(&config) {
@@ -148,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Shut down background workers after server stops accepting requests
     tracing::info!("Shutting down background workers...");
+    let _ = idempotency_shutdown_tx.send(());
     tokio::join!(billing_batcher.shutdown(), delivery_worker.shutdown());
 
     tracing::info!("Server shutdown complete");
