@@ -13,9 +13,10 @@
 //! are rejected — no rows are created for unauthenticated requests.
 //!
 //! # Body handling
-//! Request and response bodies are only buffered when Content-Length or size_hint
-//! is known and under the limit. Large/streaming bodies skip idempotency without
-//! being consumed, so downstream handlers see the original request unmodified.
+//! Request and response bodies are only buffered when `Content-Length` is present
+//! and within the 1 MB limit. If `Content-Length` is missing (chunked/streaming)
+//! or exceeds the limit, idempotency is skipped entirely — the body stream is
+//! never consumed, and the handler/client sees the original data unmodified.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -48,6 +49,7 @@ const IDEMPOTENT_ROUTE_PREFIXES: &[&str] = &[
     "/api/v1/team",
     "/api/v1/notifications",
     "/api/v1/settings",
+    "/api/v1/invitations",
 ];
 
 const EXCLUDED_ROUTES: &[&str] = &[
@@ -107,24 +109,22 @@ fn normalize_route(path: &str) -> String {
         .join("/")
 }
 
-/// Check if the request body is known to be too large, WITHOUT consuming it.
-fn body_too_large(request: &Request<Body>) -> bool {
+/// Get request Content-Length if present. Returns None for chunked/streaming.
+fn request_content_length(request: &Request<Body>) -> Option<usize> {
     request
         .headers()
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok())
-        .is_some_and(|cl| cl > MAX_IDEMPOTENCY_BODY_SIZE)
+        .and_then(|v| v.parse().ok())
 }
 
-/// Check if the response body is known to be too large to cache.
-fn response_too_large(response: &Response<Body>) -> bool {
+/// Get response Content-Length if present.
+fn response_content_length(response: &Response<Body>) -> Option<usize> {
     response
         .headers()
         .get("content-length")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok())
-        .is_some_and(|cl| cl > MAX_IDEMPOTENCY_BODY_SIZE)
+        .and_then(|v| v.parse().ok())
 }
 
 /// Axum middleware for idempotency enforcement.
@@ -190,28 +190,36 @@ pub async fn idempotency_middleware(
         }
     };
 
-    // Composite principal: user + tenant for cross-tenant safety
     let principal_id = format!("{}:{}", auth_user.user_id, auth_user.tenant_id);
 
-    // Skip if body is too large — don't consume it
-    if body_too_large(&request) {
-        tracing::debug!("Request body too large for idempotency, skipping");
-        return next.run(request).await;
-    }
+    // Only buffer the body if Content-Length is known and fits within the limit.
+    // If Content-Length is missing (chunked/streaming) or too large, skip
+    // idempotency entirely WITHOUT consuming the body stream.
+    let req_cl = match request_content_length(&request) {
+        Some(cl) if cl <= MAX_IDEMPOTENCY_BODY_SIZE => cl,
+        Some(_) => {
+            tracing::debug!("Request body too large for idempotency, skipping");
+            return next.run(request).await;
+        }
+        None => {
+            // No Content-Length = chunked/streaming. Cannot safely buffer without
+            // risking body consumption. Skip idempotency transparently.
+            tracing::debug!("Request has no Content-Length, skipping idempotency");
+            return next.run(request).await;
+        }
+    };
 
     let normalized_route = normalize_route(&path);
     let method_str = method.to_string();
 
-    // Buffer the request body for hashing, then reconstruct for the handler
+    // Safe to buffer: Content-Length confirmed it fits.
     let (parts, body) = request.into_parts();
-    let body_bytes = match axum::body::to_bytes(body, MAX_IDEMPOTENCY_BODY_SIZE).await {
+    let body_bytes = match axum::body::to_bytes(body, req_cl + 1).await {
         Ok(b) => b,
         Err(_) => {
-            // Chunked body exceeded limit despite pre-check. Skip idempotency.
-            // We've consumed the body, so reconstruct with empty — this is the
-            // truly rare case of a chunked request with no Content-Length that
-            // exceeds 1MB. These should be excluded via route patterns.
-            tracing::warn!("Chunked body exceeded idempotency limit after buffering");
+            // Content-Length lied. This shouldn't happen with well-behaved clients.
+            // Body is consumed — nothing we can do. Log and pass empty body.
+            tracing::error!("Content-Length mismatch: body larger than declared");
             let request = Request::from_parts(parts, Body::empty());
             return next.run(request).await;
         }
@@ -334,7 +342,8 @@ pub async fn idempotency_middleware(
     let request = Request::from_parts(parts, Body::from(body_bytes));
     let response = next.run(request).await;
 
-    // Cache response — check size before consuming
+    // Cache response — only buffer if Content-Length is known and fits.
+    // If unknown or too large, return response as-is (no modification).
     let response_status = response.status().as_u16() as i16;
     let resp_content_type = response
         .headers()
@@ -342,17 +351,22 @@ pub async fn idempotency_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    if response_too_large(&response) {
-        tracing::debug!("Response too large to cache for idempotency");
+    let resp_cl = response_content_length(&response);
+    if resp_cl.is_none() || resp_cl.is_some_and(|cl| cl > MAX_IDEMPOTENCY_BODY_SIZE) {
+        // Can't safely buffer — return response untouched, mark key failed for retry.
+        if (200..300).contains(&(response_status as u16)) {
+            tracing::debug!("Response body too large or unknown size, skipping idempotency cache");
+        }
         mark_failed(db, &principal_id, &key, &method_str, &normalized_route).await;
         return response;
     }
 
+    let resp_limit = resp_cl.unwrap() + 1;
     let (resp_parts, resp_body) = response.into_parts();
-    let resp_bytes = match axum::body::to_bytes(resp_body, MAX_IDEMPOTENCY_BODY_SIZE).await {
+    let resp_bytes = match axum::body::to_bytes(resp_body, resp_limit).await {
         Ok(b) => b,
         Err(_) => {
-            tracing::warn!("Response body could not be buffered for idempotency cache");
+            tracing::error!("Response Content-Length mismatch during idempotency caching");
             mark_failed(db, &principal_id, &key, &method_str, &normalized_route).await;
             return Response::from_parts(resp_parts, Body::empty());
         }
