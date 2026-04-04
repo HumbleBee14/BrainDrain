@@ -170,10 +170,10 @@ pub async fn idempotency_middleware(
     };
 
     // Read verified auth from extensions (inserted by auth middleware).
-    // If no user in extensions, skip idempotency — handler will return 401.
-    let auth_user = match request.extensions().get::<crate::auth::AuthenticatedUser>() {
-        Some(user) => user.clone(),
-        None => return next.run(request).await,
+    // If auth failed or absent, skip idempotency — handler will return the error.
+    let auth_user = match request.extensions().get::<crate::auth::AuthOutcome>() {
+        Some(crate::auth::AuthOutcome(Ok(user))) => user.clone(),
+        _ => return next.run(request).await,
     };
 
     let principal_id = format!("{}:{}", auth_user.user_id, auth_user.tenant_id);

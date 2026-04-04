@@ -259,16 +259,18 @@ impl AuthProvider for ClerkAuthProvider {
 /// the tenant UUID from the header. The authenticated user gets `Owner` role
 /// but is restricted to specific API paths (deploy callbacks only).
 ///
-/// **Security:** Internal auth is scoped to `INTERNAL_AUTH_ALLOWED_PATHS` to
+/// **Security:** Internal auth is scoped to `INTERNAL_AUTH_ALLOWED_SUFFIXES` to
 /// prevent a compromised worker from accessing arbitrary tenant endpoints.
 pub struct InternalTokenAuthProvider {
     token: String,
 }
 
-/// Path prefixes where internal token auth is allowed.
-/// All other routes reject internal tokens and fall through to Clerk JWT auth.
-const INTERNAL_AUTH_ALLOWED_PATHS: &[&str] = &[
-    "/api/v1/models/", // deploy/undeploy callbacks
+/// Exact path suffixes where internal token auth is allowed.
+/// Matched against the end of the path after stripping the UUID segment.
+/// All other routes reject internal tokens and fall through to JWT auth.
+const INTERNAL_AUTH_ALLOWED_SUFFIXES: &[&str] = &[
+    "/deploy",   // POST /api/v1/models/{id}/deploy
+    "/undeploy", // POST /api/v1/models/{id}/undeploy
 ];
 
 impl InternalTokenAuthProvider {
@@ -300,10 +302,10 @@ impl InternalTokenAuthProvider {
             return None;
         }
 
-        // Scope check: only allow internal auth on specific route prefixes
-        let path_allowed = INTERNAL_AUTH_ALLOWED_PATHS
+        // Scope check: only allow internal auth on exact deploy/undeploy routes
+        let path_allowed = INTERNAL_AUTH_ALLOWED_SUFFIXES
             .iter()
-            .any(|prefix| request_path.starts_with(prefix));
+            .any(|suffix| request_path.ends_with(suffix));
         if !path_allowed {
             tracing::warn!(
                 path = request_path,
@@ -371,12 +373,59 @@ pub async fn authenticate_token(
     state.auth_chain().authenticate(token, state.db()).await
 }
 
+/// A cloneable auth error stored in extensions when authentication or
+/// authorization fails. Preserves the original HTTP status code and message
+/// so the extractor can return 403/400 instead of collapsing to 401.
+#[derive(Debug, Clone)]
+pub struct AuthError {
+    pub status: axum::http::StatusCode,
+    pub message: String,
+}
+
+impl From<&AppError> for AuthError {
+    fn from(e: &AppError) -> Self {
+        use axum::http::StatusCode;
+        let (status, message) = match e {
+            AppError::Forbidden { message } => (StatusCode::FORBIDDEN, message.clone()),
+            AppError::BadRequest { message } => (StatusCode::BAD_REQUEST, message.clone()),
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Authentication required".into()),
+            other => (
+                StatusCode::UNAUTHORIZED,
+                format!("Authentication failed: {other}"),
+            ),
+        };
+        Self { status, message }
+    }
+}
+
+impl From<AuthError> for AppError {
+    fn from(e: AuthError) -> Self {
+        use axum::http::StatusCode;
+        match e.status {
+            StatusCode::FORBIDDEN => AppError::Forbidden { message: e.message },
+            StatusCode::BAD_REQUEST => AppError::BadRequest { message: e.message },
+            _ => AppError::Unauthorized,
+        }
+    }
+}
+
+/// The auth outcome stored in request extensions by the middleware.
+///
+/// Wraps the full `Result` so the extractor can return the original error
+/// (e.g., 403 Forbidden for non-members) instead of collapsing to 401.
+#[derive(Clone)]
+pub struct AuthOutcome(pub Result<AuthenticatedUser, AuthError>);
+
 /// Canonical accessor for the authenticated principal from request extensions.
 ///
-/// All middleware and helpers should use this instead of reaching into
-/// `extensions()` directly — one read path, easy to find and refactor.
+/// Returns `Some(&user)` if auth succeeded, `None` if no auth was attempted
+/// (no Bearer header). For the full error, use `AuthOutcome` from extensions.
+#[allow(dead_code)] // Public API for future middleware (rate limiting, audit, feature flags)
 pub fn request_principal(parts: &Parts) -> Option<&AuthenticatedUser> {
-    parts.extensions.get::<AuthenticatedUser>()
+    parts
+        .extensions
+        .get::<AuthOutcome>()
+        .and_then(|outcome| outcome.0.as_ref().ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -395,21 +444,19 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response<Body> {
     if let Some(token) = extract_bearer_token(request.headers()) {
-        let token = token.to_string(); // own it before borrowing request mutably
-        match authenticate_token(&state, &token, request.headers(), request.uri().path()).await {
-            Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
-                Ok(()) => {
-                    request.extensions_mut().insert(user);
-                }
-                Err(e) => {
-                    tracing::debug!(error = %e, "Auth middleware: role resolution failed");
-                }
-            },
-            Err(_) => {
-                // Auth failed — don't reject, let handler extractor return 401.
-            }
-        }
+        let token = token.to_string();
+        let outcome =
+            match authenticate_token(&state, &token, request.headers(), request.uri().path()).await
+            {
+                Ok(mut user) => match resolve_role_and_bootstrap(&state, &mut user).await {
+                    Ok(()) => AuthOutcome(Ok(user)),
+                    Err(e) => AuthOutcome(Err(AuthError::from(&e))),
+                },
+                Err(e) => AuthOutcome(Err(AuthError::from(&e))),
+            };
+        request.extensions_mut().insert(outcome);
     }
+    // No Bearer header → no AuthOutcome in extensions → extractor returns 401.
 
     next.run(request).await
 }
@@ -506,9 +553,11 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut Parts,
         _state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        request_principal(parts)
-            .cloned()
-            .ok_or(AppError::Unauthorized)
+        match parts.extensions.get::<AuthOutcome>() {
+            Some(AuthOutcome(Ok(user))) => Ok(user.clone()),
+            Some(AuthOutcome(Err(e))) => Err(AppError::from(e.clone())),
+            None => Err(AppError::Unauthorized),
+        }
     }
 }
 
