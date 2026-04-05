@@ -39,6 +39,19 @@ if ! command -v wal-g &>/dev/null; then
     exit 1
 fi
 
+if ! command -v envdir &>/dev/null; then
+    echo "WARNING: envdir is not installed (part of daemontools)."
+    echo "Installing: apk add daemontools (Alpine) or apt install daemontools (Debian)"
+    if command -v apk &>/dev/null; then
+        apk add --no-cache daemontools
+    elif command -v apt-get &>/dev/null; then
+        apt-get update && apt-get install -y daemontools
+    else
+        echo "ERROR: Cannot install envdir automatically. Install daemontools manually."
+        exit 1
+    fi
+fi
+
 if ! pg_isready &>/dev/null; then
     echo "ERROR: PostgreSQL is not running or not reachable."
     exit 1
