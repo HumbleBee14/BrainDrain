@@ -51,13 +51,25 @@ pub async fn deploy_model(
     require_role(&user, TeamRole::Member)?;
     let result = DeploymentService::deploy(
         state.model_repo(),
-        state.billing_event_repo(),
         state.inference_backend(),
         state.config(),
         user.tenant_id,
         model_id,
     )
     .await?;
+    // Billing through the unified outbox/batcher path
+    state
+        .record_billing_event(
+            user.tenant_id,
+            "deploy",
+            Some(model_id),
+            0,
+            0,
+            0,
+            0.0,
+            serde_json::json!({"action": "deploy"}),
+        )
+        .await;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,

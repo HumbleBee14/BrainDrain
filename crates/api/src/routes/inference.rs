@@ -234,9 +234,12 @@ pub async fn chat_completions(
         );
 
         // Spawn billing task that waits for usage from the stream.
-        // If the client disconnects before the final chunk, usage_rx.recv()
-        // returns None and we bill conservatively using max_tokens to prevent
-        // free inference on early disconnect.
+        // NOTE: This is inherently fire-and-forget — the token count is only
+        // known after streaming completes. If the process crashes during
+        // streaming, this billing event is lost. This is an accepted tradeoff:
+        // the alternative (pre-billing max_tokens then crediting back) adds
+        // significant complexity. For streaming, billing is best-effort.
+        // Non-streaming and batch inference bill durably via the outbox.
         let batcher_state = state.clone();
         let capped_max_tokens = max_tokens;
         tokio::spawn(async move {

@@ -431,7 +431,7 @@ pub trait ApiKeyRepository: Send + Sync {
 }
 
 /// Contract for billing event database operations.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub trait BillingEventRepository: Send + Sync {
     fn create(
         &self,

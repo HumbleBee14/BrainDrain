@@ -122,14 +122,14 @@ record_billing_event()
 
 ### Billing producers
 
-| Producer | File | What it bills |
-|---|---|---|
-| Single inference | `routes/inference.rs` | Per-request token usage |
-| Streaming inference | `routes/inference.rs` | Token usage from SSE final chunk |
-| Batch inference | `routes/inference.rs` | Aggregated batch token usage |
-| Model deployment | `services/deployment_service.rs` | Deploy event (via billing_event_repo) |
-| Training completion | `workers/activities/train_model.py` | GPU-seconds × hourly rate |
-| Training failure | `workers/activities/train_model.py` | Partial billing for long failures |
+| Producer | File | Outbox path? | Notes |
+|---|---|---|---|
+| Single inference | `routes/inference.rs` | Yes | Durable via `record_billing_event` |
+| Batch inference | `routes/inference.rs` | Yes | Durable via `record_billing_event` |
+| Model deployment | `routes/deployments.rs` | Yes | Durable via `record_billing_event` |
+| Streaming inference | `routes/inference.rs` | Best-effort | Token count only known after stream; fire-and-forget `tokio::spawn` |
+| Training completion | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
+| Training failure | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
 
 ---
 

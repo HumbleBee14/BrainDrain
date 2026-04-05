@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::{BillingEventRepository, ModelRepository};
+use crate::repositories::traits::ModelRepository;
 use crate::services::inference_backend::InferenceBackend;
 
 /// Business logic for model deployment via pluggable inference backends.
@@ -17,7 +17,6 @@ impl DeploymentService {
     /// Deploy a fine-tuned model by loading its LoRA adapter into the inference backend.
     pub async fn deploy(
         model_repo: &dyn ModelRepository,
-        billing_repo: &dyn BillingEventRepository,
         backend: &dyn InferenceBackend,
         config: &Config,
         tenant_id: Uuid,
@@ -88,23 +87,6 @@ impl DeploymentService {
                     .ok_or(AppError::NotFound {
                         message: "Model not found after deploy".to_string(),
                     })?;
-
-                let _ = billing_repo
-                    .create(
-                        tenant_id,
-                        "deploy",
-                        Some(model_id),
-                        0,
-                        0,
-                        0,
-                        0.0,
-                        serde_json::json!({
-                            "action": "deploy",
-                            "adapter_ref": handle.adapter_ref,
-                            "backend": backend.name(),
-                        }),
-                    )
-                    .await;
 
                 tracing::info!(
                     model_id = %model_id,
