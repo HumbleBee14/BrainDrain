@@ -426,15 +426,7 @@ class FinalizeIterativeTrainingActivity:
         job_id = input.training_job_id
 
         # Calculate actual cost from aggregate iteration runtimes
-        gpu_rates = {
-            "t4": 0.80,
-            "a10g": 1.20,
-            "l40s": 1.80,
-            "a10040gb": 2.00,
-            "a10080gb": 3.00,
-            "h100": 4.50,
-        }
-        gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
+        gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
         total_runtime = 0.0
         for val in input.metrics.values():
             if isinstance(val, dict):
@@ -598,15 +590,7 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
         )
 
         # Calculate actual cost from runtime
-        gpu_rates = {
-            "t4": 0.80,
-            "a10g": 1.20,
-            "l40s": 1.80,
-            "a10040gb": 2.00,
-            "a10080gb": 3.00,
-            "h100": 4.50,
-        }
-        gpu_rate = gpu_rates.get(input.gpu_class or "", 0.80)
+        gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
         total_runtime = sum(
             v
             for k, v in metrics.items()

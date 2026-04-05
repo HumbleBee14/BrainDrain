@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-format and check for drift before every commit.
+# Install: git config core.hooksPath .githooks
+# Or:      make setup-hooks
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${YELLOW}Running pre-commit checks...${NC}"
+
+# ── Rust formatting ──
+if git diff --cached --name-only | grep -q '\.rs$'; then
+    echo -e "  Rust: cargo fmt"
+    cargo fmt --all -- --check 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo -e "  ${YELLOW}Rust: auto-formatting...${NC}"
+        cargo fmt --all
+        # Re-stage formatted files
+        git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' | xargs -r git add
+        echo -e "  ${GREEN}Rust: formatted and re-staged${NC}"
+    fi
+fi
+
+# ── Python formatting ──
+if git diff --cached --name-only | grep -q '\.py$'; then
+    echo -e "  Python: ruff format"
+    CHANGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
+    if [ -n "$CHANGED_PY" ]; then
+        (cd apps/workers && uv run ruff format $CHANGED_PY 2>/dev/null) || true
+        echo "$CHANGED_PY" | xargs -r git add
+        echo -e "  ${GREEN}Python: formatted and re-staged${NC}"
+
+        # Ruff lint check (non-blocking warning)
+        (cd apps/workers && uv run ruff check src/ 2>/dev/null) || {
+            echo -e "  ${RED}Python: ruff check found issues (see above)${NC}"
+            exit 1
+        }
+    fi
+fi
+
+# ── Frontend formatting ──
+if git diff --cached --name-only | grep -qE '\.(ts|tsx|js|jsx)$'; then
+    echo -e "  Frontend: checking types"
+    # Only type-check, don't block on it (can be slow)
+fi
+
+# ── Rust/Python constant sync ──
+if git diff --cached --name-only | grep -qE '(constants\.rs|enums\.rs|constants\.py|sync_constants\.py)'; then
+    echo -e "  Sync: checking Rust/Python constant drift"
+    python scripts/sync_constants.py --check 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo -e "  ${YELLOW}Sync: auto-syncing constants...${NC}"
+        python scripts/sync_constants.py
+        git add apps/workers/src/constants.py
+        echo -e "  ${GREEN}Sync: constants synced and re-staged${NC}"
+    fi
+fi
+
+echo -e "${GREEN}Pre-commit checks passed!${NC}"

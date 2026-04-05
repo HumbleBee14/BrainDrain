@@ -52,3 +52,6 @@ tarpaulin-report.html
 CLAUDE.md
 /docs/learning
 /docs/notebooks
+
+# Roopik IDE metadata
+.roopik/

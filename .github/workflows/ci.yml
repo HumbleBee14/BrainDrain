@@ -108,3 +108,7 @@ jobs:
       - name: Format check with ruff
         working-directory: apps/workers
         run: uv run ruff format --check src/
+
+      - name: Check Rust/Python constant sync
+        working-directory: apps/workers
+        run: uv run python ../../scripts/sync_constants.py --check

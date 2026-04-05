@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability
+.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability setup-hooks
 
 # Start all infrastructure (PostgreSQL, Redis, MinIO)
 infra:
@@ -52,11 +52,17 @@ lint:
 	cd apps/web && pnpm type-check
 	cd apps/workers && uv run ruff check src/
 	cd apps/workers && uv run ruff format --check src/
+	cd apps/workers && uv run python ../../scripts/sync_constants.py --check
 
 # Build all
 build:
 	cargo build --release
 	cd apps/web && pnpm build
+
+# Install git pre-commit hook (auto-formats Rust, Python, syncs constants)
+setup-hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks installed — pre-commit will auto-format before every commit"
 
 # Clean build artifacts
 clean:

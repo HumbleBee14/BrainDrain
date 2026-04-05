@@ -1,8 +1,27 @@
 """Centralized status constants and shared values for database operations.
 
-These mirror the Rust definitions in crates/shared/src/.
-Keep in sync with the Rust source of truth.
+Auto-generated from Rust source of truth. Do not edit manually.
+Run: python scripts/sync_constants.py
 """
+
+# ── AUTO-GENERATED FROM crates/shared/src/constants.rs ──
+# DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
+
+GPU_HOURLY_RATES: dict[str, float] = {
+    "t4": 0.8,
+    "a10g": 1.2,
+    "l40s": 1.8,
+    "a10040gb": 2.0,
+    "a10080gb": 3.0,
+    "h100": 4.5,
+}
+GPU_DEFAULT_HOURLY_RATE: float = 0.8
+
+# ── END AUTO-GENERATED ──
+
+
+# ── AUTO-GENERATED FROM crates/shared/src/enums.rs ──
+# DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
 
 
 class DocumentStatus:
@@ -30,12 +49,6 @@ class TrainingJobStatus:
     CANCELLED = "cancelled"
 
 
-class EvaluationStatus:
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
 class DeploymentStatus:
     UNDEPLOYED = "undeployed"
     DEPLOYING = "deploying"
@@ -43,17 +56,10 @@ class DeploymentStatus:
     INACTIVE = "inactive"
 
 
-# ── AUTO-GENERATED FROM crates/shared/src/constants.rs ──
-# DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
+class EvaluationStatus:
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
-GPU_HOURLY_RATES: dict[str, float] = {
-    "t4": 0.8,
-    "a10g": 1.2,
-    "l40s": 1.8,
-    "a10040gb": 2.0,
-    "a10080gb": 3.0,
-    "h100": 4.5,
-}
-GPU_DEFAULT_HOURLY_RATE: float = 0.8
 
-# ── END AUTO-GENERATED ──
+# ── END AUTO-GENERATED ENUMS ──
