@@ -15,10 +15,13 @@
 
 set -euo pipefail
 
-# Load wal-g environment
-if [ -f /etc/wal-g/env ]; then
-    # shellcheck disable=SC2046
-    export $(grep -v '^#' /etc/wal-g/env | xargs)
+# Load wal-g environment from envdir layout.
+# Each file in /etc/wal-g/env/ is named after a variable, content is the value.
+if [ -d /etc/wal-g/env ]; then
+    for f in /etc/wal-g/env/*; do
+        [ -f "$f" ] || continue
+        export "$(basename "$f")=$(cat "$f")"
+    done
 fi
 
 VERIFY_ONLY="${1:-}"

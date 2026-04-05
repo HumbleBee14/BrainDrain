@@ -6,8 +6,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    // Don't log credentials
-    let safe_url = &database_url[..database_url.find('@').unwrap_or(database_url.len())];
+    // Redact password from URL for logging.
+    // postgres://user:password@host/db → postgres://user:***@host/db
+    let safe_url = if let Some(at_pos) = database_url.find('@') {
+        let scheme_end = database_url.find("://").map(|p| p + 3).unwrap_or(0);
+        let colon_pos = database_url[scheme_end..at_pos].find(':');
+        match colon_pos {
+            Some(c) => format!(
+                "{}***{}",
+                &database_url[..scheme_end + c + 1],
+                &database_url[at_pos..]
+            ),
+            None => format!(
+                "{}***{}",
+                &database_url[..scheme_end],
+                &database_url[at_pos..]
+            ),
+        }
+    } else {
+        database_url.clone()
+    };
     println!("Running migrations against: {safe_url}");
 
     let pool = platform_db::create_pool(&database_url, 5).await?;

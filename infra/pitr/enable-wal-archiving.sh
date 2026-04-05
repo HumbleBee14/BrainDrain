@@ -3,7 +3,7 @@
 #
 # Prerequisites:
 #   - S3-compatible storage (AWS S3, MinIO, R2) with a dedicated bucket
-#   - pgBackRest or wal-g installed on the Postgres host/container
+#   - wal-g installed on the Postgres host/container
 #   - Superuser access to PostgreSQL
 #
 # This script configures PostgreSQL to continuously archive WAL segments
@@ -44,27 +44,30 @@ if ! pg_isready &>/dev/null; then
     exit 1
 fi
 
-# ── Configure wal-g ──
+# ── Configure wal-g (envdir layout) ──
+# envdir expects a directory where each file's name is a variable name
+# and its content is the value. This is what archive_command and
+# restore_command use to load wal-g credentials.
 
-export WALG_S3_PREFIX="s3://${WAL_S3_BUCKET}/${WAL_S3_PREFIX}"
-export AWS_ENDPOINT="${WAL_S3_ENDPOINT}"
-export AWS_REGION="${WAL_S3_REGION}"
-export AWS_S3_FORCE_PATH_STYLE="true"
+WAL_G_DIR="/etc/wal-g/env"
+mkdir -p "$WAL_G_DIR"
 
-# Write wal-g environment file for the postgres user
-WAL_G_ENV="/etc/wal-g/env"
-mkdir -p "$(dirname "$WAL_G_ENV")"
-cat > "$WAL_G_ENV" <<EOF
-WALG_S3_PREFIX=s3://${WAL_S3_BUCKET}/${WAL_S3_PREFIX}
-AWS_ENDPOINT=${WAL_S3_ENDPOINT}
-AWS_REGION=${WAL_S3_REGION}
-AWS_S3_FORCE_PATH_STYLE=true
-AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-PGDATA=${PGDATA}
-EOF
-chmod 600 "$WAL_G_ENV"
-echo "Wrote wal-g config to ${WAL_G_ENV}"
+printf '%s' "s3://${WAL_S3_BUCKET}/${WAL_S3_PREFIX}" > "$WAL_G_DIR/WALG_S3_PREFIX"
+printf '%s' "${WAL_S3_ENDPOINT}" > "$WAL_G_DIR/AWS_ENDPOINT"
+printf '%s' "${WAL_S3_REGION}" > "$WAL_G_DIR/AWS_REGION"
+printf '%s' "true" > "$WAL_G_DIR/AWS_S3_FORCE_PATH_STYLE"
+printf '%s' "${PGDATA}" > "$WAL_G_DIR/PGDATA"
+
+if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
+    printf '%s' "${AWS_ACCESS_KEY_ID}" > "$WAL_G_DIR/AWS_ACCESS_KEY_ID"
+fi
+if [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    printf '%s' "${AWS_SECRET_ACCESS_KEY}" > "$WAL_G_DIR/AWS_SECRET_ACCESS_KEY"
+fi
+
+chmod 700 "$WAL_G_DIR"
+chmod 600 "$WAL_G_DIR"/*
+echo "Wrote wal-g envdir config to ${WAL_G_DIR}"
 
 # ── Set PostgreSQL parameters ──
 

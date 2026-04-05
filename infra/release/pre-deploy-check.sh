@@ -10,7 +10,13 @@
 #   # or in docker context:
 #   docker compose -f docker-compose.prod.yml exec api /app/pre-deploy-check.sh
 
-set -euo pipefail
+set -eo pipefail
+
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "Usage: DATABASE_URL=postgres://... $0"
+    echo "  DATABASE_URL is required to connect to the target database."
+    exit 1
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
