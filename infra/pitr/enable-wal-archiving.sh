@@ -39,19 +39,6 @@ if ! command -v wal-g &>/dev/null; then
     exit 1
 fi
 
-if ! command -v envdir &>/dev/null; then
-    echo "WARNING: envdir is not installed (part of daemontools)."
-    echo "Installing: apk add daemontools (Alpine) or apt install daemontools (Debian)"
-    if command -v apk &>/dev/null; then
-        apk add --no-cache daemontools
-    elif command -v apt-get &>/dev/null; then
-        apt-get update && apt-get install -y daemontools
-    else
-        echo "ERROR: Cannot install envdir automatically. Install daemontools manually."
-        exit 1
-    fi
-fi
-
 if ! pg_isready &>/dev/null; then
     echo "ERROR: PostgreSQL is not running or not reachable."
     exit 1
@@ -87,7 +74,7 @@ echo "Wrote wal-g envdir config to ${WAL_G_DIR}"
 psql -U platform -d platform -c "
     ALTER SYSTEM SET wal_level = 'replica';
     ALTER SYSTEM SET archive_mode = 'on';
-    ALTER SYSTEM SET archive_command = 'envdir /etc/wal-g/env wal-g wal-push %p';
+    ALTER SYSTEM SET archive_command = '/opt/platform/infra/pitr/wal-g-wrapper.sh wal-push %p';
     ALTER SYSTEM SET archive_timeout = '60';
 "
 echo "PostgreSQL archive settings applied."
