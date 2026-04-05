@@ -209,24 +209,20 @@ pub struct Config {
     #[serde(default)]
     pub feature_flags_file: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: server URL.
+    /// Unleash server URL (required when FEATURE_FLAGS_PROVIDER=unleash).
     #[serde(default)]
-    #[allow(dead_code)]
     pub unleash_url: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: API token or client token.
+    /// Unleash API token (required when FEATURE_FLAGS_PROVIDER=unleash).
     #[serde(default)]
-    #[allow(dead_code)]
     pub unleash_api_token: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: application name.
+    /// Unleash application name (sent in API requests for server-side filtering).
     #[serde(default = "default_unleash_app_name")]
-    #[allow(dead_code)]
     pub unleash_app_name: String,
 
-    /// Future Unleash/OpenFeature integration: environment name.
+    /// Unleash environment name (e.g., "development", "production").
     #[serde(default = "default_unleash_environment")]
-    #[allow(dead_code)]
     pub unleash_environment: String,
 }
 
