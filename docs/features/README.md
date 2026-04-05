@@ -19,4 +19,5 @@ high level. Start here if you're new or returning after a break.
 | PgBouncer connection pooling | [pgbouncer.md](pgbouncer.md) | #24 | Handle hundreds of app connections with fewer Postgres connections |
 | PITR backup and restore | [pitr-backup.md](pitr-backup.md) | #24 | Recover the database to any point in time after a disaster |
 | Release pipeline hardening | [release-pipeline.md](release-pipeline.md) | #24 | Safe, ordered deployments with health checks |
+| Multi-instance inference control plane | [multi-instance-inference.md](multi-instance-inference.md) | #26 | Route deploy / inference / undeploy through registered serving instances |
 | Pre-commit hooks | [pre-commit-hooks.md](pre-commit-hooks.md) | #23 | Auto-format code before every commit, catch drift |

@@ -1,69 +1,46 @@
-# Platform
+# Docs Index
 
-Project: An end-to-end LLM fine-tuning platform where users upload raw data, the system handles data curation and generates training data, and fine-tunes models, evaluates quality, and serves the result.
+This folder contains the current architecture, operations, and product-flow documentation for BrainDrain.
 
-## Quick Start
+## Start Here
 
-```bash
-make lint && make test
-docker compose up -d              # Start PostgreSQL, Redis, MinIO
-make migrate                      # Run database migrations
-make dev-api                      # Start Rust API server
-cd apps/web && pnpm install && pnpm dev  # Start frontend
-```
-
-> **Type generation:** TypeScript types are auto-generated from Rust via `ts-rs`. After changing any Rust DTO or enum, run `make typegen` to regenerate the TypeScript interfaces in `apps/web/src/lib/generated/`. This also runs automatically as part of `make test`.
-
----
----
-
-## Format, Lint & Test Reference
-
-### 🦀 Rust
-
-| What | Command |
-|---|---|
-| Format check | `cargo fmt --all -- --check` |
-| Format fix (auto) | `cargo fmt --all` |
-| Lint (clippy) | `cargo clippy --workspace -- -D warnings` |
-| Run tests | `cargo test --workspace` |
-| Regenerate TS types | `cargo test --workspace export_bindings_` |
-
-### 🐍 Python (workers)
-
-| What | Command |
-|---|---|
-| Lint check | `cd apps/workers && uv run ruff check src/` |
-| Format check | `cd apps/workers && uv run ruff format --check src/` |
-| Format fix (auto) | `cd apps/workers && uv run ruff format src/` |
-| Lint fix (auto) | `cd apps/workers && uv run ruff check --fix src/` |
-
-### 🌐 TypeScript / Next.js
-
-| What | Command |
-|---|---|
-| ESLint check | `cd apps/web && pnpm lint` |
-| Type check (tsc) | `cd apps/web && pnpm type-check` |
-| Build check | `cd apps/web && pnpm build` |
-
-### 🚀 Run Everything (Makefile shortcuts)
-
-| What | Command |
-|---|---|
-| All lint + format checks | `make lint` |
-| All tests | `make test` |
-| Full CI pass | `make lint && make test` |
-
-
----
-
-
-## Documentation
-
-| Document | Description |
+| Document | Why read it |
 |----------|-------------|
-| [docs/PROJECT_FLOW.md](docs/PROJECT_FLOW.md) | **Start here** — Complete end-to-end project guide with flow diagrams |
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Setup, run, test, and deploy commands (concise & copy-pasteable) |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, technical decision records, component registry |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Development tracker — phase-by-phase build history |
-| [docs/RESEARCH.md](docs/RESEARCH.md) | LLM fine-tuning landscape research and analysis |
+| [PROJECT_FLOW.md](./PROJECT_FLOW.md) | End-to-end product flow from upload to deployed model |
+| [QUICKSTART.md](./QUICKSTART.md) | Local setup and first-run commands |
+| [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md) | Current production system map |
+
+## Architecture
+
+| Document | Focus |
+|----------|-------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Detailed design rationale, subsystem notes, and technical decisions |
+| [DEPLOYMENT.md](./DEPLOYMENT.md) | Serving and deployment architecture, including multi-instance inference |
+| [DATA_PIPELINE.md](./DATA_PIPELINE.md) | Ingestion, refinement, and training data flow |
+
+## Production Operations
+
+| Document | Focus |
+|----------|-------|
+| [PRODUCTION_OPS.md](./PRODUCTION_OPS.md) | PITR, PgBouncer, release checks, and runbooks |
+| [PRODUCTION_SETUP_GUIDE.md](./PRODUCTION_SETUP_GUIDE.md) | End-to-end production setup guide |
+| [PRODUCTION_SCALE.md](./PRODUCTION_SCALE.md) | Scale posture and future operational expansion notes |
+
+## Feature and Subsystem Docs
+
+See the feature docs under [features/](./features/) for focused notes on:
+- auth middleware
+- API idempotency
+- durable billing outbox
+- feature flags
+- release pipeline
+- PITR backup
+- PgBouncer
+
+## Build History and Research
+
+| Document | Focus |
+|----------|-------|
+| [DEVELOPMENT.md](./DEVELOPMENT.md) | Phase-by-phase build log |
+| [PRODUCTION_EXCELLENCE_PR_PLAN.md](./PRODUCTION_EXCELLENCE_PR_PLAN.md) | Final production-hardening roadmap and completion record |
+| [RESEARCH.md](./RESEARCH.md) | Supporting research and landscape analysis |

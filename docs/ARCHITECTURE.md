@@ -28,6 +28,21 @@
 
 Platform is a personal learning project that explores the full pipeline of transforming raw documents into deployed, fine-tuned LLMs. The goal is to learn production Rust, ML training pipelines, and systems engineering by building every stage end-to-end.
 
+### Current Production Snapshot
+
+The current codebase is no longer just a conceptual architecture. The implemented production shape is:
+- Rust control plane with auth middleware, idempotency, durable billing outbox, feature flags, and inference routing
+- Python Temporal workers for parsing, synthesis, training, evaluation, and export
+- Next.js frontend
+- PostgreSQL + PgBouncer + Redis + S3/MinIO + Temporal
+- pluggable inference backends (`vllm`, `tgi`, `sglang`)
+- multi-instance inference control plane with instance registry, health checks, draining, and per-deployment instance binding
+
+This document keeps some longer-term notes and learning context, but the current operational system is best summarized by:
+- [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md)
+- [DEPLOYMENT.md](./DEPLOYMENT.md)
+- [PRODUCTION_OPS.md](./PRODUCTION_OPS.md)
+
 ### The Goal
 
 ```
@@ -183,7 +198,7 @@ We use **Rust for all infrastructure** and **Python only where ML libraries forc
 | Vector DB | Qdrant | Rust-native, filtering, multi-tenancy support |
 | Cache | Redis (redis-rs) | Sub-ms latency, async Rust client |
 | GPU Compute | Modal (MVP) → RunPod (scale) | Modal: best DX; RunPod: cheapest at scale |
-| Serving | vLLM + S-LoRA | Multi-tenant, 2000+ adapters, OpenAI-compatible |
+| Serving | Pluggable inference backend + instance-aware routing | `vllm`, `tgi`, `sglang`, OpenAI-compatible inference, multi-instance control plane |
 
 ---
 
@@ -816,96 +831,52 @@ Automatically evaluate fine-tuned models against base models, detect regressions
 ### Purpose
 Deploy fine-tuned models for inference with minimal latency and maximum cost efficiency.
 
-### Architecture
+### Current Implemented Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                      SERVING & DEPLOYMENT                                │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                    DEPLOYMENT OPTIONS                         │       │
-│  │                                                               │       │
-│  │  Option A: MANAGED API (Default)                             │       │
-│  │  ┌──────────────────────────────────────────────────────┐    │       │
-│  │  │  Shared vLLM Cluster                                  │    │       │
-│  │  │                                                        │    │       │
-│  │  │  ┌─────────────┐                                      │    │       │
-│  │  │  │  Base Model  │  (e.g., Llama-3-8B, loaded once)    │    │       │
-│  │  │  │  ~14GB VRAM  │                                      │    │       │
-│  │  │  └──────┬──────┘                                      │    │       │
-│  │  │         │                                              │    │       │
-│  │  │  ┌──────┴──────────────────────────────────────┐      │    │       │
-│  │  │  │          S-LoRA Adapter Pool                 │      │    │       │
-│  │  │  │                                              │      │    │       │
-│  │  │  │  User A adapter (25MB) ──┐                  │      │    │       │
-│  │  │  │  User B adapter (30MB) ──┼── Hot in VRAM    │      │    │       │
-│  │  │  │  User C adapter (20MB) ──┘                  │      │    │       │
-│  │  │  │  User D adapter (28MB) ── On disk (swap)    │      │    │       │
-│  │  │  │  ...                                         │      │    │       │
-│  │  │  │  User N adapter (22MB) ── On disk (swap)    │      │    │       │
-│  │  │  └──────────────────────────────────────────────┘      │    │       │
-│  │  │                                                        │    │       │
-│  │  │  OpenAI-compatible API:                                │    │       │
-│  │  │  POST /v1/chat/completions                             │    │       │
-│  │  │  Header: X-LoRA-Adapter: user_adapter_id               │    │       │
-│  │  └──────────────────────────────────────────────────────┘    │       │
-│  │                                                               │       │
-│  │  Option B: DEDICATED ENDPOINT (Pro tier)                     │       │
-│  │  ├─ Dedicated vLLM instance per user                        │       │
-│  │  ├─ Scale-to-zero when idle                                 │       │
-│  │  └─ RunPod Serverless with FlashBoot (<200ms cold start)   │       │
-│  │                                                               │       │
-│  │  Option C: EDGE DOWNLOAD (Self-hosted)                       │       │
-│  │  ├─ GGUF export (for llama.cpp / Ollama)                   │       │
-│  │  ├─ ONNX export (for enterprise runtimes)                  │       │
-│  │  ├─ Merged model (base + LoRA) or adapter-only             │       │
-│  │  └─ One-click download with quantization options            │       │
-│  │      (Q4_K_M, Q5_K_M, Q6_K, Q8_0, FP16)                  │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────┐       │
-│  │                    API KEY MANAGEMENT                         │       │
-│  │                                                               │       │
-│  │  - Per-model API keys                                        │       │
-│  │  - Rate limiting (per key)                                   │       │
-│  │  - Usage metering (tokens in/out, requests)                 │       │
-│  │  - Billing integration                                       │       │
-│  └──────────────────────────────────────────────────────────────┘       │
-└──────────────────────────────────────────────────────────────────────────┘
+```text
+admin registers inference instances
+  -> control plane tracks backend_type, base_model, health, lifecycle, capacity
+  -> deploy claims a compatible healthy ready instance
+  -> model stores inference_instance_id
+  -> adapter loads on that assigned instance
+  -> inference resolves model -> assigned instance -> backend
+  -> undeploy unloads from the assigned instance and frees slot count
 ```
 
-### vLLM Cluster Configuration
+Key properties of the current system:
+- backend abstraction supports `vllm`, `tgi`, and `sglang`
+- single-instance mode still works through `INFERENCE_SERVER_URL`
+- multi-instance mode is enabled by feature flag
+- deploy/inference/undeploy are all instance-aware once enabled
+- health probes and reconciliation repair stale instance state
+- API keys remain scoped per model
+- billing is routed through the durable outbox path
 
-```yaml
-# vLLM serving config (per base model pool)
-model: meta-llama/Llama-3.1-8B-Instruct
-tensor_parallel_size: 1          # Single GPU for 8B
-max_model_len: 8192
-enable_lora: true
-max_loras: 64                    # Hot adapters in VRAM
-max_lora_rank: 64
-lora_extra_vocab_size: 256
-gpu_memory_utilization: 0.92
-max_num_seqs: 256                # Concurrent sequences
-enable_prefix_caching: true      # Reuse system prompt KV cache
-quantization: awq                # Base model quantized
-```
+### Current Serving Layers
 
-### Multi-Tenant Serving Economics
+| Layer | Responsibility |
+|------|----------------|
+| Inference backend abstraction | Build engine-specific clients without hard-coupling routes/services to one engine |
+| Inference instance registry | Track backend type, URL, base model, lifecycle, health, and adapter capacity |
+| Deployment service | Claim capacity, bind model to instance, load adapter, persist routing state |
+| Inference route | Resolve model binding, pick assigned backend instance, stream or batch requests |
+| Reconciler | Health probes, stale-state detection, adapter count reconciliation |
 
-```
-One H100 80GB running vLLM:
-├─ Base model (Llama-3-8B AWQ): ~8GB VRAM
-├─ KV cache: ~50GB
-├─ Hot LoRA adapters (64 × ~30MB): ~2GB
-├─ Overhead: ~20GB
-│
-├─ Throughput: ~2,000 tokens/sec
-├─ Concurrent users: ~50-100 (depending on load)
-├─ Monthly cost: ~$2,850
-├─ Cost per adapter (100 adapters): ~$28.50/month
-└─ Cost per adapter (200 adapters): ~$14.25/month
-```
+### Current Constraints
+
+The implemented control plane is intentionally scoped to:
+- explicit admin registration of instances
+- DB-backed capacity accounting
+- health probing from the API control plane
+- manual fleet growth
+
+It does not yet attempt:
+- auto-provisioning
+- Kubernetes operator logic
+- cross-region scheduling
+- autoscaling policies
+
+Those are future operational layers, not missing core architecture.
 
 ### Performance Targets
 
@@ -1850,18 +1821,18 @@ Week 11+:  MinerU, distilabel, prompt engineering (build as you learn)
 
 **Rationale:** Modal lets you ship fast with near-zero infrastructure code. For larger scale, RunPod offers 30-40% cost savings with more setup.
 
-### TDR-004: Serving — vLLM vs Alternatives
+### TDR-004: Serving — Backend Abstraction vs Single-Engine Coupling
 
-**Decision:** vLLM with S-LoRA
+**Decision:** Pluggable inference backend abstraction, with `vllm` as the primary production backend today
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **vLLM + S-LoRA** | De facto standard, 2000+ adapters, OpenAI-compatible, continuous batching | Complex configuration |
-| LoRAX (Predibase) | Purpose-built for multi-LoRA | Smaller community, less flexible |
-| TGI v3 | HF ecosystem, long context | Fewer adapters simultaneously |
-| TensorRT-LLM | Maximum throughput | Limited LoRA, NVIDIA lock-in |
+| **Backend abstraction + vLLM default** | Keeps current best backend while avoiding hard-coupling, enables per-instance routing | More control-plane code |
+| vLLM only | Simplest implementation | Harder future backend replacement |
+| TGI only | Strong HF ecosystem | Different LoRA/serving tradeoffs |
+| TensorRT-LLM only | Maximum throughput in some NVIDIA setups | Ecosystem lock-in, less flexible |
 
-**Rationale:** vLLM's S-LoRA enables serving hundreds of user adapters from a single GPU, which is the only economically viable approach for multi-tenant model serving. OpenAI-compatible API means users can drop in our endpoint with zero code changes.
+**Rationale:** vLLM remains the strongest default serving backend for multi-adapter GPU economics, but the platform should not be structurally coupled to one engine. The production code now routes through a backend abstraction and an inference instance registry so backend choice can evolve without rewriting deploy, inference, and undeploy flows.
 
 ### TDR-005: Document Parsing — MinerU vs Alternatives
 
