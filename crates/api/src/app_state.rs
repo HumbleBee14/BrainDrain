@@ -13,6 +13,7 @@ use crate::repositories::dataset_repo::PgDatasetRepo;
 use crate::repositories::document_repo::PgDocumentRepo;
 use crate::repositories::evaluation_repo::PgEvaluationRepo;
 use crate::repositories::export_repo::PgExportRepo;
+use crate::repositories::inference_instance_repo::PgInferenceInstanceRepo;
 use crate::repositories::invitation_repo::PgInvitationRepo;
 use crate::repositories::model_repo::PgModelRepo;
 use crate::repositories::notification_repo::PgNotificationRepo;
@@ -22,9 +23,9 @@ use crate::repositories::tenant_repo::PgTenantRepo;
 use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
     ApiKeyRepository, AuditLogRepository, BillingEventRepository, DatasetRepository,
-    DocumentRepository, EvaluationRepository, ExportRepository, InvitationRepository,
-    ModelRepository, NotificationRepository, ProjectRepository, TeamMemberRepository,
-    TenantRepository, TrainingJobRepository,
+    DocumentRepository, EvaluationRepository, ExportRepository, InferenceInstanceRepository,
+    InvitationRepository, ModelRepository, NotificationRepository, ProjectRepository,
+    TeamMemberRepository, TenantRepository, TrainingJobRepository,
 };
 use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_outbox::BillingOutboxRelay;
@@ -35,7 +36,9 @@ use crate::services::feature_flags::{
     FeatureFlags, FlagContext, INFERENCE_BACKEND_TGI_ENABLED,
     NOTIFICATIONS_DELIVERY_WORKER_ENABLED, UnleashPollerHandle, build_feature_flags_async,
 };
-use crate::services::inference_backend::{InferenceBackend, build_backend};
+use crate::services::inference_backend::{
+    InferenceBackend, build_backend, build_backend_for_instance,
+};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -65,6 +68,7 @@ struct AppStateInner {
     pub model_repo: Arc<dyn ModelRepository>,
     pub evaluation_repo: Arc<dyn EvaluationRepository>,
     pub export_repo: Arc<dyn ExportRepository>,
+    pub inference_instance_repo: Arc<dyn InferenceInstanceRepository>,
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub billing_event_repo: Arc<dyn BillingEventRepository>,
     pub audit_log_repo: Arc<dyn AuditLogRepository>,
@@ -170,6 +174,8 @@ impl AppState {
         let evaluation_repo: Arc<dyn EvaluationRepository> =
             Arc::new(PgEvaluationRepo::new(db.clone()));
         let export_repo: Arc<dyn ExportRepository> = Arc::new(PgExportRepo::new(db.clone()));
+        let inference_instance_repo: Arc<dyn InferenceInstanceRepository> =
+            Arc::new(PgInferenceInstanceRepo::new(db.clone()));
         let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
             Arc::new(PgBillingEventRepo::new(db.clone()));
@@ -304,6 +310,7 @@ impl AppState {
                 model_repo,
                 evaluation_repo,
                 export_repo,
+                inference_instance_repo,
                 api_key_repo,
                 billing_event_repo,
                 audit_log_repo,
@@ -382,6 +389,10 @@ impl AppState {
         &*self.inner.export_repo
     }
 
+    pub fn inference_instance_repo(&self) -> &dyn InferenceInstanceRepository {
+        &*self.inner.inference_instance_repo
+    }
+
     pub fn api_key_repo(&self) -> &dyn ApiKeyRepository {
         &*self.inner.api_key_repo
     }
@@ -416,6 +427,29 @@ impl AppState {
 
     pub fn inference_backend(&self) -> &dyn InferenceBackend {
         &*self.inner.inference_backend
+    }
+
+    /// Return the global inference backend as an Arc.
+    /// Used by the single-instance fallback path so the shared circuit
+    /// breaker accumulates state across requests.
+    pub fn inference_backend_arc(&self) -> Arc<dyn InferenceBackend> {
+        Arc::clone(&self.inner.inference_backend)
+    }
+
+    pub fn build_inference_backend_for_instance(
+        &self,
+        backend_type: &str,
+        server_url: &str,
+    ) -> Arc<dyn InferenceBackend> {
+        build_backend_for_instance(
+            backend_type,
+            server_url,
+            self.inner.http_client.clone(),
+            CircuitBreaker::new(
+                self.inner.config.vllm_cb_failure_threshold,
+                Duration::from_secs(self.inner.config.vllm_cb_recovery_timeout_secs),
+            ),
+        )
     }
 
     pub fn feature_flags(&self) -> &FeatureFlags {

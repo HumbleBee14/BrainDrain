@@ -211,6 +211,15 @@ pub struct DeploymentConfig {
     /// Serving engine type (vllm, tgi, sglang).
     #[serde(default)]
     pub backend: Option<String>,
+    /// Assigned inference instance ID for debugging and operational visibility.
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    /// Assigned inference instance name.
+    #[serde(default)]
+    pub instance_name: Option<String>,
+    /// Assigned inference instance URL snapshot.
+    #[serde(default)]
+    pub instance_url: Option<String>,
     #[serde(default)]
     pub deployed_at: Option<String>,
     /// Extra config not in the schema.
@@ -267,6 +276,9 @@ mod tests {
             adapter_ref: Some("adapter-abc123".into()),
             base_model: Some("meta-llama/Llama-3.1-8B".into()),
             backend: Some("vllm".into()),
+            instance_id: Some("00000000-0000-0000-0000-000000000001".into()),
+            instance_name: Some("gpu-a10g-1".into()),
+            instance_url: Some("http://inference-a10g-1:8000".into()),
             deployed_at: Some("2026-01-01T00:00:00Z".into()),
             extra: HashMap::new(),
         };
@@ -274,5 +286,6 @@ mod tests {
         let parsed: DeploymentConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.adapter_ref, Some("adapter-abc123".into()));
         assert_eq!(parsed.backend, Some("vllm".into()));
+        assert_eq!(parsed.instance_name, Some("gpu-a10g-1".into()));
     }
 }

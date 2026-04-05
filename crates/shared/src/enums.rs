@@ -94,6 +94,56 @@ pub enum DeploymentStatus {
     Inactive,
 }
 
+/// Serving instance health from the control plane's point of view.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    TS,
+    ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum InferenceInstanceHealthStatus {
+    #[default]
+    Unknown,
+    Healthy,
+    Unhealthy,
+}
+
+/// Operational lifecycle state for an inference instance.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    TS,
+    ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum InferenceInstanceLifecycleState {
+    #[default]
+    Ready,
+    Draining,
+    Retired,
+}
+
 /// Evaluation job status.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,

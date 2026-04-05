@@ -7,6 +7,7 @@ pub mod dataset_repo;
 pub mod document_repo;
 pub mod evaluation_repo;
 pub mod export_repo;
+pub mod inference_instance_repo;
 pub mod invitation_repo;
 pub mod model_repo;
 pub mod notification_repo;

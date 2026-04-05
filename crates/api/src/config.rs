@@ -120,6 +120,14 @@ pub struct Config {
     #[serde(default = "default_deploy_stale_minutes")]
     pub deploy_stale_minutes: i64,
 
+    /// Inference instance health probe interval in seconds.
+    #[serde(default = "default_inference_instance_health_poll_interval_secs")]
+    pub inference_instance_health_poll_interval_secs: u64,
+
+    /// Inference instance reconciliation interval in seconds.
+    #[serde(default = "default_inference_instance_reconcile_interval_secs")]
+    pub inference_instance_reconcile_interval_secs: u64,
+
     // ── Circuit Breaker (Inference Backend) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -366,6 +374,12 @@ fn default_delivery_poll_interval_secs() -> u64 {
 }
 fn default_deploy_stale_minutes() -> i64 {
     10
+}
+fn default_inference_instance_health_poll_interval_secs() -> u64 {
+    60
+}
+fn default_inference_instance_reconcile_interval_secs() -> u64 {
+    60
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

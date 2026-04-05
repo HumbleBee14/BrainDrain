@@ -1,10 +1,12 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::{
-    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, Invitation, Model, ModelExport,
-    NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant, TrainingJob,
+    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, InferenceInstance, Invitation,
+    Model, ModelExport, NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant,
+    TrainingJob,
 };
 use platform_shared::enums::{
-    DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
+    DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus,
+    InferenceInstanceHealthStatus, InferenceInstanceLifecycleState, TrainingJobStatus,
 };
 use uuid::Uuid;
 
@@ -300,6 +302,7 @@ pub trait ModelRepository: Send + Sync {
     /// Prevents capacity leaks when the API dies mid-deploy before cleanup runs.
     fn reap_stale_deployments(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>>;
 
+    #[allow(dead_code)]
     fn update_deployment_status(
         &self,
         tenant_id: Uuid,
@@ -350,6 +353,60 @@ pub trait ModelRepository: Send + Sync {
         current_id: Uuid,
         target_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Model>>>;
+}
+
+/// Contract for global inference instance control-plane operations.
+#[allow(clippy::too_many_arguments)]
+pub trait InferenceInstanceRepository: Send + Sync {
+    fn create(
+        &self,
+        name: &str,
+        base_url: &str,
+        backend_type: &str,
+        gpu_class: Option<&str>,
+        base_model: &str,
+        max_adapters: i32,
+        health_status: InferenceInstanceHealthStatus,
+        lifecycle_state: InferenceInstanceLifecycleState,
+        metadata: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<InferenceInstance>>;
+
+    fn get_by_id(&self, id: Uuid) -> BoxFuture<'_, AppResult<Option<InferenceInstance>>>;
+
+    fn list(&self) -> BoxFuture<'_, AppResult<Vec<InferenceInstance>>>;
+
+    /// Atomically reserve one adapter slot on the least-loaded compatible instance.
+    fn claim_slot(
+        &self,
+        backend_type: &str,
+        base_model: &str,
+    ) -> BoxFuture<'_, AppResult<Option<InferenceInstance>>>;
+
+    fn release_slot(&self, id: Uuid) -> BoxFuture<'_, AppResult<()>>;
+
+    fn update_health(
+        &self,
+        id: Uuid,
+        health_status: InferenceInstanceHealthStatus,
+    ) -> BoxFuture<'_, AppResult<Option<InferenceInstance>>>;
+
+    fn update_lifecycle_state(
+        &self,
+        id: Uuid,
+        lifecycle_state: InferenceInstanceLifecycleState,
+    ) -> BoxFuture<'_, AppResult<Option<InferenceInstance>>>;
+
+    /// Atomically retire an instance only if it has zero active adapters.
+    /// Returns None if the instance doesn't exist or has active adapters.
+    fn retire_if_empty(&self, id: Uuid) -> BoxFuture<'_, AppResult<Option<InferenceInstance>>>;
+
+    /// Atomically delete an instance only if it has zero active adapters.
+    /// Returns false if the instance doesn't exist or has active adapters.
+    fn delete_if_empty(&self, id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
+
+    fn list_for_healthcheck(&self) -> BoxFuture<'_, AppResult<Vec<InferenceInstance>>>;
+
+    fn reconcile_adapter_counts(&self) -> BoxFuture<'_, AppResult<u64>>;
 }
 
 /// Contract for evaluation database operations.

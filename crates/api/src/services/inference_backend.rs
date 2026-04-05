@@ -454,6 +454,21 @@ pub fn build_backend(
     }
 }
 
+/// Construct a backend for a specific registered inference instance.
+pub fn build_backend_for_instance(
+    backend_type: &str,
+    server_url: &str,
+    http_client: reqwest::Client,
+    circuit_breaker: CircuitBreaker,
+) -> Arc<dyn InferenceBackend> {
+    build_backend(
+        backend_type,
+        server_url.to_string(),
+        http_client,
+        circuit_breaker,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

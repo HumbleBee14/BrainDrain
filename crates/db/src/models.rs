@@ -101,9 +101,29 @@ pub struct Model {
     pub adapter_path: Option<String>,
     pub adapter_size_bytes: Option<i64>,
     pub deployment_status: String,
+    pub inference_instance_id: Option<Uuid>,
     pub deployment_config: serde_json::Value,
     pub eval_scores: serde_json::Value,
     pub version: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct InferenceInstance {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub backend_type: String,
+    pub gpu_class: Option<String>,
+    pub base_model: String,
+    pub max_adapters: i32,
+    pub active_adapter_count: i32,
+    pub health_status: String,
+    pub lifecycle_state: String,
+    pub last_health_check_at: Option<DateTime<Utc>>,
+    pub last_healthy_at: Option<DateTime<Utc>>,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

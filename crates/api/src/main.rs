@@ -28,6 +28,7 @@ use services::feature_flags::{
     BILLING_OUTBOX_ENABLED, DEPLOYMENTS_MULTI_INSTANCE_ENABLED, FlagContext, IDEMPOTENCY_ENFORCED,
     INFERENCE_BACKEND_TGI_ENABLED, NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
 };
+use services::inference_instance_service::InferenceInstanceService;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -88,6 +89,48 @@ async fn main() -> anyhow::Result<()> {
                     }
                     _ = &mut idempotency_shutdown_rx => {
                         tracing::info!("Idempotency cleanup task shutting down");
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    // Spawn background task: inference instance health probes + capacity reconciliation.
+    let (instance_control_shutdown_tx, mut instance_control_shutdown_rx) =
+        tokio::sync::oneshot::channel::<()>();
+    {
+        let control_state = state.clone();
+        let health_interval_secs = config.inference_instance_health_poll_interval_secs;
+        let reconcile_interval_secs = config.inference_instance_reconcile_interval_secs;
+        tokio::spawn(async move {
+            let mut health_interval =
+                tokio::time::interval(std::time::Duration::from_secs(health_interval_secs));
+            let mut reconcile_interval =
+                tokio::time::interval(std::time::Duration::from_secs(reconcile_interval_secs));
+            health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            reconcile_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    _ = health_interval.tick() => {
+                        if let Err(e) = InferenceInstanceService::run_health_probes(&control_state).await {
+                            tracing::warn!(error = %e, "Inference instance health loop failed");
+                        }
+                    }
+                    _ = reconcile_interval.tick() => {
+                        match control_state.inference_instance_repo().reconcile_adapter_counts().await {
+                            Ok(repaired) if repaired > 0 => {
+                                tracing::warn!(repaired, "Reconciled inference instance adapter counts");
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                            tracing::warn!(error = %e, "Inference instance reconciliation failed");
+                            }
+                        }
+                    }
+                    _ = &mut instance_control_shutdown_rx => {
+                        tracing::info!("Inference instance control-plane task shutting down");
                         return;
                     }
                 }
@@ -184,6 +227,7 @@ async fn main() -> anyhow::Result<()> {
     // Shut down background workers after server stops accepting requests
     tracing::info!("Shutting down background workers...");
     let _ = idempotency_shutdown_tx.send(());
+    let _ = instance_control_shutdown_tx.send(());
 
     // Stop Unleash poller if running
     shutdown_state.shutdown_unleash_poller();

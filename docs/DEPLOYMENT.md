@@ -42,7 +42,7 @@ Root `.dockerignore` excludes `target/`, `node_modules/`, `.venv/`, `.git/`, `do
 
 `docker-compose.prod.yml` runs the full stack:
 - **Infrastructure:** Postgres 16, Redis 7, MinIO, Temporal (self-hosted with its own Postgres)
-- **Application:** API, Web, Workers (built from Dockerfiles)
+- **Application:** migrate job, API, Web, Workers (built from Dockerfiles)
 - **Features:** health checks, restart policies, resource limits, volume persistence
 - **Config:** all environment variables from `.env` via `${VAR}` interpolation
 - **Optional:** vLLM inference server (uncomment for GPU hosts)
@@ -82,9 +82,14 @@ Covers every env var:
 
 ## 7. Database Migrations (DONE)
 
-The API binary runs migrations on startup (SQLx embedded migrations).
-The Dockerfile copies `crates/db/src/migrations/` into the image.
-No manual migration step needed.
+Production uses a dedicated migration step before the API starts:
+
+- `docker-compose.prod.yml` runs the `migrate` service first
+- the API skips auto-migration in production
+- the image still contains SQLx embedded migrations, so the same binary can run
+  the migration job and the API process
+
+For dev/staging, the API still auto-runs migrations on startup.
 
 ---
 
@@ -213,6 +218,40 @@ The `gpu_class` field maps to Modal GPU specifiers:
 
 ---
 
+## 9b. Inference Control Plane (DONE)
+
+The serving layer is no longer tied to one process-global inference URL.
+
+### What exists now
+
+- `inference_instances` table tracks registered GPU serving nodes
+- deployed models bind to `models.inference_instance_id` relationally
+- deploy chooses a compatible healthy ready instance with spare adapter capacity
+- inference and undeploy route to the assigned instance, not a single startup URL
+- background health probes and adapter-count reconciliation repair drift
+- admin API manages instance registration and lifecycle (`ready`, `draining`, `retired`)
+
+### Why this matters
+
+This is the seam that lets the platform grow from one GPU server to many
+without another deploy/inference rewrite later.
+
+### Future extensions intentionally left out of this PR
+
+These are future operational expansions, not missing foundations:
+
+- automatic GPU node provisioning
+- service discovery / auto-registration
+- Kubernetes operator
+- cross-region scheduler
+- global traffic steering
+- autoscaling based on queue depth or latency
+
+The current design leaves room for all of those later because the control plane
+now tracks instances explicitly and routes via an assigned instance binding.
+
+---
+
 ## 10. Observability (OPTIONAL)
 
 ### What exists:
@@ -241,7 +280,7 @@ The `gpu_class` field maps to Modal GPU specifiers:
 | .dockerignore | DONE | Prevents bloated build context |
 | Production compose | DONE | Full stack with health checks |
 | Environment variables | DONE | Master + per-service .env.example files |
-| Database migrations | DONE | Auto-run on API startup |
+| Database migrations | DONE | Dedicated prod migration step, auto-run only in dev/staging |
 | Cloud platform account | SETUP | Choose and create account |
 | Clerk production keys | SETUP | Create production instance |
 | Stripe configuration | SETUP | Products, prices, webhook URL |

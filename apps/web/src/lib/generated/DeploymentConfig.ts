@@ -4,4 +4,28 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Deployment configuration (stored in models.deployment_config).
  */
-export type DeploymentConfig = { adapter_ref: string | null, base_model: string | null, backend: string | null, deployed_at: string | null, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });
+export type DeploymentConfig = { 
+/**
+ * Adapter reference used in inference requests (the "model" field).
+ */
+adapter_ref: string | null, 
+/**
+ * Base model this adapter was fine-tuned from.
+ */
+base_model: string | null, 
+/**
+ * Serving engine type (vllm, tgi, sglang).
+ */
+backend: string | null, 
+/**
+ * Assigned inference instance ID for debugging and operational visibility.
+ */
+instance_id: string | null, 
+/**
+ * Assigned inference instance name.
+ */
+instance_name: string | null, 
+/**
+ * Assigned inference instance URL snapshot.
+ */
+instance_url: string | null, deployed_at: string | null, } & ({ [key in string]: number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null });

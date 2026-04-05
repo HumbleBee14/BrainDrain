@@ -49,15 +49,7 @@ pub async fn deploy_model(
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
     require_role(&user, TeamRole::Member)?;
-    let result = DeploymentService::deploy(
-        state.db(),
-        state.model_repo(),
-        state.inference_backend(),
-        state.config(),
-        user.tenant_id,
-        model_id,
-    )
-    .await?;
+    let result = DeploymentService::deploy(&state, user.tenant_id, model_id).await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
@@ -90,13 +82,7 @@ pub async fn undeploy_model(
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<ModelResponse>> {
     require_role(&user, TeamRole::Member)?;
-    let result = DeploymentService::undeploy(
-        state.model_repo(),
-        state.inference_backend(),
-        user.tenant_id,
-        model_id,
-    )
-    .await?;
+    let result = DeploymentService::undeploy(&state, user.tenant_id, model_id).await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
@@ -128,7 +114,7 @@ pub async fn get_deployment_status(
     user: AuthenticatedUser,
     Path(model_id): Path<Uuid>,
 ) -> AppResult<Json<DeploymentStatusResponse>> {
-    let status = DeploymentService::status(state.model_repo(), user.tenant_id, model_id).await?;
+    let status = DeploymentService::status(&state, user.tenant_id, model_id).await?;
     Ok(Json(status))
 }
 
@@ -142,7 +128,7 @@ pub async fn stream_deployment_status(
 ) -> AppResult<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>> {
     use platform_shared::enums::DeploymentStatus;
 
-    let initial = DeploymentService::status(state.model_repo(), user.tenant_id, model_id).await?;
+    let initial = DeploymentService::status(&state, user.tenant_id, model_id).await?;
     let tenant_id = user.tenant_id;
 
     let stream = async_stream::stream! {
@@ -164,7 +150,7 @@ pub async fn stream_deployment_status(
         loop {
             tokio::time::sleep(Duration::from_secs(3)).await;
 
-            match DeploymentService::status(state.model_repo(), tenant_id, model_id).await {
+            match DeploymentService::status(&state, tenant_id, model_id).await {
                 Ok(status) => {
                     if status.deployment_status != last_status {
                         last_status = status.deployment_status;
