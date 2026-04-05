@@ -196,7 +196,7 @@ pub struct Config {
     pub otel_endpoint: String,
 
     // -- Feature Flags --
-    /// Feature flag provider backend. Current supported value: `static`.
+    /// Feature flag provider backend. Supported: `static` (default), `unleash`.
     #[serde(default = "default_feature_flags_provider")]
     pub feature_flags_provider: String,
 
@@ -209,25 +209,25 @@ pub struct Config {
     #[serde(default)]
     pub feature_flags_file: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: server URL.
+    /// Unleash server URL (required when FEATURE_FLAGS_PROVIDER=unleash).
     #[serde(default)]
-    #[allow(dead_code)]
     pub unleash_url: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: API token or client token.
+    /// Unleash API token (required when FEATURE_FLAGS_PROVIDER=unleash).
     #[serde(default)]
-    #[allow(dead_code)]
     pub unleash_api_token: Option<String>,
 
-    /// Future Unleash/OpenFeature integration: application name.
+    /// Unleash application name (sent in API requests for server-side filtering).
     #[serde(default = "default_unleash_app_name")]
-    #[allow(dead_code)]
     pub unleash_app_name: String,
 
-    /// Future Unleash/OpenFeature integration: environment name.
+    /// Unleash environment name (e.g., "development", "production").
     #[serde(default = "default_unleash_environment")]
-    #[allow(dead_code)]
     pub unleash_environment: String,
+
+    /// Unleash poll interval in seconds for remote flag refresh.
+    #[serde(default = "default_unleash_poll_interval_secs")]
+    pub unleash_poll_interval_secs: u64,
 }
 
 impl Config {
@@ -330,6 +330,9 @@ fn default_unleash_app_name() -> String {
 }
 fn default_unleash_environment() -> String {
     "development".to_string()
+}
+fn default_unleash_poll_interval_secs() -> u64 {
+    15
 }
 fn default_rate_limit_enabled() -> bool {
     true

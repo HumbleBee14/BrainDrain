@@ -33,7 +33,7 @@ use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
 use crate::services::feature_flags::{
     FeatureFlags, FlagContext, INFERENCE_BACKEND_TGI_ENABLED,
-    NOTIFICATIONS_DELIVERY_WORKER_ENABLED, build_feature_flags,
+    NOTIFICATIONS_DELIVERY_WORKER_ENABLED, UnleashPollerHandle, build_feature_flags_async,
 };
 use crate::services::inference_backend::{InferenceBackend, build_backend};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
@@ -75,6 +75,7 @@ struct AppStateInner {
     pub billing_provider: Arc<dyn BillingProvider>,
     pub inference_backend: Arc<dyn InferenceBackend>,
     pub feature_flags: Arc<FeatureFlags>,
+    pub unleash_poller: Option<std::sync::Mutex<UnleashPollerHandle>>,
     pub billing_batcher: Arc<BillingBatcher>,
     pub billing_outbox_relay: Option<Arc<BillingOutboxRelay>>,
     pub delivery_worker: Arc<DeliveryWorker>,
@@ -197,8 +198,10 @@ impl AppState {
                 Arc::new(NoOpBillingProvider)
             };
 
-        // Feature flags: static config-backed today, provider-pluggable later.
-        let feature_flags = Arc::new(build_feature_flags(&config)?);
+        // Feature flags: static or Unleash (remote) provider.
+        let (feature_flags, unleash_poller) = build_feature_flags_async(&config).await?;
+        let feature_flags = Arc::new(feature_flags);
+        let unleash_poller = unleash_poller.map(std::sync::Mutex::new);
         let startup_flag_context = FlagContext::default();
 
         if config.inference_backend_type == "tgi"
@@ -311,6 +314,7 @@ impl AppState {
                 billing_provider,
                 inference_backend,
                 feature_flags,
+                unleash_poller,
                 billing_batcher,
                 billing_outbox_relay,
                 delivery_worker,
@@ -416,6 +420,14 @@ impl AppState {
 
     pub fn feature_flags(&self) -> &FeatureFlags {
         &self.inner.feature_flags
+    }
+
+    pub fn shutdown_unleash_poller(&self) {
+        if let Some(poller) = &self.inner.unleash_poller
+            && let Ok(mut handle) = poller.lock()
+        {
+            handle.shutdown();
+        }
     }
 
     #[allow(dead_code)] // Used internally by record_billing_event

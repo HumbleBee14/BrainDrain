@@ -449,4 +449,80 @@ const _: () = {
     assert!(MAX_ATTEMPTS <= 10);
     assert!(RELAY_BATCH_SIZE > 0);
     assert!(RELAY_BATCH_SIZE <= 10_000);
+    assert!(STREAM_PENDING_STALE_SECS > 0);
+    assert!(STREAM_PENDING_STALE_SECS <= 600);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Metadata construction ──
+
+    #[test]
+    fn metadata_with_stream_state_sets_flags() {
+        let meta = serde_json::json!({"model": "llama-3"});
+        let result = metadata_with_stream_state(meta, true, false);
+        assert_eq!(result["stream_pending"], true);
+        assert_eq!(result["stream_reaped"], false);
+        assert_eq!(result["model"], "llama-3");
+    }
+
+    #[test]
+    fn metadata_with_stream_state_handles_non_object() {
+        let result = metadata_with_stream_state(serde_json::Value::Null, true, true);
+        assert_eq!(result["stream_pending"], true);
+        assert_eq!(result["stream_reaped"], true);
+    }
+
+    #[test]
+    fn metadata_finalize_clears_pending() {
+        let meta = serde_json::json!({"model": "llama-3"});
+        let pending = metadata_with_stream_state(meta, true, false);
+        assert_eq!(pending["stream_pending"], true);
+
+        // Finalize should set pending=false
+        let finalized = metadata_with_stream_state(pending, false, false);
+        assert_eq!(finalized["stream_pending"], false);
+        assert_eq!(finalized["stream_reaped"], false);
+        assert_eq!(finalized["model"], "llama-3");
+    }
+
+    #[test]
+    fn metadata_reap_marks_reaped() {
+        let meta = serde_json::json!({"model": "llama-3"});
+        let pending = metadata_with_stream_state(meta, true, false);
+        let reaped = metadata_with_stream_state(pending, false, true);
+        assert_eq!(reaped["stream_pending"], false);
+        assert_eq!(reaped["stream_reaped"], true);
+    }
+
+    // ── Constants and invariants ──
+
+    #[test]
+    fn relay_constants_are_reasonable() {
+        assert_eq!(MAX_ATTEMPTS, 5);
+        assert_eq!(RELAY_BATCH_SIZE, 500);
+        assert_eq!(STREAM_PENDING_STALE_SECS, 300);
+    }
+
+    #[test]
+    fn relay_lock_id_is_distinct_from_idempotency_lock() {
+        // The idempotency cleanup uses 900_100_001.
+        // Relay must use a different lock ID to avoid conflicts.
+        assert_ne!(RELAY_LOCK_ID, 900_100_001);
+    }
+
+    // ── BatchResult ──
+
+    #[test]
+    fn batch_result_distinguishes_lock_held_from_empty() {
+        let lock_held = BatchResult::LockHeld;
+        let empty = BatchResult::Processed(0);
+        let some = BatchResult::Processed(5);
+
+        assert!(matches!(lock_held, BatchResult::LockHeld));
+        assert!(matches!(empty, BatchResult::Processed(0)));
+        assert!(matches!(some, BatchResult::Processed(5)));
+    }
+}

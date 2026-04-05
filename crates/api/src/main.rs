@@ -127,10 +127,13 @@ async fn main() -> anyhow::Result<()> {
     let http_metrics = middleware::HttpMetrics::new(&config);
     let ip_rate_limiter = middleware::IpRateLimiter::new(state.redis(), &config);
 
-    // Grab background worker handles before moving state into the router
+    // Grab background worker handles before moving state into the router.
+    // These are Arc-cloned or extracted here because `state` is consumed by
+    // the router builder and cannot be accessed after.
     let billing_batcher = state.billing_batcher_handle();
     let billing_outbox_relay = state.billing_outbox_relay_handle();
     let delivery_worker = state.delivery_worker_handle();
+    let shutdown_state = state.clone();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
     // Auth + idempotency middleware are applied inside v1_router (see routes/mod.rs).
@@ -181,6 +184,10 @@ async fn main() -> anyhow::Result<()> {
     // Shut down background workers after server stops accepting requests
     tracing::info!("Shutting down background workers...");
     let _ = idempotency_shutdown_tx.send(());
+
+    // Stop Unleash poller if running
+    shutdown_state.shutdown_unleash_poller();
+
     if let Some(relay) = billing_outbox_relay {
         tokio::join!(
             billing_batcher.shutdown(),
@@ -267,17 +274,23 @@ fn init_tracing(config: &Config) -> anyhow::Result<()> {
 /// Listen for Ctrl+C or SIGTERM for graceful shutdown.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!(error = %e, "Failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("Failed to install signal handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut stream) => {
+                let _ = stream.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]
