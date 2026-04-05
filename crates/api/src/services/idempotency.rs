@@ -660,10 +660,7 @@ mod tests {
 
     #[test]
     fn settings_update_is_covered() {
-        assert!(requires_idempotency(
-            &Method::PUT,
-            "/api/v1/settings/llm"
-        ));
+        assert!(requires_idempotency(&Method::PUT, "/api/v1/settings/llm"));
         assert!(requires_idempotency(
             &Method::DELETE,
             "/api/v1/settings/llm"

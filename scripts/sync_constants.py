@@ -127,6 +127,7 @@ def generate_enums_section(enums: list[tuple[str, list[str]]]) -> str:
         for v in variants:
             lines.append(f'    {_camel_to_snake(v)} = "{_variant_value(v)}"')
     lines.append("")
+    lines.append("")
     lines.append(ENUMS_END)
     return "\n".join(lines)
 

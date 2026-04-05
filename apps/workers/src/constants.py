@@ -61,4 +61,5 @@ class EvaluationStatus:
     COMPLETED = "completed"
     FAILED = "failed"
 
+
 # ── END AUTO-GENERATED ENUMS ──
