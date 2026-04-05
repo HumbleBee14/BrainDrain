@@ -1,402 +1,223 @@
 # System Architecture
 
-> Complete technical architecture of the LLM fine-tuning platform — services, data flow, pluggable backends, resilience patterns, and configuration hierarchy.
+> Current production architecture of BrainDrain after the full production-excellence hardening pass.
 
----
+## 1. Runtime Topology
 
-## High-Level Service Map
+```text
+                         +----------------------+
+                         |      Frontend        |
+                         |  Next.js / React     |
+                         +----------+-----------+
+                                    |
+                                    v
+                         +----------------------+
+                         |   Rust API / Axum    |
+                         | Control plane        |
+                         +----+-----------+-----+
+                              |           |
+             +----------------+           +----------------+
+             |                                             |
+             v                                             v
+   +----------------------+                     +----------------------+
+   | PostgreSQL + RLS     |                     | Redis               |
+   | billing outbox       |                     | rate limiting       |
+   | idempotency          |                     | delivery / caching  |
+   | inference instances  |                     | pub-sub / streams   |
+   +----------+-----------+                     +----------------------+
+              |
+              v
+   +----------------------+
+   | PgBouncer (prod)     |
+   +----------------------+
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           LLM FINE-TUNING PLATFORM                          │
-│           Upload → Parse → Refine → Train → Evaluate → Deploy               │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────┐     ┌──────────────────────────────────────────────────────┐
-│   Frontend   │     │                   Rust API (Axum)                    │
-│  Next.js 15  │────▶│  Route → Service → Repository (multi-tenant)        │
-│              │◀────│                                                      │
-│  - Dashboard │     │  Auth: Clerk JWT + API Key + Dev Token               │
-│  - Projects  │ SSE │  Storage: S3 trait (MinIO / AWS)                     │
-│  - Training  │◀────│  Cache: Redis (pub/sub + streams)                    │
-│  - Settings  │     │  Queue: Temporal client                              │
-│  - Deploy    │     │  Billing: Usage batcher                              │
-│  - Inference │     │  Notifications: Webhook + Email                      │
-└──────────────┘     └──────────┬───────────────┬───────────────────────────┘
-                                │               │
-                     Temporal   │               │  Direct
-                     Workflows  │               │  Queries
-                                ▼               ▼
-┌───────────────────────────────────────┐  ┌─────────────┐  ┌─────────────┐
-│         Python Workers (Temporal)      │  │ PostgreSQL  │  │    Redis    │
-│                                        │  │             │  │             │
-│  10 Pluggable Backends                 │  │ - Tenants   │  │ - SSE push  │
-│  Full Pipeline Workflows               │  │ - Projects  │  │ - Metrics   │
-│  Circuit Breaker + Heartbeats          │  │ - Documents │  │   streams   │
-│                                        │  │ - Jobs      │  │ - Cache     │
-│  Worker Modes:                         │  │ - Models    │  │ - Pub/Sub   │
-│    all  — single process               │  │ - Evals     │  │             │
-│    main — CPU-only activities          │  │ - Settings  │  └─────────────┘
-│    gpu  — training + inference only    │  │   (JSONB)   │
-│                                        │  │             │  ┌─────────────┐
-│  GPU Providers:                        │  │ RLS per     │  │  S3 / MinIO │
-│    local — worker's own GPU            │  │ tenant_id   │  │             │
-│    modal — serverless (Modal.com)      │  └─────────────┘  │ - Documents │
-└────────────────────────────────────────┘                    │ - Chunks    │
-                                                              │ - Pairs     │
-                                                              │ - Datasets  │
-                                                              │ - Adapters  │
-                                                              │ - Exports   │
-                                                              └─────────────┘
+   +----------------------+                     +----------------------+
+   | Temporal             |<------------------->| Python workers       |
+   | durable workflows    |                     | parse / refine /     |
+   | retries / heartbeats |                     | train / eval / export|
+   +----------------------+                     +----------+-----------+
+                                                             |
+                                                             v
+                                                    +------------------+
+                                                    | S3 / MinIO       |
+                                                    | documents,       |
+                                                    | datasets,        |
+                                                    | adapters, exports|
+                                                    +------------------+
 ```
 
----
+## 2. Core Service Boundaries
 
-## Core Pipeline Flow
+### Rust API (`crates/api`)
 
-```
-                          USER UPLOADS DOCUMENTS
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         INGEST WORKFLOW                              │
-│                                                                     │
-│   For each document:                                                │
-│   ┌──────────┐    ┌──────────────┐    ┌───────────────────┐        │
-│   │  Fetch   │───▶│  PDF Parse   │───▶│  Language Detect  │        │
-│   │  from S3 │    │  (pluggable) │    │  (pluggable)      │        │
-│   └──────────┘    └──────────────┘    └────────┬──────────┘        │
-│                                                 │                   │
-│                    pymupdf (default, fast)       │  langdetect      │
-│                    docling (richer structure)    │  null (disable)  │
-│                                                 ▼                   │
-│                                        Store parsed text in S3     │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         REFINE WORKFLOW                              │
-│                                                                     │
-│   ┌──────────────┐   ┌─────────────────┐   ┌──────────────────┐   │
-│   │  Chunk Text  │──▶│  Generate Pairs  │──▶│  Build Dataset   │   │
-│   │  (pluggable) │   │  (pluggable LLM) │   │  (filter + dedup)│   │
-│   └──────────────┘   └─────────────────┘   └──────────────────┘   │
-│                                                                     │
-│   Chunking:              LLM Provider:          Filter:             │
-│     recursive (default)    openai-compat          heuristic         │
-│     sliding (fixed)        (any OpenAI API)                         │
-│                                                 Dedup:              │
-│   Chunk → prompt LLM    Prompt types:             hash (MD5)        │
-│   → Q&A / instruction   question_answering                          │
-│   / reasoning pairs      instruction_following    Output: ChatML    │
-│                          reasoning                JSONL dataset     │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         TRAIN WORKFLOW                               │
-│                                                                     │
-│   Mode dispatcher routes to the appropriate strategy:               │
-│                                                                     │
-│   ┌──────────┐  ┌────────────┐  ┌───────────┐  ┌──────────────┐   │
-│   │  quick   │  │ iterative  │  │  aligned  │  │  reasoning   │   │
-│   │          │  │            │  │           │  │              │   │
-│   │ Single   │  │ SFT loop + │  │ SFT → DPO │  │ SFT → GRPO  │   │
-│   │ SFT run  │  │ early stop │  │ (human    │  │ (reward-     │   │
-│   │          │  │ + holdout  │  │  align)   │  │  guided)     │   │
-│   └──────────┘  └────────────┘  └───────────┘  └──────────────┘   │
-│                                                                     │
-│   Training Engine: unsloth (default, fast LoRA/QLoRA)               │
-│   Metrics Sink:    redis (real-time) | log | null                   │
-│                                                                     │
-│   Features:                                                         │
-│   - Real-time loss/ETA streaming to dashboard via Redis Streams     │
-│   - Checkpoint upload to S3 during training                         │
-│   - GPU metrics collection (utilization, memory, temperature)       │
-│   - Configurable hyperparameters (lr, epochs, rank, batch size)     │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                          ┌────────┴────────┐
-                          ▼                 ▼
-┌──────────────────────────────┐  ┌──────────────────────────────────┐
-│       EVALUATE WORKFLOW       │  │         EXPORT WORKFLOW           │
-│                               │  │                                  │
-│  ┌─────────────────────────┐ │  │  ┌────────────────────────────┐  │
-│  │   LLM Judge (pluggable) │ │  │  │  GGUF Quantize + Upload   │  │
-│  │                         │ │  │  │                            │  │
-│  │  - Accuracy scoring     │ │  │  │  Formats: Q4_K_M, Q5_K_M, │  │
-│  │  - Relevance scoring    │ │  │  │  Q8_0, F16, F32           │  │
-│  │  - Faithfulness scoring │ │  │  │                            │  │
-│  │  - Safety benchmarks    │ │  │  │  Upload to S3 + optional   │  │
-│  │  - Composite score      │ │  │  │  HuggingFace Hub push     │  │
-│  └─────────────────────────┘ │  │  └────────────────────────────┘  │
-│                               │  │                                  │
-│  Judge Backend:               │  │  Model Loader: unsloth           │
-│    openai (any compatible)    │  │                                  │
-└──────────────────────────────┘  └──────────────────────────────────┘
-                          │                 │
-                          └────────┬────────┘
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         DEPLOY (vLLM)                               │
-│                                                                     │
-│   Load LoRA adapter into vLLM server                                │
-│   Serve via OpenAI-compatible inference API                         │
-│                                                                     │
-│   Endpoints:                                                        │
-│     POST /v1/chat/completions        (single, streaming)            │
-│     POST /v1/chat/completions/batch  (batch, concurrent)            │
-│                                                                     │
-│   Auth: per-model API keys (scoped to tenant + model)               │
-│   Billing: token-based usage metering (batched writes)              │
-│   Resilience: circuit breaker on vLLM calls                         │
-└─────────────────────────────────────────────────────────────────────┘
+Responsible for:
+- authentication and team membership resolution
+- RBAC and API key auth
+- project, dataset, model, billing, and deployment APIs
+- idempotency enforcement for mutating endpoints
+- durable billing outbox writes and relay lifecycle
+- inference request routing
+- inference instance registry and placement control plane
+
+Key patterns:
+- `Route -> Service -> Repository`
+- request identity resolved once in auth middleware and stored in request extensions
+- explicit SQL via `sqlx`
+- environment-driven configuration
+- feature flags behind a provider abstraction
+
+### Python Workers (`apps/workers`)
+
+Responsible for:
+- document parsing
+- chunking and synthetic dataset generation
+- model training
+- evaluation
+- export workflows
+
+Key patterns:
+- Temporal activities for long-running or retryable work
+- pluggable backend registries for parser, chunker, LLM provider, judge, metrics, and training engine
+- direct shared-database writes only where transactional coupling is required, such as training billing outbox
+
+### Frontend (`apps/web`)
+
+Responsible for:
+- dashboard and project UX
+- training/deployment workflows
+- settings and billing views
+- inference playground
+
+## 3. Data and Control Flows
+
+### Product Pipeline
+
+```text
+Upload docs
+  -> parse
+  -> refine into training pairs / dataset
+  -> train
+  -> evaluate
+  -> deploy
+  -> infer
 ```
 
----
+### Billing Flow
 
-## Pluggable Backend Architecture
-
-Every processing layer follows the same pattern: **Protocol (interface) → Implementations → Registry → Factory**.
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    BACKEND ABSTRACTION PATTERN                       │
-│                                                                     │
-│   class MyBackend(Protocol):         # Interface contract           │
-│       def process(self, ...) -> T    # What every impl must do      │
-│                                                                     │
-│   class ConcreteImpl:                # One or more implementations  │
-│       def process(self, ...) -> T    # Actual logic                 │
-│                                                                     │
-│   _REGISTRY = {"name": ConcreteImpl} # Name → class mapping         │
-│                                                                     │
-│   register(name, cls)                # Add custom implementations   │
-│   get(name) -> MyBackend             # Factory: instantiate by name │
-│                                                                     │
-│   Selected via: APP_*_BACKEND env var in WorkerSettings             │
-│   Default: always the current production implementation             │
-│   Swap: change one env var, zero code changes                       │
-└─────────────────────────────────────────────────────────────────────┘
+```text
+authoritative event occurs
+  -> write billing_outbox row in same DB transaction when required
+  -> relay claims rows with advisory lock
+  -> persist into billing_events ledger
+  -> Stripe / reporting consume the ledger
 ```
 
-### All 10 Pluggable Backends
+### Auth and Idempotency Flow
 
-| Backend | ENV Var | Default | Alternatives | File |
-|---------|---------|---------|-------------|------|
-| PDF extraction | `APP_PDF_BACKEND` | `pymupdf` | `docling` | `backends/pdf_extractor.py` |
-| Language detection | `APP_LANGUAGE_DETECTOR_BACKEND` | `langdetect` | `null` | `backends/language_detector.py` |
-| Text chunking | `APP_CHUNKING_BACKEND` | `recursive` | `sliding` | `backends/chunking_strategy.py` |
-| LLM provider | `APP_LLM_PROVIDER_BACKEND` | `openai` | any OpenAI-compat | `backends/llm_provider.py` |
-| Dataset filter | `APP_DATASET_FILTER_BACKEND` | `heuristic` | (extensible) | `backends/dataset_filter.py` |
-| Deduplication | `APP_DEDUP_BACKEND` | `hash` | (extensible) | `backends/dataset_filter.py` |
-| LLM judge | `APP_JUDGE_BACKEND` | `openai` | any OpenAI-compat | `backends/judge.py` |
-| Training engine | `APP_TRAINING_ENGINE` | `unsloth` | (extensible) | `activities/training_engine.py` |
-| Metrics collector | `APP_METRICS_BACKEND` | `redis` | `log`, `null` | `backends/metrics_collector.py` |
-| Model inference | `APP_EVAL_MODEL_LOADER` | `unsloth` | (extensible) | `backends/model_inference.py` |
-
----
-
-## Configuration Hierarchy
-
-Tenant-specific settings override platform defaults. No migration needed — uses existing `tenants.settings` JSONB column.
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     CONFIGURATION RESOLUTION ORDER                   │
-│                                                                     │
-│   1. Per-Tenant DB Settings     (highest priority)                  │
-│      tenants.settings JSONB                                         │
-│      Managed via: Settings > LLM Provider in UI                     │
-│      API: PUT /api/v1/settings/llm                                  │
-│                                                                     │
-│   2. Worker Environment Vars    (platform-wide defaults)            │
-│      APP_LLM_API_BASE_URL, APP_LLM_API_KEY, APP_LLM_MODEL, etc.   │
-│      Set in .env or docker-compose                                  │
-│                                                                     │
-│   3. Hardcoded Defaults         (lowest priority)                   │
-│      config.py / config.rs field defaults                           │
-│      Only used if nothing else is set                               │
-└─────────────────────────────────────────────────────────────────────┘
-
-Settings JSONB structure:
-{
-  "llm": {
-    "provider": "openai",
-    "api_base_url": "https://api.openai.com/v1",
-    "api_key": "sk-proj-...",           // masked in API responses
-    "model": "gpt-4o-mini",
-    "max_tokens": 2000
-  }
-}
+```text
+request
+  -> auth middleware verifies identity and role
+  -> AuthOutcome stored in extensions
+  -> idempotency middleware reads verified identity
+  -> handler reads AuthenticatedUser from extensions
 ```
 
----
+## 4. Multi-Tenancy
 
-## Multi-Tenancy & Isolation
+Tenant isolation is enforced at multiple layers:
+- repository queries scoped by `tenant_id`
+- PostgreSQL RLS on tenant-scoped tables
+- connection checkout resets tenant context
+- API keys scoped to tenant and model
+- S3 paths namespaced by tenant/project/model
+- Temporal workflow inputs carry tenant identity
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     MULTI-TENANCY ENFORCEMENT                       │
-│                                                                     │
-│   Layer 1: Application Level                                        │
-│   ├── Every repository query includes WHERE tenant_id = $1          │
-│   ├── Auth middleware extracts tenant_id from JWT claims             │
-│   └── API keys are scoped to (tenant_id, model_id)                  │
-│                                                                     │
-│   Layer 2: Database Level (RLS)                                     │
-│   ├── Row-Level Security policies on all tenant-scoped tables       │
-│   ├── SET LOCAL app.tenant_id = $1 per transaction                  │
-│   ├── before_acquire hook resets tenant_id on connection checkout    │
-│   └── Belt + suspenders: app-level + DB-level isolation             │
-│                                                                     │
-│   Layer 3: Storage Level                                            │
-│   ├── S3 paths namespaced: tenants/{tenant_id}/projects/{id}/...    │
-│   └── No cross-tenant path traversal possible                       │
-│                                                                     │
-│   Layer 4: Workflow Level                                           │
-│   ├── tenant_id propagated in every Temporal workflow input          │
-│   └── Workers resolve per-tenant config at activity execution time  │
-└─────────────────────────────────────────────────────────────────────┘
-```
+Global infrastructure tables such as `inference_instances` are intentionally not tenant-scoped.
 
----
+## 5. Serving Architecture
 
-## Resilience Patterns
+Inference is now both pluggable and instance-aware.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       RESILIENCE & RELIABILITY                      │
-│                                                                     │
-│   Circuit Breaker                                                   │
-│   ├── LLM API calls (generation, judging)                           │
-│   ├── vLLM inference calls                                          │
-│   ├── Configurable: fail_max, reset_timeout                         │
-│   └── Prevents cascading failures from downstream outages           │
-│                                                                     │
-│   Temporal Durable Execution                                        │
-│   ├── All pipeline stages are Temporal activities                   │
-│   ├── Automatic retry with configurable backoff                     │
-│   ├── Workflow state survives worker crashes                         │
-│   ├── Configurable timeouts per activity type                       │
-│   └── Heartbeats for long-running activities (training, generation) │
-│                                                                     │
-│   Real-Time Streaming                                               │
-│   ├── SSE push from API → frontend (no polling)                     │
-│   ├── Redis Streams for training metrics                            │
-│   ├── WebSocket bridge for live metric updates                      │
-│   └── Graceful degradation if Redis unavailable                     │
-│                                                                     │
-│   Graceful Shutdown                                                 │
-│   ├── SIGTERM triggers coordinated shutdown                         │
-│   ├── Billing batcher flushes pending writes                        │
-│   ├── Notification worker completes in-flight deliveries            │
-│   └── Connection pools drained cleanly                              │
-└─────────────────────────────────────────────────────────────────────┘
+### Backend Abstraction
+
+Supported control-plane backend types:
+- `vllm`
+- `tgi`
+- `sglang`
+
+The API does not hard-code one engine. It builds the correct backend implementation from:
+- global single-instance config
+- or the assigned `inference_instance`
+
+### Multi-Instance Control Plane
+
+The platform tracks inference servers in `inference_instances` and binds deployed models to a nullable `models.inference_instance_id`.
+
+This enables:
+- compatible-instance placement by backend type and base model
+- slot reservation using DB-backed capacity accounting
+- health-based scheduling
+- draining and retirement of instances
+- per-instance routing for deploy, inference, and undeploy
+- reconciliation of cached adapter counts against model state
+
+Single-instance mode still works when the feature flag is off.
+
+### Serving Request Path
+
+```text
+API key request
+  -> resolve deployed model
+  -> resolve assigned inference instance if present
+  -> build or reuse backend for that instance
+  -> call backend OpenAI-compatible API
+  -> meter usage via durable billing path
 ```
 
----
+## 6. Production Hardening That Now Exists
 
-## Security Architecture
+### Reliability
+- auth middleware with preserved error semantics
+- API idempotency for mutating routes
+- durable billing outbox
+- training billing on the same outbox model
+- PITR scripts and restore path
+- PgBouncer for production connection topology
+- release pre-check scripts
+- inference instance health probes and reconciliation
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         SECURITY LAYERS                             │
-│                                                                     │
-│   Authentication                                                    │
-│   ├── Clerk JWT verification (frontend sessions)                    │
-│   ├── API key auth (inference endpoints, scoped per model)          │
-│   ├── Internal token (worker→API callbacks, constant-time compare)  │
-│   └── Dev token (development only, disabled in production)          │
-│                                                                     │
-│   Authorization                                                     │
-│   ├── Team-based RBAC: Owner > Admin > Member > Viewer              │
-│   ├── Route-level role checks via extractors                        │
-│   └── Admin-only: settings, team management, deployments            │
-│                                                                     │
-│   API Security                                                      │
-│   ├── Rate limiting: per-IP and per-API-key                         │
-│   ├── CORS: configurable origins (no wildcard in production)        │
-│   ├── Security headers: CSP, HSTS, X-Frame-Options, X-Content-Type │
-│   └── Request ID tracing: distributed across API + workers          │
-│                                                                     │
-│   Data Security                                                     │
-│   ├── API keys masked in responses (sk-p...wxyz)                    │
-│   ├── Secrets never pass through Temporal (resolved at runtime)     │
-│   ├── SSRF protection on webhooks (private IP filtering)            │
-│   └── SQL injection prevented via parameterized queries (SQLx)      │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### Operational Controls
+- feature flags with static and guarded Unleash providers
+- idempotency cleanup
+- outbox relay drain on shutdown
+- deploy stale-state cleanup
+- instance lifecycle states: `ready`, `draining`, `retired`
 
----
+### Developer Safety
+- Rust/TypeScript binding generation
+- Rust/Python shared constant sync
+- strict clippy / test gates
 
-## Rust API Layer Detail
+## 7. What Is Intentionally Not In Scope Yet
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    RUST API — LAYERED ARCHITECTURE                   │
-│                                                                     │
-│   Routes (thin)                                                     │
-│   ├── Extract auth (JWT / API key)                                  │
-│   ├── Validate request DTO                                          │
-│   ├── Call service                                                  │
-│   └── Return response DTO                                           │
-│        │                                                            │
-│        ▼                                                            │
-│   Services (business logic)                                         │
-│   ├── Orchestrate repositories, S3, Redis                           │
-│   ├── Validation rules, state transitions                           │
-│   ├── Trigger Temporal workflows                                    │
-│   └── Never hold full AppState — only specific dependencies         │
-│        │                                                            │
-│        ▼                                                            │
-│   Repositories (data access)                                        │
-│   ├── Pure SQL via SQLx (compile-time checked)                      │
-│   ├── Every query includes tenant_id                                │
-│   ├── Trait-based (mockable for tests)                              │
-│   └── Return domain models, not DTOs                                │
-│                                                                     │
-│   Type Flow:                                                        │
-│   Rust DTO (#[derive(TS)]) → cargo test → .ts files → Frontend     │
-│   Single source of truth: Rust types generate TypeScript types      │
-└─────────────────────────────────────────────────────────────────────┘
-```
+These are future scale extensions, not missing core architecture:
+- inference node auto-provisioning
+- Kubernetes operator
+- cross-region placement
+- autoscaling GPU fleet management
+- full Unleash strategy evaluation
 
----
+The current code is designed so those can be added without rewriting the existing control plane.
 
-## Deployment Topology
+## 8. Source References
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     PRODUCTION DEPLOYMENT                            │
-│                                                                     │
-│   ┌─────────┐  ┌─────────┐  ┌──────────┐  ┌─────────────────┐    │
-│   │  Web    │  │  API    │  │ Workers  │  │  Workers (GPU)  │    │
-│   │ Next.js │  │  Rust   │  │  Python  │  │  Python         │    │
-│   │         │  │  Axum   │  │  CPU-only │  │  training +     │    │
-│   │ :3000   │  │  :8000  │  │          │  │  inference      │    │
-│   └────┬────┘  └────┬────┘  └────┬─────┘  └────────┬────────┘    │
-│        │            │            │                   │             │
-│        └────────────┼────────────┼───────────────────┘             │
-│                     │            │                                  │
-│   ┌─────────────────┼────────────┼──────────────────────────┐     │
-│   │  Infrastructure  │            │                          │     │
-│   │                  ▼            ▼                          │     │
-│   │  ┌──────────┐  ┌──────────┐  ┌──────────┐              │     │
-│   │  │PostgreSQL│  │  Redis   │  │ Temporal │              │     │
-│   │  │  + RLS   │  │          │  │ Server + │              │     │
-│   │  │          │  │          │  │   DB     │              │     │
-│   │  └──────────┘  └──────────┘  └──────────┘              │     │
-│   │                                                         │     │
-│   │  ┌──────────┐  ┌──────────┐                            │     │
-│   │  │ S3/MinIO │  │  vLLM    │                            │     │
-│   │  │          │  │  Server  │                            │     │
-│   │  └──────────┘  └──────────┘                            │     │
-│   └─────────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────────────┘
-
-Container images:
-  platform-api:latest     — Rust binary (~15MB, <100ms cold start)
-  platform-workers:latest — Python + ML libs (~4GB with CUDA)
-  platform-web:latest     — Next.js standalone (~100MB)
-```
+Primary implementation references:
+- `crates/api/src/auth.rs`
+- `crates/api/src/services/idempotency.rs`
+- `crates/api/src/services/billing_outbox.rs`
+- `crates/api/src/services/deployment_service.rs`
+- `crates/api/src/services/feature_flags.rs`
+- `crates/api/src/services/inference_instance_service.rs`
+- `crates/api/src/routes/inference.rs`
+- `crates/api/src/repositories/inference_instance_repo.rs`
+- `apps/workers/src/activities/train_model.py`

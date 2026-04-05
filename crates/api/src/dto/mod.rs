@@ -7,6 +7,7 @@ pub mod dataset;
 pub mod document;
 pub mod evaluation;
 pub mod export;
+pub mod inference_instance;
 pub mod model;
 pub mod notification;
 pub mod pipeline;

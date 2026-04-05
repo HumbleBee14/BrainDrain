@@ -1,3 +1,4 @@
+pub mod admin_instances;
 pub mod api_keys;
 pub mod audit_logs;
 pub mod billing;
@@ -59,6 +60,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 /// V1 API routes.
 fn v1_router() -> Router<AppState> {
     Router::new()
+        .merge(admin_instances::router())
         .merge(projects::router())
         .merge(documents::router())
         .merge(pipeline::router())
@@ -128,6 +130,11 @@ fn v1_router() -> Router<AppState> {
         api_keys::create_api_key,
         api_keys::list_api_keys,
         api_keys::revoke_api_key,
+        // Admin inference instances
+        admin_instances::list_instances,
+        admin_instances::register_instance,
+        admin_instances::update_lifecycle,
+        admin_instances::delete_instance,
         // Deployments
         deployments::deploy_model,
         deployments::undeploy_model,
@@ -210,6 +217,10 @@ fn v1_router() -> Router<AppState> {
         crate::dto::api_key::CreateApiKeyRequest,
         crate::dto::api_key::CreateApiKeyResponse,
         crate::dto::api_key::ApiKeyResponse,
+        // Admin inference instances
+        crate::dto::inference_instance::CreateInferenceInstanceRequest,
+        crate::dto::inference_instance::UpdateInferenceInstanceLifecycleRequest,
+        crate::dto::inference_instance::InferenceInstanceResponse,
         // Billing
         crate::dto::billing::BillingEventResponse,
         // Audit Logs
@@ -256,6 +267,8 @@ fn v1_router() -> Router<AppState> {
         platform_shared::enums::TrainingMethod,
         platform_shared::enums::TrainingMode,
         platform_shared::enums::DeploymentStatus,
+        platform_shared::enums::InferenceInstanceHealthStatus,
+        platform_shared::enums::InferenceInstanceLifecycleState,
         platform_shared::enums::EvaluationStatus,
         platform_shared::enums::PipelineStage,
         platform_shared::enums::TaskType,
@@ -288,6 +301,7 @@ fn v1_router() -> Router<AppState> {
         (name = "Evaluations", description = "Model evaluation"),
         (name = "Exports", description = "Dataset and model exports"),
         (name = "API Keys", description = "API key management for inference"),
+        (name = "Admin", description = "Platform infrastructure administration"),
         (name = "Deployments", description = "Model deployment management"),
         (name = "Billing", description = "Billing, subscriptions, and usage"),
         (name = "Dashboard", description = "Dashboard statistics and activity"),

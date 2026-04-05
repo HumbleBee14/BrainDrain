@@ -47,8 +47,8 @@ FEATURE_FLAGS_JSON='{"billing.outbox.enabled":true,"idempotency.enforced":true}'
 
 ### Unleash provider (self-hosted, free)
 
-Unleash OSS is a self-hosted feature flag server. We poll its API every 15
-seconds. No paid service required.
+Unleash OSS is a self-hosted feature flag server. The poll interval is
+configurable with `UNLEASH_POLL_INTERVAL_SECS`. No paid service required.
 
 **Scope:** This provider supports **global kill switches only** — flags are
 either on or off for everyone. Features with Unleash activation strategies

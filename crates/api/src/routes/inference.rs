@@ -13,13 +13,46 @@ use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::error::{AppError, AppResult};
 use crate::services::billing_outbox;
+use crate::services::inference_backend::InferenceBackend;
+use crate::services::inference_instance_service::InferenceInstanceService;
 use crate::services::token_estimator;
+use std::sync::Arc;
 
 /// Maximum number of items in a single batch request.
 const MAX_BATCH_SIZE: usize = 50;
 
 /// Concurrent inference requests per batch.
 const BATCH_CONCURRENCY: usize = 5;
+
+async fn resolve_backend_for_model(
+    state: &AppState,
+    model: &platform_db::models::Model,
+) -> AppResult<Arc<dyn InferenceBackend>> {
+    if let Some(instance_id) = model.inference_instance_id {
+        let instance = InferenceInstanceService::get_routable_instance(state, instance_id).await?;
+        let backend_name =
+            model.deployment_config["backend"]
+                .as_str()
+                .ok_or(AppError::Internal(anyhow::anyhow!(
+                    "Model deployment config missing backend"
+                )))?;
+        if backend_name != instance.backend_type {
+            return Err(AppError::BadRequest {
+                message: format!(
+                    "Model deployment backend '{}' does not match assigned instance backend '{}'",
+                    backend_name, instance.backend_type
+                ),
+            });
+        }
+
+        Ok(state.build_inference_backend_for_instance(&instance.backend_type, &instance.base_url))
+    } else {
+        // Single-instance fallback: use the global backend with its shared
+        // circuit breaker. Do NOT construct an ephemeral backend here —
+        // that creates a fresh breaker per request that never accumulates state.
+        Ok(state.inference_backend_arc())
+    }
+}
 
 /// Inference routes — OpenAI-compatible API.
 /// These are mounted at `/v1/` (not `/api/v1/`) and use API key auth.
@@ -133,19 +166,7 @@ pub async fn chat_completions(
         )))?
         .to_string();
 
-    // Validate the model was deployed on the same backend we're currently running.
-    let backend = state.inference_backend();
-    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
-        && deployed_backend != backend.name()
-    {
-        return Err(AppError::BadRequest {
-            message: format!(
-                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
-                deployed_backend,
-                backend.name()
-            ),
-        });
-    }
+    let backend = resolve_backend_for_model(&state, &model).await?;
 
     // Cap max_tokens to prevent GPU abuse (configurable via INFERENCE_MAX_TOKENS)
     let max_tokens = body.max_tokens.min(state.config().inference_max_tokens);
@@ -449,20 +470,7 @@ pub async fn batch_chat_completions(
         )))?
         .to_string();
 
-    let batch_backend = state.inference_backend();
-
-    // Validate backend matches what the model was deployed on
-    if let Some(deployed_backend) = model.deployment_config["backend"].as_str()
-        && deployed_backend != batch_backend.name()
-    {
-        return Err(AppError::BadRequest {
-            message: format!(
-                "Model was deployed on '{}' but current backend is '{}'. Redeploy the model.",
-                deployed_backend,
-                batch_backend.name()
-            ),
-        });
-    }
+    let batch_backend = resolve_backend_for_model(&state, &model).await?;
 
     let batch_url = batch_backend.chat_completions_url();
     let http_client = state.http_client().clone();
@@ -474,11 +482,12 @@ pub async fn batch_chat_completions(
             let adapter = adapter_name.clone();
             let url = batch_url.clone();
             let client = http_client.clone();
-            let cb = batch_backend.circuit_breaker();
+            let cb = batch_backend.circuit_breaker().clone();
+            let backend = batch_backend.clone();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
-                let request_body = batch_backend.build_inference_body(
+                let request_body = backend.build_inference_body(
                     &adapter,
                     &serde_json::json!(item.messages),
                     item.temperature,
