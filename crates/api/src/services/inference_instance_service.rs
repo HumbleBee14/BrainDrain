@@ -8,6 +8,7 @@ use crate::dto::inference_instance::{
     UpdateInferenceInstanceLifecycleRequest,
 };
 use crate::error::{AppError, AppResult};
+
 pub struct InferenceInstanceService;
 
 impl InferenceInstanceService {
@@ -15,14 +16,30 @@ impl InferenceInstanceService {
         state: &AppState,
         request: CreateInferenceInstanceRequest,
     ) -> AppResult<InferenceInstanceResponse> {
+        if request.max_adapters <= 0 {
+            return Err(AppError::BadRequest {
+                message: "max_adapters must be positive".to_string(),
+            });
+        }
+        if request.base_url.trim().is_empty() {
+            return Err(AppError::BadRequest {
+                message: "base_url is required".to_string(),
+            });
+        }
+        if request.name.trim().is_empty() {
+            return Err(AppError::BadRequest {
+                message: "name is required".to_string(),
+            });
+        }
+
         let backend =
             state.build_inference_backend_for_instance(&request.backend_type, &request.base_url);
-        let initial_health =
-            if Self::probe_instance(&state.http_client().clone(), backend.base_url()).await {
-                InferenceInstanceHealthStatus::Healthy
-            } else {
-                InferenceInstanceHealthStatus::Unhealthy
-            };
+        let initial_health = if Self::probe_instance(state.http_client(), backend.base_url()).await
+        {
+            InferenceInstanceHealthStatus::Healthy
+        } else {
+            InferenceInstanceHealthStatus::Unhealthy
+        };
 
         let instance = state
             .inference_instance_repo()
@@ -98,9 +115,21 @@ impl InferenceInstanceService {
             .inference_instance_repo()
             .list_for_healthcheck()
             .await?;
-        for instance in instances {
-            let healthy =
-                Self::probe_instance(&state.http_client().clone(), &instance.base_url).await;
+
+        // Probe all instances concurrently to avoid blocking on slow/dead servers.
+        let http = state.http_client().clone();
+        let probe_futures: Vec<_> = instances
+            .iter()
+            .map(|inst| {
+                let http = http.clone();
+                let url = inst.base_url.clone();
+                async move { Self::probe_instance(&http, &url).await }
+            })
+            .collect();
+
+        let results = futures::future::join_all(probe_futures).await;
+
+        for (instance, healthy) in instances.iter().zip(results) {
             let health = if healthy {
                 InferenceInstanceHealthStatus::Healthy
             } else {
