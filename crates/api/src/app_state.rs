@@ -78,6 +78,10 @@ struct AppStateInner {
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
     pub inference_backend: Arc<dyn InferenceBackend>,
+    /// Cached backends for registered inference instances, keyed by base_url.
+    /// Ensures circuit breakers accumulate state across requests to the same instance.
+    pub instance_backend_cache:
+        std::sync::RwLock<std::collections::HashMap<String, Arc<dyn InferenceBackend>>>,
     pub feature_flags: Arc<FeatureFlags>,
     pub unleash_poller: Option<std::sync::Mutex<UnleashPollerHandle>>,
     pub billing_batcher: Arc<BillingBatcher>,
@@ -320,6 +324,7 @@ impl AppState {
                 tenant_repo,
                 billing_provider,
                 inference_backend,
+                instance_backend_cache: std::sync::RwLock::new(std::collections::HashMap::new()),
                 feature_flags,
                 unleash_poller,
                 billing_batcher,
@@ -436,12 +441,23 @@ impl AppState {
         Arc::clone(&self.inner.inference_backend)
     }
 
+    /// Get or create a cached backend for a registered inference instance.
+    /// Backends are cached by base_url so circuit breakers accumulate state
+    /// across requests to the same instance.
     pub fn build_inference_backend_for_instance(
         &self,
         backend_type: &str,
         server_url: &str,
     ) -> Arc<dyn InferenceBackend> {
-        build_backend_for_instance(
+        // Fast path: check read lock
+        if let Ok(cache) = self.inner.instance_backend_cache.read()
+            && let Some(backend) = cache.get(server_url)
+        {
+            return Arc::clone(backend);
+        }
+
+        // Slow path: create and cache
+        let backend = build_backend_for_instance(
             backend_type,
             server_url,
             self.inner.http_client.clone(),
@@ -449,7 +465,15 @@ impl AppState {
                 self.inner.config.vllm_cb_failure_threshold,
                 Duration::from_secs(self.inner.config.vllm_cb_recovery_timeout_secs),
             ),
-        )
+        );
+
+        if let Ok(mut cache) = self.inner.instance_backend_cache.write() {
+            cache
+                .entry(server_url.to_string())
+                .or_insert_with(|| Arc::clone(&backend));
+        }
+
+        backend
     }
 
     pub fn feature_flags(&self) -> &FeatureFlags {

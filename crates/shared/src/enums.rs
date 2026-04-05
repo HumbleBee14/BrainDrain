@@ -392,4 +392,75 @@ mod tests {
             assert_eq!(status, back);
         }
     }
+
+    #[test]
+    fn instance_health_status_roundtrip() {
+        for status in [
+            InferenceInstanceHealthStatus::Unknown,
+            InferenceInstanceHealthStatus::Healthy,
+            InferenceInstanceHealthStatus::Unhealthy,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: InferenceInstanceHealthStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back);
+        }
+    }
+
+    #[test]
+    fn instance_health_status_default_is_unknown() {
+        assert_eq!(
+            InferenceInstanceHealthStatus::default(),
+            InferenceInstanceHealthStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn instance_lifecycle_roundtrip() {
+        for state in [
+            InferenceInstanceLifecycleState::Ready,
+            InferenceInstanceLifecycleState::Draining,
+            InferenceInstanceLifecycleState::Retired,
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            let back: InferenceInstanceLifecycleState = serde_json::from_str(&json).unwrap();
+            assert_eq!(state, back);
+        }
+    }
+
+    #[test]
+    fn instance_lifecycle_default_is_ready() {
+        assert_eq!(
+            InferenceInstanceLifecycleState::default(),
+            InferenceInstanceLifecycleState::Ready
+        );
+    }
+
+    #[test]
+    fn instance_health_display_is_snake_case() {
+        assert_eq!(
+            InferenceInstanceHealthStatus::Healthy.to_string(),
+            "healthy"
+        );
+        assert_eq!(
+            InferenceInstanceHealthStatus::Unhealthy.to_string(),
+            "unhealthy"
+        );
+        assert_eq!(
+            InferenceInstanceHealthStatus::Unknown.to_string(),
+            "unknown"
+        );
+    }
+
+    #[test]
+    fn instance_lifecycle_display_is_snake_case() {
+        assert_eq!(InferenceInstanceLifecycleState::Ready.to_string(), "ready");
+        assert_eq!(
+            InferenceInstanceLifecycleState::Draining.to_string(),
+            "draining"
+        );
+        assert_eq!(
+            InferenceInstanceLifecycleState::Retired.to_string(),
+            "retired"
+        );
+    }
 }

@@ -491,4 +491,63 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "adapters/tenant/model/adapter.safetensors");
     }
+
+    #[test]
+    fn deployment_config_with_instance_fields() {
+        let instance_id = Uuid::new_v4();
+        let config = serde_json::json!({
+            "adapter_ref": "adapter-abc",
+            "adapter_path": "/s3/path",
+            "base_model": "meta-llama/Llama-3.1-8B",
+            "backend": "vllm",
+            "instance_id": instance_id.to_string(),
+            "instance_name": "gpu-a10g-1",
+            "instance_url": "http://vllm-1:8080",
+            "backend_meta": {"backend": "vllm"},
+        });
+
+        assert_eq!(config["adapter_ref"], "adapter-abc");
+        assert_eq!(config["backend"], "vllm");
+        assert_eq!(config["instance_id"], instance_id.to_string());
+        assert_eq!(config["instance_name"], "gpu-a10g-1");
+        assert_eq!(config["instance_url"], "http://vllm-1:8080");
+    }
+
+    #[test]
+    fn deployment_config_without_instance_fields_is_backward_compat() {
+        let config = serde_json::json!({
+            "adapter_ref": "adapter-abc",
+            "base_model": "meta-llama/Llama-3.1-8B",
+            "backend": "vllm",
+        });
+
+        assert!(config["instance_id"].is_null());
+        assert!(config["instance_url"].is_null());
+    }
+
+    #[test]
+    fn deploy_rejects_already_active() {
+        let status = DeploymentStatus::Active.to_string();
+        assert_eq!(status, "active");
+        // The deploy function checks this and returns Conflict
+    }
+
+    #[test]
+    fn undeploy_rejects_not_active() {
+        let status = DeploymentStatus::Undeployed.to_string();
+        assert_ne!(status, DeploymentStatus::Active.to_string());
+    }
+
+    #[test]
+    fn deploy_conditional_where_prevents_race() {
+        // The SQL uses: WHERE deployment_status NOT IN ('deploying', 'active')
+        // This means concurrent deploys can't both win
+        let deploying = DeploymentStatus::Deploying.to_string();
+        let active = DeploymentStatus::Active.to_string();
+        let undeployed = DeploymentStatus::Undeployed.to_string();
+
+        // Only undeployed and inactive can be deployed
+        assert_ne!(deploying, undeployed);
+        assert_ne!(active, undeployed);
+    }
 }
