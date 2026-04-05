@@ -35,6 +35,30 @@ const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const MAX_KEY_LENGTH: usize = 256;
 const MAX_IDEMPOTENCY_BODY_SIZE: usize = 1024 * 1024; // 1 MB
 
+/// Idempotency coverage policy:
+///
+/// COVERED (all mutating endpoints under these prefixes):
+///   /api/v1/projects      — create, update, delete, status change
+///   /api/v1/pipeline       — parse, refine, full-pipeline triggers
+///   /api/v1/datasets       — approve, reject
+///   /api/v1/training       — create job, cancel, approve-cost, estimate (POST, read-only but safe)
+///   /api/v1/evaluations    — create evaluation
+///   /api/v1/exports        — create export
+///   /api/v1/api-keys       — create, revoke
+///   /api/v1/models         — deploy, undeploy, rollback
+///   /api/v1/billing        — checkout, portal session
+///   /api/v1/team           — invite, revoke invite, update role, remove member
+///   /api/v1/notifications  — update preferences, test webhook, retry delivery
+///   /api/v1/settings       — update/delete LLM settings, admin settings
+///   /api/v1/invitations    — accept invitation (via public_router inside v1_router)
+///
+/// INTENTIONALLY EXCLUDED:
+///   /api/webhooks/stripe   — HMAC auth, no user context, Stripe retries natively
+///   /v1/chat/completions   — API key auth, inference is non-idempotent by design
+///   /health, /ready        — read-only health checks
+///   Routes containing /documents — multipart file uploads too large to buffer
+///
+/// Safe HTTP methods (GET, HEAD, OPTIONS, TRACE) always skip regardless of path.
 const IDEMPOTENT_ROUTE_PREFIXES: &[&str] = &[
     "/api/v1/projects",
     "/api/v1/pipeline",
@@ -578,6 +602,80 @@ mod tests {
             .unwrap();
 
         assert!(extract_principal_from_extensions(&request).is_none());
+    }
+
+    // -- Policy coverage edge-case tests --
+
+    #[test]
+    fn invitation_accept_is_covered() {
+        // public_router mounts at /invitations/{token}/accept inside v1_router,
+        // so the actual path is /api/v1/invitations/{token}/accept.
+        assert!(requires_idempotency(
+            &Method::POST,
+            "/api/v1/invitations/abc123token/accept"
+        ));
+    }
+
+    #[test]
+    fn training_estimate_is_covered() {
+        // POST estimate is read-only but idempotency coverage is harmless
+        // and keeps the policy consistent (all /api/v1/training/* POST).
+        assert!(requires_idempotency(
+            &Method::POST,
+            "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/training-jobs/estimate"
+        ));
+    }
+
+    #[test]
+    fn billing_checkout_is_covered() {
+        assert!(requires_idempotency(
+            &Method::POST,
+            "/api/v1/billing/checkout"
+        ));
+    }
+
+    #[test]
+    fn team_invite_is_covered() {
+        assert!(requires_idempotency(
+            &Method::POST,
+            "/api/v1/team/invitations"
+        ));
+    }
+
+    #[test]
+    fn team_role_update_is_covered() {
+        assert!(requires_idempotency(
+            &Method::PUT,
+            "/api/v1/team/members/550e8400-e29b-41d4-a716-446655440000/role"
+        ));
+    }
+
+    #[test]
+    fn notification_preferences_is_covered() {
+        assert!(requires_idempotency(
+            &Method::PUT,
+            "/api/v1/notifications/preferences"
+        ));
+    }
+
+    #[test]
+    fn settings_update_is_covered() {
+        assert!(requires_idempotency(
+            &Method::PUT,
+            "/api/v1/settings/llm"
+        ));
+        assert!(requires_idempotency(
+            &Method::DELETE,
+            "/api/v1/settings/llm"
+        ));
+    }
+
+    #[test]
+    fn batch_inference_excluded() {
+        assert!(!requires_idempotency(
+            &Method::POST,
+            "/v1/chat/completions/batch"
+        ));
     }
 
     #[test]
