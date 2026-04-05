@@ -15,8 +15,7 @@ echo -e "${YELLOW}Running pre-commit checks...${NC}"
 # ── Rust formatting ──
 if git diff --cached --name-only | grep -q '\.rs$'; then
     echo -e "  Rust: cargo fmt"
-    cargo fmt --all -- --check 2>/dev/null
-    if [ $? -ne 0 ]; then
+    if ! cargo fmt --all -- --check 2>/dev/null; then
         echo -e "  ${YELLOW}Rust: auto-formatting...${NC}"
         cargo fmt --all
         # Re-stage formatted files
