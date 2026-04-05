@@ -679,6 +679,161 @@ mod tests {
         ));
     }
 
+    // -- Exhaustive policy completeness test --
+
+    /// Every mutating endpoint in the API must be either covered or
+    /// intentionally excluded. This test is the single source of truth
+    /// for the idempotency policy. If a new route is added and not listed
+    /// here, this test should be updated.
+    #[test]
+    fn exhaustive_policy_coverage() {
+        // COVERED: all mutating endpoints under allowlisted prefixes
+        let covered = [
+            // Projects
+            ("POST", "/api/v1/projects"),
+            (
+                "PUT",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000",
+            ),
+            (
+                "PUT",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/status",
+            ),
+            (
+                "DELETE",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000",
+            ),
+            // Pipeline
+            (
+                "POST",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/parse",
+            ),
+            (
+                "POST",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/refine",
+            ),
+            // Datasets
+            (
+                "POST",
+                "/api/v1/datasets/550e8400-e29b-41d4-a716-446655440000/approve",
+            ),
+            (
+                "POST",
+                "/api/v1/datasets/550e8400-e29b-41d4-a716-446655440000/reject",
+            ),
+            // Training
+            (
+                "POST",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/training-jobs",
+            ),
+            (
+                "POST",
+                "/api/v1/training-jobs/550e8400-e29b-41d4-a716-446655440000/cancel",
+            ),
+            (
+                "POST",
+                "/api/v1/training-jobs/550e8400-e29b-41d4-a716-446655440000/approve-cost",
+            ),
+            (
+                "POST",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/training-jobs/estimate",
+            ),
+            // Models
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/deploy",
+            ),
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/undeploy",
+            ),
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/rollback",
+            ),
+            // Evaluations
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/evaluations",
+            ),
+            // Exports
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/exports",
+            ),
+            // API Keys
+            (
+                "POST",
+                "/api/v1/models/550e8400-e29b-41d4-a716-446655440000/api-keys",
+            ),
+            (
+                "POST",
+                "/api/v1/api-keys/550e8400-e29b-41d4-a716-446655440000/revoke",
+            ),
+            // Billing
+            ("POST", "/api/v1/billing/checkout"),
+            ("POST", "/api/v1/billing/portal"),
+            // Team
+            ("POST", "/api/v1/team/invitations"),
+            (
+                "POST",
+                "/api/v1/team/invitations/550e8400-e29b-41d4-a716-446655440000/revoke",
+            ),
+            (
+                "PUT",
+                "/api/v1/team/members/550e8400-e29b-41d4-a716-446655440000/role",
+            ),
+            (
+                "DELETE",
+                "/api/v1/team/members/550e8400-e29b-41d4-a716-446655440000",
+            ),
+            // Invitations
+            ("POST", "/api/v1/invitations/abc123token/accept"),
+            // Notifications
+            ("PUT", "/api/v1/notifications/preferences"),
+            (
+                "POST",
+                "/api/v1/notifications/preferences/550e8400-e29b-41d4-a716-446655440000/test",
+            ),
+            (
+                "POST",
+                "/api/v1/notifications/deliveries/550e8400-e29b-41d4-a716-446655440000/retry",
+            ),
+            // Settings
+            ("PUT", "/api/v1/settings/llm"),
+            ("DELETE", "/api/v1/settings/llm"),
+            ("PUT", "/api/v1/settings/admin"),
+            ("DELETE", "/api/v1/settings/admin"),
+        ];
+
+        for (method, path) in &covered {
+            let m = method.parse::<Method>().unwrap();
+            assert!(
+                requires_idempotency(&m, path),
+                "Expected {method} {path} to be covered by idempotency"
+            );
+        }
+
+        // EXCLUDED: intentionally not covered
+        let excluded = [
+            ("POST", "/api/webhooks/stripe"),       // HMAC auth, webhook retries
+            ("POST", "/v1/chat/completions"),       // inference, API key auth
+            ("POST", "/v1/chat/completions/batch"), // inference, API key auth
+            (
+                "POST",
+                "/api/v1/projects/550e8400-e29b-41d4-a716-446655440000/documents",
+            ), // upload
+        ];
+
+        for (method, path) in &excluded {
+            let m = method.parse::<Method>().unwrap();
+            assert!(
+                !requires_idempotency(&m, path),
+                "Expected {method} {path} to be EXCLUDED from idempotency"
+            );
+        }
+    }
+
     #[test]
     fn idempotency_skips_when_auth_failed() {
         use crate::auth::{AuthError, AuthOutcome};
