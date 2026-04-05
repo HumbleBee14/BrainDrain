@@ -118,7 +118,27 @@ jobs:
   #         username: ${{ secrets.STAGING_USER }}
   #         key: ${{ secrets.STAGING_SSH_KEY }}
   #         script: |
+  #           set -e
   #           cd /opt/platform
+  #
+  #           # 1. Pull new images
   #           docker compose -f docker-compose.prod.yml pull
-  #           docker compose -f docker-compose.prod.yml up -d
+  #
+  #           # 2. Run migrations FIRST (connects directly to Postgres, not PgBouncer)
+  #           docker compose -f docker-compose.prod.yml run --rm migrate
+  #
+  #           # 3. Rolling restart: API first, then web, then workers
+  #           docker compose -f docker-compose.prod.yml up -d --no-deps api
+  #           sleep 10
+  #           # Verify API health before continuing
+  #           curl -sf http://localhost:8000/health || { echo "API health check failed"; exit 1; }
+  #
+  #           docker compose -f docker-compose.prod.yml up -d --no-deps web
+  #           docker compose -f docker-compose.prod.yml up -d --no-deps workers
+  #
+  #           # 4. Verify all services healthy
+  #           sleep 5
+  #           docker compose -f docker-compose.prod.yml ps
+  #
+  #           # 5. Cleanup old images
   #           docker system prune -f

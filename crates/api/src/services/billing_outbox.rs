@@ -13,7 +13,7 @@
 //! - Relay loops until empty per tick (not one batch per tick).
 //! - Failed deliveries retried every poll interval up to 5 attempts.
 
-use sqlx::{Connection, PgPool};
+use sqlx::PgPool;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -256,36 +256,41 @@ async fn relay_loop(db: PgPool, poll_interval: Duration, mut shutdown_rx: onesho
     }
 }
 
-/// Claim and deliver a batch. Advisory lock always released on all exit paths.
+/// Claim and deliver a batch.
+///
+/// Uses `pg_try_advisory_xact_lock` (transaction-scoped) instead of session-level
+/// advisory locks. This is compatible with PgBouncer transaction mode, where
+/// server connections may be reassigned between transactions. The lock is
+/// automatically released when the transaction commits or rolls back.
 async fn process_batch(db: &PgPool) -> Result<BatchResult, sqlx::Error> {
-    let mut conn = db.acquire().await?;
+    let mut tx = db.begin().await?;
 
-    let locked: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
+    let locked: (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)")
         .bind(RELAY_LOCK_ID)
-        .fetch_one(&mut *conn)
+        .fetch_one(&mut *tx)
         .await?;
 
     if !locked.0 {
+        tx.rollback().await?;
         return Ok(BatchResult::LockHeld);
     }
 
-    let result = do_relay_work(&mut conn).await;
+    let result = do_relay_work(&mut tx).await;
 
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(RELAY_LOCK_ID)
-        .execute(&mut *conn)
-        .await;
+    match &result {
+        Ok(_) => tx.commit().await?,
+        Err(_) => tx.rollback().await?,
+    }
 
     result
 }
 
 /// Relay work with per-row savepoints so one poison row cannot stall the batch.
+/// The advisory xact lock is held for the entire transaction (caller commits).
 async fn do_relay_work(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<BatchResult, sqlx::Error> {
-    let mut tx = conn.begin().await?;
-
-    reap_stale_pending_streams(&mut tx).await?;
+    reap_stale_pending_streams(tx).await?;
 
     let rows = sqlx::query_as::<_, OutboxRow>(
         "SELECT id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
@@ -300,11 +305,10 @@ async fn do_relay_work(
     )
     .bind(MAX_ATTEMPTS)
     .bind(RELAY_BATCH_SIZE)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
 
     if rows.is_empty() {
-        tx.commit().await?;
         return Ok(BatchResult::Processed(0));
     }
 
@@ -316,19 +320,19 @@ async fn do_relay_work(
         // Savepoint per row: if delivery fails, rollback only this row's work,
         // not the entire batch. The FOR UPDATE lock is still held.
         sqlx::query("SAVEPOINT row_delivery")
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
 
-        match deliver_to_ledger(&mut tx, row).await {
+        match deliver_to_ledger(tx, row).await {
             Ok(()) => {
                 sqlx::query("RELEASE SAVEPOINT row_delivery")
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
                 delivered.push(row.id);
             }
             Err(e) => {
                 sqlx::query("ROLLBACK TO SAVEPOINT row_delivery")
-                    .execute(&mut *tx)
+                    .execute(&mut **tx)
                     .await?;
                 failed.push((row.id, e.to_string()));
             }
@@ -339,7 +343,7 @@ async fn do_relay_work(
     if !delivered.is_empty() {
         sqlx::query("UPDATE billing_outbox SET delivered_at = NOW() WHERE id = ANY($1)")
             .bind(&delivered)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
 
@@ -352,11 +356,9 @@ async fn do_relay_work(
         )
         .bind(error)
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
-
-    tx.commit().await?;
 
     if !delivered.is_empty() || !failed.is_empty() {
         tracing::info!(

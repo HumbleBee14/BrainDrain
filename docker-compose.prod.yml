@@ -96,6 +96,43 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET:-platform}
 
+  # ── PgBouncer (Connection Pooler) ──
+  # All app services connect here (port 6432) instead of Postgres directly.
+  # Manages a smaller pool of real Postgres connections, reducing memory
+  # overhead and connection churn at scale.
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.23.1-p3
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: platform
+      DB_USER: platform
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      PGBOUNCER_ADMIN_PASSWORD: ${PGBOUNCER_ADMIN_PASSWORD:?Set PGBOUNCER_ADMIN_PASSWORD in .env}
+      PGBOUNCER_DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-20}
+      PGBOUNCER_MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-200}
+      PGBOUNCER_MIN_POOL_SIZE: ${PGBOUNCER_MIN_POOL_SIZE:-5}
+      PGBOUNCER_RESERVE_POOL_SIZE: ${PGBOUNCER_RESERVE_POOL_SIZE:-5}
+    volumes:
+      - ./infra/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./infra/pgbouncer/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h 127.0.0.1 -p 6432 -U platform -d platform -c 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
   # ── Temporal ──
 
   temporal-postgres:
@@ -146,6 +183,10 @@ services:
       dockerfile: crates/api/Dockerfile
     entrypoint: ["platform-migrate"]
     environment:
+      # Migrations connect DIRECTLY to Postgres, not through PgBouncer.
+      # DDL statements (CREATE TABLE, ALTER, etc.) and advisory locks used
+      # during migrations require session-level state that transaction-mode
+      # PgBouncer cannot guarantee.
       DATABASE_URL: postgres://platform:${DB_PASSWORD}@postgres:5432/platform
     depends_on:
       postgres:
@@ -165,7 +206,10 @@ services:
       ENVIRONMENT: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       APP_NAME: ${APP_NAME:-Platform}
-      DATABASE_URL: postgres://platform:${DB_PASSWORD}@postgres:5432/platform
+      # Route through PgBouncer for connection pooling.
+      # PgBouncer runs in transaction mode — compatible with SET LOCAL,
+      # advisory locks within transactions, and per-tx tenant context.
+      DATABASE_URL: postgres://platform:${DB_PASSWORD}@pgbouncer:6432/platform
       DATABASE_MAX_CONNECTIONS: ${DATABASE_MAX_CONNECTIONS:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       S3_ENDPOINT: http://minio:9000
@@ -208,7 +252,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -250,7 +294,8 @@ services:
       APP_TEMPORAL_ADDRESS: temporal:7233
       APP_TEMPORAL_NAMESPACE: default
       APP_TEMPORAL_TASK_QUEUE: ml-pipeline
-      APP_DATABASE_URL: postgresql://platform:${DB_PASSWORD}@postgres:5432/platform
+      # Route through PgBouncer for connection pooling.
+      APP_DATABASE_URL: postgresql://platform:${DB_PASSWORD}@pgbouncer:6432/platform
       APP_REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       APP_S3_ENDPOINT: http://minio:9000
       APP_S3_ACCESS_KEY: ${S3_ACCESS_KEY}
@@ -273,7 +318,9 @@ services:
     volumes:
       - model_cache:/app/model_cache
     depends_on:
-      postgres:
+      migrate:
+        condition: service_completed_successfully
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
