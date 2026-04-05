@@ -503,9 +503,6 @@ mod tests {
     fn relay_constants_are_reasonable() {
         assert_eq!(MAX_ATTEMPTS, 5);
         assert_eq!(RELAY_BATCH_SIZE, 500);
-        // STREAM_PENDING_STALE_SECS range validated at compile time
-        // in the const assert block above (not here — clippy rejects
-        // runtime assert! on constants).
         assert_eq!(STREAM_PENDING_STALE_SECS, 300);
     }
 

@@ -3,6 +3,10 @@
 # Install: git config core.hooksPath .githooks
 # Or:      make setup-hooks
 
+# Ensure cargo/rustup and common tools are in PATH.
+# VSCode and GUI git clients don't load shell profiles.
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
 set -e
 
 RED='\033[0;31m'
