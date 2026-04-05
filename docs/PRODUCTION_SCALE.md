@@ -247,40 +247,25 @@ triggers:
 
 ## 5. Billing Durability
 
-The current billing batcher writes to an in-memory channel then bulk-inserts
-to `billing_events`. Events in the channel are lost on process crash.
+**Status: IMPLEMENTED** (PR #22)
+
+Billing events are written to a durable `billing_outbox` table in the same
+database transaction as the business operation. A background relay moves rows
+to `billing_events` using `FOR UPDATE SKIP LOCKED` with per-row savepoints.
 
 ### Current guarantees
-- Normal operation: events batched and flushed every 5s ✓
-- Channel full: synchronous direct insert via `spawn_blocking` ✓
-- Batch flush failure: retry up to 3 times, then individual inserts ✓
-- **Process crash**: events in the channel since last flush are lost ✗
+- Normal operation: events committed transactionally with the business op ✓
+- Process crash after commit: events survive in outbox, relay delivers on restart ✓
+- Relay crash during delivery: idempotent re-delivery via `ON CONFLICT DO NOTHING` ✓
+- Streaming inference: durable pending row before SSE starts, finalized after ✓
+- Deploy billing: same transaction as deployment state change ✓
+- Training billing: Python worker writes outbox row in same DB transaction ✓
 
-### Planned: DB outbox
-Add a `billing_outbox` table written transactionally alongside each business
-operation. A background worker moves rows from `billing_outbox` to
-`billing_events` using `SELECT FOR UPDATE SKIP LOCKED`. This achieves
-exactly-once billing even through API restarts.
+The in-memory billing batcher still exists as a fallback when
+`billing.outbox.enabled=false`, but production requires the outbox
+(`billing.outbox.enabled=true` is enforced at startup).
 
-Migration sketch:
-```sql
-CREATE TABLE billing_outbox (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
-    operation   TEXT NOT NULL,
-    resource_id UUID,
-    tokens_in   BIGINT NOT NULL DEFAULT 0,
-    tokens_out  BIGINT NOT NULL DEFAULT 0,
-    gpu_seconds INT NOT NULL DEFAULT 0,
-    cost_usd    DOUBLE PRECISION NOT NULL DEFAULT 0,
-    metadata    JSONB NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX ON billing_outbox (created_at);
-```
-
-Until the outbox is implemented, the RPO for billing is the flush interval
-(5 seconds by default, configurable via `BILLING_FLUSH_INTERVAL_SECS`).
+See [BILLING_ARCHITECTURE.md](./BILLING_ARCHITECTURE.md) for full technical reference.
 
 ---
 

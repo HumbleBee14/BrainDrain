@@ -60,7 +60,7 @@ Here is what a user experiences, step by step:
 6. Review Dataset   → Preview ChatML training pairs, approve quality
 7. Train Model      → Choose training mode → LoRA fine-tuning runs on GPU
 8. Evaluate Model   → 4-suite evaluation: Domain, General, A/B, Safety
-9. Deploy Model     → One-click deploy to shared vLLM cluster
+9. Deploy Model     → One-click deploy to inference backend (vLLM/TGI/SGLang)
 10. Get API Key     → Generate pl_sk_... key for your deployed model
 11. Use Model       → POST /v1/chat/completions (OpenAI-compatible)
 12. Export Model     → Download as GGUF for local use with Ollama/llama.cpp
@@ -391,10 +391,10 @@ Four evaluation suites run in parallel:
 
 **Deployment** (`POST /api/v1/models/:id/deploy`):
 ```
-1. Rust API calls vLLM's adapter management REST endpoint
-2. vLLM loads the LoRA adapter from S3 into its adapter pool
-3. Model is now servable alongside thousands of other adapters
-4. Status updated to "active" in PostgreSQL
+1. Claim deployment slot (multi-instance: pick healthy instance with capacity)
+2. Load LoRA adapter via pluggable backend (vLLM, TGI, or SGLang)
+3. Store deployment_status='active' + inference_instance_id in same transaction
+4. Enqueue billing event in same transaction (durable outbox)
 ```
 
 **Inference** (`POST /v1/chat/completions`):
@@ -402,10 +402,10 @@ Four evaluation suites run in parallel:
 1. Client sends request with API key (Bearer pl_sk_...)
 2. Rust API verifies key via SHA-256 hash lookup
 3. Rate limit check (Redis sliding window)
-4. Circuit breaker check (is vLLM healthy?)
-5. Forward request to vLLM with adapter name in "model" field
+4. Resolve backend: look up assigned inference instance (or global fallback)
+5. Circuit breaker check, forward request with adapter name
 6. Stream or return response
-7. Bill tokens via billing batcher (mpsc channel → bulk INSERT)
+7. Bill tokens via durable billing outbox
 ```
 
 **GGUF Export** (`ExportWorkflow`):
