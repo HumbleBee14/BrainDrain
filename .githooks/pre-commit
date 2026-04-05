@@ -22,6 +22,12 @@ if git diff --cached --name-only | grep -q '\.rs$'; then
         git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' | xargs -r git add
         echo -e "  ${GREEN}Rust: formatted and re-staged${NC}"
     fi
+    # Run clippy with same flags as CI to catch issues before push
+    echo -e "  Rust: cargo clippy"
+    if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
+        echo -e "  ${RED}Rust: clippy failed — fix before committing${NC}"
+        exit 1
+    fi
 fi
 
 # ── Python formatting ──

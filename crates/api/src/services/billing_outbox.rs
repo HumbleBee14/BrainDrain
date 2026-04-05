@@ -449,6 +449,8 @@ const _: () = {
     assert!(MAX_ATTEMPTS <= 10);
     assert!(RELAY_BATCH_SIZE > 0);
     assert!(RELAY_BATCH_SIZE <= 10_000);
+    assert!(STREAM_PENDING_STALE_SECS > 0);
+    assert!(STREAM_PENDING_STALE_SECS <= 600);
 };
 
 #[cfg(test)]
@@ -501,8 +503,10 @@ mod tests {
     fn relay_constants_are_reasonable() {
         assert_eq!(MAX_ATTEMPTS, 5);
         assert_eq!(RELAY_BATCH_SIZE, 500);
-        assert!(STREAM_PENDING_STALE_SECS > 0);
-        assert!(STREAM_PENDING_STALE_SECS <= 600); // max 10 minutes
+        // STREAM_PENDING_STALE_SECS range validated at compile time
+        // in the const assert block above (not here — clippy rejects
+        // runtime assert! on constants).
+        assert_eq!(STREAM_PENDING_STALE_SECS, 300);
     }
 
     #[test]
