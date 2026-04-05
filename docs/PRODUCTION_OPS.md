@@ -143,6 +143,10 @@ systemctl stop postgresql
 ./infra/pitr/restore.sh latest
 ```
 
+For timestamp restores, the script selects the newest base backup whose backup
+time is at or before the requested target, then replays WAL forward from there.
+This avoids choosing a base backup that is too new to reach the target.
+
 **3. Start PostgreSQL** — it replays WAL to the target time:
 ```bash
 systemctl start postgresql
@@ -184,6 +188,10 @@ postgres (healthy) ──→ pgbouncer (healthy) ──→ api (healthy) ──�
 Run before deploying:
 
 ```bash
+DATABASE_URL=postgres://... ./infra/release/pre-deploy-check.sh
+
+# Optional if you want an explicit PgBouncer reachability check:
+PGBOUNCER_HOST=pgbouncer PGBOUNCER_PORT=6432 \
 DATABASE_URL=postgres://... ./infra/release/pre-deploy-check.sh
 ```
 

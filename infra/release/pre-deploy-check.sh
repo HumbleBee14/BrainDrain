@@ -7,8 +7,8 @@
 #
 # Usage:
 #   DATABASE_URL=postgres://... ./pre-deploy-check.sh
-#   # or in docker context:
-#   docker compose -f docker-compose.prod.yml exec api /app/pre-deploy-check.sh
+#   # optional:
+#   # PGBOUNCER_HOST=pgbouncer PGBOUNCER_PORT=6432 ./pre-deploy-check.sh
 
 set -eo pipefail
 
@@ -17,6 +17,9 @@ if [ -z "${DATABASE_URL:-}" ]; then
     echo "  DATABASE_URL is required to connect to the target database."
     exit 1
 fi
+
+PGBOUNCER_HOST="${PGBOUNCER_HOST:-}"
+PGBOUNCER_PORT="${PGBOUNCER_PORT:-6432}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -91,10 +94,12 @@ fi
 # ── 3. PgBouncer (if present) ──
 echo ""
 echo "Connection pooling:"
-if pg_isready -h pgbouncer -p 6432 &>/dev/null; then
+if [ -z "${PGBOUNCER_HOST}" ]; then
+    check_warn "PGBOUNCER_HOST not set — skipping direct PgBouncer reachability check"
+elif pg_isready -h "${PGBOUNCER_HOST}" -p "${PGBOUNCER_PORT}" &>/dev/null; then
     check_pass "PgBouncer is reachable"
 else
-    check_warn "PgBouncer not reachable (services may connect to Postgres directly)"
+    check_warn "PgBouncer not reachable at ${PGBOUNCER_HOST}:${PGBOUNCER_PORT}"
 fi
 
 # ── 4. Pending outbox rows ──
