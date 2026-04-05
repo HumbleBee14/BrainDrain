@@ -38,10 +38,10 @@ const MAX_IDEMPOTENCY_BODY_SIZE: usize = 1024 * 1024; // 1 MB
 /// Idempotency coverage policy:
 ///
 /// COVERED (all mutating endpoints under these prefixes):
-///   /api/v1/projects      — create, update, delete, status change
+///   /api/v1/projects      — create, update, delete, status change, training-jobs/estimate (POST, read-only but safe)
 ///   /api/v1/pipeline       — parse, refine, full-pipeline triggers
 ///   /api/v1/datasets       — approve, reject
-///   /api/v1/training       — create job, cancel, approve-cost, estimate (POST, read-only but safe)
+///   /api/v1/training       — create job, cancel, approve-cost
 ///   /api/v1/evaluations    — create evaluation
 ///   /api/v1/exports        — create export
 ///   /api/v1/api-keys       — create, revoke

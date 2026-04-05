@@ -52,7 +52,7 @@ lint:
 	cd apps/web && pnpm type-check
 	cd apps/workers && uv run ruff check src/
 	cd apps/workers && uv run ruff format --check src/
-	python scripts/sync_constants.py --check
+	cd apps/workers && uv run python ../../scripts/sync_constants.py --check
 
 # Build all
 build:

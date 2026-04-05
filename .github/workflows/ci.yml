@@ -110,4 +110,5 @@ jobs:
         run: uv run ruff format --check src/
 
       - name: Check Rust/Python constant sync
-        run: python scripts/sync_constants.py --check
+        working-directory: apps/workers
+        run: uv run python ../../scripts/sync_constants.py --check

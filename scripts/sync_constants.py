@@ -158,8 +158,13 @@ def main():
         sys.exit(1)
 
     worker_enums = [(n, v) for n, v in enums if n in WORKER_ENUMS]
-    if not worker_enums:
-        print(f"ERROR: No worker enums found in {RUST_ENUMS}", file=sys.stderr)
+    found_names = {n for n, _ in worker_enums}
+    missing = sorted(WORKER_ENUMS - found_names)
+    if missing:
+        print(
+            f"ERROR: Missing required worker enums in {RUST_ENUMS}: {', '.join(missing)}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     constants_section = generate_constants_section(rates, default)
