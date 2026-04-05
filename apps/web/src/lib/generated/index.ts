@@ -62,6 +62,13 @@ export type { UpdateLlmSettingsRequest } from "./UpdateLlmSettingsRequest";
 export type { AdminConfigResponse } from "./AdminConfigResponse";
 export type { UpdateAdminConfigRequest } from "./UpdateAdminConfigRequest";
 
+// Inference instances (from crates/api/src/dto/inference_instance.rs)
+export type { InferenceInstanceResponse } from "./InferenceInstanceResponse";
+export type { CreateInferenceInstanceRequest } from "./CreateInferenceInstanceRequest";
+export type { UpdateInferenceInstanceLifecycleRequest } from "./UpdateInferenceInstanceLifecycleRequest";
+export type { InferenceInstanceHealthStatus } from "./InferenceInstanceHealthStatus";
+export type { InferenceInstanceLifecycleState } from "./InferenceInstanceLifecycleState";
+
 // Model versioning (from crates/api/src/dto/model.rs)
 export type { RollbackModelRequest } from "./RollbackModelRequest";
 

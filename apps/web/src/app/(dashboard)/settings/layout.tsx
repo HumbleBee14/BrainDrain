@@ -9,6 +9,7 @@ const tabs = [
   { label: "Billing", href: "/settings/billing" },
   { label: "Usage", href: "/settings/usage" },
   { label: "Notifications", href: "/settings/notifications" },
+  { label: "Inference", href: "/settings/inference" },
   { label: "Admin Config", href: "/settings/admin" },
   { label: "Audit Log", href: "/settings/audit-log" },
 ];
