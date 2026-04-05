@@ -50,6 +50,11 @@ FEATURE_FLAGS_JSON='{"billing.outbox.enabled":true,"idempotency.enforced":true}'
 Unleash OSS is a self-hosted feature flag server. We poll its API every 15
 seconds. No paid service required.
 
+**Scope:** This provider supports **global kill switches only** — flags are
+either on or off for everyone. Features with Unleash activation strategies
+(gradual rollout, user targeting, constraints) are skipped with a warning.
+For full strategy evaluation, use the official Unleash SDK or OpenFeature.
+
 ```bash
 FEATURE_FLAGS_PROVIDER=unleash
 UNLEASH_URL=http://unleash:4242

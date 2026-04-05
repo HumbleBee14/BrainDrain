@@ -196,7 +196,7 @@ pub struct Config {
     pub otel_endpoint: String,
 
     // -- Feature Flags --
-    /// Feature flag provider backend. Current supported value: `static`.
+    /// Feature flag provider backend. Supported: `static` (default), `unleash`.
     #[serde(default = "default_feature_flags_provider")]
     pub feature_flags_provider: String,
 

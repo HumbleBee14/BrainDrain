@@ -166,10 +166,10 @@ impl UnleashProvider {
         let app_name = &config.unleash_app_name;
         let environment = &config.unleash_environment;
 
-        // Build the static fallback from config (same source as StaticProvider)
-        let fallback = StaticFeatureFlagProvider::from_config(config)
-            .map(|p| p.flags)
-            .unwrap_or_default();
+        // Build the static fallback from config (same source as StaticProvider).
+        // Fail fast if the fallback config is invalid — a broken fallback defeats
+        // the purpose of graceful degradation when Unleash is unreachable.
+        let fallback = StaticFeatureFlagProvider::from_config(config)?.flags;
 
         let features_url = format!("{}/api/client/features", url.trim_end_matches('/'));
         let http = reqwest::Client::builder()
@@ -312,15 +312,18 @@ async fn unleash_poll_loop(
 
 /// Fetch feature flags from an Unleash-compatible `/api/client/features` endpoint.
 ///
-/// The response format is:
-/// ```json
-/// { "version": 2, "features": [{ "name": "flag.name", "enabled": true, ... }] }
-/// ```
+/// This provider only supports **global kill switches** (enabled/disabled for
+/// everyone). Features that use Unleash activation strategies, constraints, or
+/// variants are skipped with a warning — they require a full Unleash SDK
+/// evaluator which we intentionally do not implement.
 ///
-/// We only extract the top-level `enabled` boolean per feature. Strategy-based
-/// evaluation (gradual rollout, user targeting) is not implemented — flags are
-/// either globally on or off. This matches our current `FlagContext` usage where
-/// all call sites pass `FlagContext::default()`.
+/// A feature is treated as a global boolean if:
+/// - It has no strategies, OR
+/// - It has exactly one strategy named "default" with no constraints
+///
+/// Any other configuration is logged and skipped to prevent silent
+/// mis-evaluation (e.g., enabling a flag for everyone when it was intended
+/// for 10% of tenants).
 async fn fetch_unleash_flags(
     http: &reqwest::Client,
     features_url: &str,
@@ -345,13 +348,34 @@ async fn fetch_unleash_flags(
         .await
         .map_err(|e| anyhow::anyhow!("Unleash response parse failed: {e}"))?;
 
-    let flags: HashMap<String, bool> = payload
-        .features
-        .into_iter()
-        .map(|f| (f.name, f.enabled))
-        .collect();
+    let mut flags = HashMap::new();
+    for feature in payload.features {
+        if is_global_boolean(&feature) {
+            flags.insert(feature.name, feature.enabled);
+        } else {
+            tracing::warn!(
+                flag = feature.name,
+                strategies = feature.strategies.len(),
+                "Unleash: skipping flag with non-default strategies \
+                 (this provider only supports global kill switches)"
+            );
+        }
+    }
 
     Ok(flags)
+}
+
+/// A feature is a safe global boolean if it has no strategies or only
+/// the "default" strategy with no constraints.
+fn is_global_boolean(feature: &UnleashFeature) -> bool {
+    if feature.strategies.is_empty() {
+        return true;
+    }
+    if feature.strategies.len() == 1 {
+        let s = &feature.strategies[0];
+        return s.name == "default" && s.constraints.is_empty();
+    }
+    false
 }
 
 /// Log which flags changed between poll cycles for audit trail.
@@ -385,6 +409,15 @@ struct UnleashFeaturesResponse {
 struct UnleashFeature {
     name: String,
     enabled: bool,
+    #[serde(default)]
+    strategies: Vec<UnleashStrategy>,
+}
+
+#[derive(serde::Deserialize)]
+struct UnleashStrategy {
+    name: String,
+    #[serde(default)]
+    constraints: Vec<serde_json::Value>,
 }
 
 // ─── Factory ─────────────────────────────────────────────────────────────
@@ -542,7 +575,7 @@ mod tests {
             "version": 2,
             "features": [
                 { "name": "billing.outbox.enabled", "enabled": true },
-                { "name": "idempotency.enforced", "enabled": false }
+                { "name": "idempotency.enforced", "enabled": false, "strategies": [{"name": "default"}] }
             ]
         }"#;
 
@@ -550,8 +583,79 @@ mod tests {
         assert_eq!(resp.features.len(), 2);
         assert_eq!(resp.features[0].name, "billing.outbox.enabled");
         assert!(resp.features[0].enabled);
+        assert!(resp.features[0].strategies.is_empty());
         assert_eq!(resp.features[1].name, "idempotency.enforced");
         assert!(!resp.features[1].enabled);
+        assert_eq!(resp.features[1].strategies.len(), 1);
+        assert_eq!(resp.features[1].strategies[0].name, "default");
+    }
+
+    #[test]
+    fn is_global_boolean_accepts_no_strategies() {
+        let feature = UnleashFeature {
+            name: "flag.a".to_string(),
+            enabled: true,
+            strategies: vec![],
+        };
+        assert!(is_global_boolean(&feature));
+    }
+
+    #[test]
+    fn is_global_boolean_accepts_default_strategy_only() {
+        let feature = UnleashFeature {
+            name: "flag.b".to_string(),
+            enabled: true,
+            strategies: vec![UnleashStrategy {
+                name: "default".to_string(),
+                constraints: vec![],
+            }],
+        };
+        assert!(is_global_boolean(&feature));
+    }
+
+    #[test]
+    fn is_global_boolean_rejects_custom_strategies() {
+        let feature = UnleashFeature {
+            name: "flag.c".to_string(),
+            enabled: true,
+            strategies: vec![UnleashStrategy {
+                name: "gradualRollout".to_string(),
+                constraints: vec![],
+            }],
+        };
+        assert!(!is_global_boolean(&feature));
+    }
+
+    #[test]
+    fn is_global_boolean_rejects_default_with_constraints() {
+        let feature = UnleashFeature {
+            name: "flag.d".to_string(),
+            enabled: true,
+            strategies: vec![UnleashStrategy {
+                name: "default".to_string(),
+                constraints: vec![serde_json::json!({"contextName": "tenantId"})],
+            }],
+        };
+        assert!(!is_global_boolean(&feature));
+    }
+
+    #[test]
+    fn is_global_boolean_rejects_multiple_strategies() {
+        let feature = UnleashFeature {
+            name: "flag.e".to_string(),
+            enabled: true,
+            strategies: vec![
+                UnleashStrategy {
+                    name: "default".to_string(),
+                    constraints: vec![],
+                },
+                UnleashStrategy {
+                    name: "userWithId".to_string(),
+                    constraints: vec![],
+                },
+            ],
+        };
+        assert!(!is_global_boolean(&feature));
     }
 
     #[test]
