@@ -17,6 +17,7 @@ import json
 import logging
 import tempfile
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -86,65 +87,92 @@ class StartTrainingActivity:
             else:
                 result = await _run_training(input, self.infra)
 
-            await db.execute(
-                """UPDATE training_jobs
-                SET status = $1,
-                    metrics = $3,
-                    actual_cost = $4,
-                    completed_at = NOW()
-                WHERE id = $2""",
-                TrainingJobStatus.COMPLETED,
-                job_id,
-                json.dumps(result.metrics),
-                result.metrics.get("estimated_cost"),
-            )
-
+            actual_cost = float(result.metrics.get("estimated_cost") or 0.0)
+            gpu_seconds = _extract_training_runtime_seconds(result.metrics)
             model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
-            project_id = await _get_project_id(db, job_id)
 
-            # Auto-increment version for the same base_model within this project
-            max_version = await db.fetchval(
-                """SELECT COALESCE(MAX(version), 0) FROM models
-                WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
-                project_id,
-                input.tenant_id,
-                input.base_model,
-            )
-            next_version = (max_version or 0) + 1
+            async with db.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE training_jobs
+                        SET status = $1,
+                            metrics = $3,
+                            actual_cost = $4,
+                            completed_at = NOW()
+                        WHERE id = $2""",
+                        TrainingJobStatus.COMPLETED,
+                        job_id,
+                        json.dumps(result.metrics),
+                        actual_cost,
+                    )
 
-            await db.execute(
-                """INSERT INTO models
-                (tenant_id, project_id, training_job_id, name, base_model,
-                 adapter_path, adapter_size_bytes, version)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
-                input.tenant_id,
-                project_id,
-                job_id,
-                model_name,
-                input.base_model,
-                result.adapter_path,
-                result.adapter_size_bytes,
-                next_version,
-            )
+                    project_id = await _get_project_id(conn, job_id)
+
+                    # Auto-increment version for the same base_model within this project
+                    max_version = await conn.fetchval(
+                        """SELECT COALESCE(MAX(version), 0) FROM models
+                        WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
+                        project_id,
+                        input.tenant_id,
+                        input.base_model,
+                    )
+                    next_version = (max_version or 0) + 1
+
+                    await conn.execute(
+                        """INSERT INTO models
+                        (tenant_id, project_id, training_job_id, name, base_model,
+                         adapter_path, adapter_size_bytes, version)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                        input.tenant_id,
+                        project_id,
+                        job_id,
+                        model_name,
+                        input.base_model,
+                        result.adapter_path,
+                        result.adapter_size_bytes,
+                        next_version,
+                    )
+
+                    await _append_training_billing_outbox(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        job_id=job_id,
+                        outcome="completed",
+                        gpu_seconds=gpu_seconds,
+                        cost_usd=actual_cost,
+                        metadata={
+                            "status": "completed",
+                            "mode": input.mode,
+                            "method": input.method,
+                            "base_model": input.base_model,
+                            "gpu_class": input.gpu_class,
+                        },
+                    )
 
             logger.info("Training completed for job %s, model: %s", job_id, model_name)
             return result
 
         except Exception as e:
             logger.exception("Training failed for job %s", job_id)
-            await db.execute(
-                """UPDATE training_jobs
-                SET status = $1, error_message = $3, completed_at = NOW()
-                WHERE id = $2""",
-                TrainingJobStatus.FAILED,
-                job_id,
-                str(e)[:2000],
-            )
+            async with db.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE training_jobs
+                        SET status = $1, error_message = $3, completed_at = NOW()
+                        WHERE id = $2""",
+                        TrainingJobStatus.FAILED,
+                        job_id,
+                        str(e)[:2000],
+                    )
 
-            # Void billing for short-lived failures (e.g. OOM at step 2).
-            # If the job ran less than MIN_BILLABLE_SECONDS, insert a negative
-            # billing event to cancel the cost estimate logged at job creation.
-            await _maybe_void_billing(db, job_id, self.infra.settings)
+                    await _finalize_failed_training_billing(
+                        conn,
+                        job_id,
+                        self.infra.settings,
+                        mode=input.mode,
+                        method=input.method,
+                        base_model=input.base_model,
+                    )
 
             raise
 
@@ -417,45 +445,66 @@ class FinalizeIterativeTrainingActivity:
         actual_cost = round(runtime_hours * gpu_rate, 2)
         input.metrics["estimated_cost"] = actual_cost
 
-        await db.execute(
-            """UPDATE training_jobs
-            SET status = $1,
-                metrics = $3,
-                actual_cost = $4,
-                completed_at = NOW()
-            WHERE id = $2""",
-            TrainingJobStatus.COMPLETED,
-            job_id,
-            json.dumps(input.metrics),
-            actual_cost,
-        )
-
         model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
-        project_id = await _get_project_id(db, job_id)
+        gpu_seconds = int(round(total_runtime))
 
-        max_version = await db.fetchval(
-            """SELECT COALESCE(MAX(version), 0) FROM models
-            WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
-            project_id,
-            input.tenant_id,
-            input.base_model,
-        )
-        next_version = (max_version or 0) + 1
+        async with db.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """UPDATE training_jobs
+                    SET status = $1,
+                        metrics = $3,
+                        actual_cost = $4,
+                        completed_at = NOW()
+                    WHERE id = $2""",
+                    TrainingJobStatus.COMPLETED,
+                    job_id,
+                    json.dumps(input.metrics),
+                    actual_cost,
+                )
 
-        await db.execute(
-            """INSERT INTO models
-            (tenant_id, project_id, training_job_id, name, base_model,
-             adapter_path, adapter_size_bytes, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
-            input.tenant_id,
-            project_id,
-            job_id,
-            model_name,
-            input.base_model,
-            input.adapter_path,
-            input.adapter_size_bytes,
-            next_version,
-        )
+                project_id = await _get_project_id(conn, job_id)
+
+                max_version = await conn.fetchval(
+                    """SELECT COALESCE(MAX(version), 0) FROM models
+                    WHERE project_id = $1 AND tenant_id = $2 AND base_model = $3""",
+                    project_id,
+                    input.tenant_id,
+                    input.base_model,
+                )
+                next_version = (max_version or 0) + 1
+
+                await conn.execute(
+                    """INSERT INTO models
+                    (tenant_id, project_id, training_job_id, name, base_model,
+                     adapter_path, adapter_size_bytes, version)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                    input.tenant_id,
+                    project_id,
+                    job_id,
+                    model_name,
+                    input.base_model,
+                    input.adapter_path,
+                    input.adapter_size_bytes,
+                    next_version,
+                )
+
+                await _append_training_billing_outbox(
+                    conn,
+                    tenant_id=input.tenant_id,
+                    job_id=job_id,
+                    outcome="completed",
+                    gpu_seconds=gpu_seconds,
+                    cost_usd=actual_cost,
+                    metadata={
+                        "status": "completed",
+                        "mode": input.mode,
+                        "method": "qlora",
+                        "base_model": input.base_model,
+                        "gpu_class": input.gpu_class,
+                        "iterative": True,
+                    },
+                )
 
         logger.info(
             "Iterative training finalized for job %s, model: %s (cost: $%.2f)",
@@ -1152,61 +1201,110 @@ async def _get_project_id(db, job_id: str) -> str:
     return str(row["project_id"])
 
 
-async def _maybe_void_billing(db, job_id: str, settings) -> None:
-    """Set actual_cost on a failed training job based on elapsed GPU time.
+def _extract_training_runtime_seconds(metrics: dict) -> int:
+    total_runtime = sum(
+        v for k, v in metrics.items() if k.endswith("train_runtime") and isinstance(v, (int, float))
+    )
+    return int(round(total_runtime))
 
-    - If elapsed < MIN_BILLABLE_SECONDS: set actual_cost = 0 (voided — too short to bill)
-    - If elapsed >= MIN_BILLABLE_SECONDS: compute actual_cost from elapsed hours x GPU rate
-      (so users are billed fairly for GPU time consumed, even on failure)
 
-    Training billing lives on training_jobs.actual_cost, NOT billing_events.
+def _training_billing_event_id(job_id: str, outcome: str) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"training-billing:{job_id}:{outcome}")
+
+
+async def _append_training_billing_outbox(
+    conn,
+    *,
+    tenant_id: str,
+    job_id: str,
+    outcome: str,
+    gpu_seconds: int,
+    cost_usd: float,
+    metadata: dict,
+) -> None:
+    await conn.execute(
+        """INSERT INTO billing_outbox
+        (id, tenant_id, operation, resource_id, tokens_in, tokens_out,
+         gpu_seconds, cost_usd, metadata)
+        VALUES ($1, $2, 'training', $3, 0, 0, $4, $5, $6::jsonb)
+        ON CONFLICT (id) DO NOTHING""",
+        _training_billing_event_id(job_id, outcome),
+        tenant_id,
+        uuid.UUID(job_id),
+        gpu_seconds,
+        cost_usd,
+        json.dumps(metadata),
+    )
+
+
+async def _finalize_failed_training_billing(
+    conn,
+    job_id: str,
+    settings,
+    *,
+    mode: str,
+    method: str,
+    base_model: str,
+) -> None:
+    """Persist failed-job actual_cost and append the corresponding outbox row.
+
+    This runs inside the same DB transaction as the FAILED status update so the
+    job terminal state and billing ledger entry remain consistent.
     """
-    try:
-        row = await db.fetchrow(
-            "SELECT started_at, completed_at, gpu_class FROM training_jobs WHERE id = $1",
+    row = await conn.fetchrow(
+        "SELECT tenant_id, started_at, completed_at, gpu_class FROM training_jobs WHERE id = $1",
+        job_id,
+    )
+    if row is None or row["started_at"] is None or row["completed_at"] is None:
+        return
+
+    elapsed = (row["completed_at"] - row["started_at"]).total_seconds()
+    gpu_seconds = int(round(elapsed))
+    min_billable = getattr(settings, "min_billable_seconds", 300)
+    gpu_class = (row["gpu_class"] or "").lower()
+    rate = GPU_HOURLY_RATES.get(gpu_class, GPU_DEFAULT_HOURLY_RATE)
+
+    if elapsed < min_billable:
+        actual_cost = 0.0
+        logger.info(
+            "Voided billing for job %s (ran %.1fs < %ds threshold)",
             job_id,
+            elapsed,
+            min_billable,
         )
-        if row is None or row["started_at"] is None or row["completed_at"] is None:
-            return
+    else:
+        elapsed_hours = elapsed / 3600.0
+        actual_cost = round(elapsed_hours * rate, 2)
+        logger.info(
+            "Billed failed job %s for actual GPU time: %.1fs = $%.2f (%s @ $%.2f/hr)",
+            job_id,
+            elapsed,
+            actual_cost,
+            gpu_class or "default",
+            rate,
+        )
 
-        elapsed = (row["completed_at"] - row["started_at"]).total_seconds()
-        min_billable = getattr(settings, "min_billable_seconds", 300)
-
-        if elapsed < min_billable:
-            # Too short — void entirely
-            await db.execute(
-                "UPDATE training_jobs SET actual_cost = 0 WHERE id = $1",
-                job_id,
-            )
-            logger.info(
-                "Voided billing for job %s (ran %.1fs < %ds threshold)",
-                job_id,
-                elapsed,
-                min_billable,
-            )
-        else:
-            # Ran long enough — bill for actual GPU time consumed
-            gpu_class = (row["gpu_class"] or "").lower()
-            rate = GPU_HOURLY_RATES.get(gpu_class, GPU_DEFAULT_HOURLY_RATE)
-            elapsed_hours = elapsed / 3600.0
-            actual_cost = round(elapsed_hours * rate, 2)
-
-            await db.execute(
-                "UPDATE training_jobs SET actual_cost = $2 WHERE id = $1",
-                job_id,
-                actual_cost,
-            )
-            logger.info(
-                "Billed failed job %s for actual GPU time: %.1fs = $%.2f (%s @ $%.2f/hr)",
-                job_id,
-                elapsed,
-                actual_cost,
-                gpu_class or "default",
-                rate,
-            )
-    except Exception as e:
-        # Billing is best-effort — never block the failure path
-        logger.warning("Failed to update billing for job %s: %s", job_id, e)
+    await conn.execute(
+        "UPDATE training_jobs SET actual_cost = $2 WHERE id = $1",
+        job_id,
+        actual_cost,
+    )
+    await _append_training_billing_outbox(
+        conn,
+        tenant_id=str(row["tenant_id"]),
+        job_id=job_id,
+        outcome="failed",
+        gpu_seconds=gpu_seconds,
+        cost_usd=actual_cost,
+        metadata={
+            "status": "failed",
+            "mode": mode,
+            "method": method,
+            "base_model": base_model,
+            "gpu_class": gpu_class or None,
+            "min_billable_seconds": min_billable,
+        },
+    )
 
 
 def _is_bf16_supported() -> bool:

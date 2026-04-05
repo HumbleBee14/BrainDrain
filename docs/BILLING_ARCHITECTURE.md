@@ -128,8 +128,8 @@ record_billing_event()
 | Batch inference | `routes/inference.rs` | Yes | Durable via `record_billing_event` |
 | Model deployment | `services/deployment_service.rs` | Yes | Durable; deployment state + outbox row commit together |
 | Streaming inference | `routes/inference.rs` | Yes | Durable pending outbox row before SSE starts; finalized on completion or stale-reaped conservatively |
-| Training completion | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
-| Training failure | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
+| Training completion | `workers/train_model.py` | Yes | Durable via direct worker-side outbox insert in the same DB transaction as job completion |
+| Training failure | `workers/train_model.py` | Yes | Durable via direct worker-side outbox insert in the same DB transaction as FAILED status + actual_cost |
 
 ---
 
@@ -266,9 +266,10 @@ GPU_HOURLY_RATES = {
 training_cost = gpu_seconds × (hourly_rate / 3600)
 ```
 
-The Python worker calculates actual cost on training completion and writes it
-via the platform API callback. Failed training jobs that ran for significant
-time (> minimum billable threshold) are still billed at the elapsed GPU rate.
+The Python worker calculates actual cost on training completion/failure and
+writes a `training` event into `billing_outbox` in the same database transaction
+as the `training_jobs.actual_cost` update. Failed training jobs that ran for
+significant time (> minimum billable threshold) are still billed at the elapsed GPU rate.
 
 ### Deployment pricing
 
