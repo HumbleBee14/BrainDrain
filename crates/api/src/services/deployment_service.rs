@@ -1,10 +1,13 @@
+use platform_db::models::Model;
 use platform_shared::enums::DeploymentStatus;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::ModelRepository;
+use crate::services::billing_outbox;
 use crate::services::inference_backend::InferenceBackend;
 
 /// Business logic for model deployment via pluggable inference backends.
@@ -16,6 +19,7 @@ pub struct DeploymentService;
 impl DeploymentService {
     /// Deploy a fine-tuned model by loading its LoRA adapter into the inference backend.
     pub async fn deploy(
+        db: &PgPool,
         model_repo: &dyn ModelRepository,
         backend: &dyn InferenceBackend,
         config: &Config,
@@ -75,18 +79,50 @@ impl DeploymentService {
                     "backend": backend.name(),
                     "backend_meta": handle.metadata,
                 });
+                let mut tx = db.begin().await?;
 
-                let updated = model_repo
-                    .update_deployment(
-                        tenant_id,
-                        model_id,
-                        DeploymentStatus::Active,
-                        deployment_config,
-                    )
-                    .await?
-                    .ok_or(AppError::NotFound {
-                        message: "Model not found after deploy".to_string(),
-                    })?;
+                let updated = sqlx::query_as::<_, Model>(
+                    r#"
+                    UPDATE models
+                    SET deployment_status = $3, deployment_config = $4, updated_at = NOW()
+                    WHERE id = $1 AND tenant_id = $2
+                    RETURNING *
+                    "#,
+                )
+                .bind(model_id)
+                .bind(tenant_id)
+                .bind(DeploymentStatus::Active.to_string())
+                .bind(&deployment_config)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(AppError::NotFound {
+                    message: "Model not found after deploy".to_string(),
+                })?;
+
+                billing_outbox::enqueue_in_tx(
+                    &mut tx,
+                    tenant_id,
+                    "deploy",
+                    Some(model_id),
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    serde_json::json!({
+                        "action": "deploy",
+                        "adapter_ref": handle.adapter_ref,
+                        "backend": backend.name(),
+                    }),
+                )
+                .await?;
+
+                if let Err(e) = tx.commit().await {
+                    let _ = backend.unload_adapter(&handle.adapter_ref).await;
+                    let _ = model_repo
+                        .update_deployment_status(tenant_id, model_id, DeploymentStatus::Undeployed)
+                        .await;
+                    return Err(e.into());
+                }
 
                 tracing::info!(
                     model_id = %model_id,

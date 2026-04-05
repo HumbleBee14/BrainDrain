@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::auth::{AuthProviderChain, ClerkAuthProvider, InternalTokenAuthProvider};
 use crate::config::Config;
+use crate::error::AppResult;
 use crate::repositories::api_key_repo::PgApiKeyRepo;
 use crate::repositories::audit_log_repo::PgAuditLogRepo;
 use crate::repositories::billing_event_repo::PgBillingEventRepo;
@@ -236,6 +237,11 @@ impl AppState {
             false,
             &crate::services::feature_flags::FlagContext::default(),
         );
+        if config.environment == "production" && !outbox_enabled {
+            return Err(anyhow::anyhow!(
+                "billing.outbox.enabled must be true in production"
+            ));
+        }
         let billing_outbox_relay = if outbox_enabled {
             tracing::info!("Billing outbox relay enabled (durable billing path)");
             Some(Arc::new(BillingOutboxRelay::new(
@@ -432,14 +438,10 @@ impl AppState {
     }
 
     /// Record a billing event through the durable outbox (if enabled) or
-    /// the in-memory batcher (fallback). Single entry point for all billing writes.
-    ///
-    /// When the outbox is enabled, the INSERT is awaited — the event is on disk
-    /// before this method returns. Errors are logged but not propagated, because
-    /// billing failures should not block user-facing requests (best-effort at the
-    /// handler level, durable at the storage level).
+    /// the in-memory batcher (fallback). This is the required path for
+    /// financially authoritative writes.
     #[allow(clippy::too_many_arguments)]
-    pub async fn record_billing_event(
+    pub async fn record_billing_event_required(
         &self,
         tenant_id: uuid::Uuid,
         operation: &str,
@@ -449,10 +451,9 @@ impl AppState {
         gpu_seconds: i32,
         cost_usd: f64,
         metadata: serde_json::Value,
-    ) {
+    ) -> AppResult<()> {
         if self.inner.billing_outbox_relay.is_some() {
-            // Durable path: await the INSERT so the event is committed before returning
-            if let Err(e) = crate::services::billing_outbox::enqueue(
+            crate::services::billing_outbox::enqueue(
                 &self.inner.db,
                 tenant_id,
                 operation,
@@ -463,12 +464,8 @@ impl AppState {
                 cost_usd,
                 metadata,
             )
-            .await
-            {
-                tracing::error!(error = %e, "Failed to enqueue billing event to outbox");
-            }
+            .await?;
         } else {
-            // In-memory path: send to batcher channel (non-blocking)
             self.inner
                 .billing_batcher
                 .send(crate::services::billing_batcher::BillingEvent {
@@ -481,6 +478,37 @@ impl AppState {
                     cost_usd,
                     metadata,
                 });
+        }
+        Ok(())
+    }
+
+    /// Best-effort billing write for paths that intentionally do not fail the request.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_billing_event_best_effort(
+        &self,
+        tenant_id: uuid::Uuid,
+        operation: &str,
+        resource_id: Option<uuid::Uuid>,
+        tokens_in: i64,
+        tokens_out: i64,
+        gpu_seconds: i32,
+        cost_usd: f64,
+        metadata: serde_json::Value,
+    ) {
+        if let Err(e) = self
+            .record_billing_event_required(
+                tenant_id,
+                operation,
+                resource_id,
+                tokens_in,
+                tokens_out,
+                gpu_seconds,
+                cost_usd,
+                metadata,
+            )
+            .await
+        {
+            tracing::error!(error = %e, "Failed to record billing event");
         }
     }
 }

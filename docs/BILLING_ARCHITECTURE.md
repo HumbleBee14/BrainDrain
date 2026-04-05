@@ -15,7 +15,7 @@ The platform bills tenants for three types of resource usage:
 | **Training** | GPU time during fine-tuning | GPU-seconds, GPU hourly rate, actual cost |
 | **Deployment** | Loading a LoRA adapter | Event logged (zero-cost event for audit trail) |
 
-All billing flows through a single pipeline:
+All API-side billing flows that use the Rust outbox path follow this pipeline:
 
 ```
 Usage event → Outbox (durable) → Relay → Billing ledger → Dashboards / Invoices
@@ -111,7 +111,7 @@ state.record_billing_event(
 );
 ```
 
-This is the **single entry point** for all billing writes. It routes to one of
+This is the **single entry point** for API-side billing writes. It routes to one of
 two backends based on the `billing.outbox.enabled` feature flag:
 
 ```
@@ -126,8 +126,8 @@ record_billing_event()
 |---|---|---|---|
 | Single inference | `routes/inference.rs` | Yes | Durable via `record_billing_event` |
 | Batch inference | `routes/inference.rs` | Yes | Durable via `record_billing_event` |
-| Model deployment | `routes/deployments.rs` | Yes | Durable via `record_billing_event` |
-| Streaming inference | `routes/inference.rs` | Best-effort | Token count only known after stream; fire-and-forget `tokio::spawn` |
+| Model deployment | `services/deployment_service.rs` | Yes | Durable; deployment state + outbox row commit together |
+| Streaming inference | `routes/inference.rs` | Yes | Durable pending outbox row before SSE starts; finalized on completion or stale-reaped conservatively |
 | Training completion | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
 | Training failure | `workers/train_model.py` | Not yet | Python worker writes via platform API callback (separate PR) |
 
@@ -204,7 +204,7 @@ This is the core property that makes the outbox pattern valuable:
 8. UPDATE billing_outbox SET delivered_at = NOW()
 ```
 
-**If the process crashes at any point:**
+**For API-side outbox-backed billing events, if the process crashes at any point:**
 
 | Crash point | What happens | Event lost? |
 |---|---|---|
@@ -213,7 +213,7 @@ This is the core property that makes the outbox pattern valuable:
 | After step 4, before step 7 | Row is in outbox, user got success | No — relay delivers it |
 | After step 7, before step 8 | Delivered but not marked | No — relay re-delivers (idempotent) |
 
-**The only way to lose a billing event is if PostgreSQL itself loses committed data**
+**For API-side outbox-backed billing events, the only way to lose a committed event is if PostgreSQL itself loses committed data**
 — which is what PITR/WAL archiving protects against (see `docs/PRODUCTION_SCALE.md`).
 
 ### Comparison: in-memory batcher vs outbox

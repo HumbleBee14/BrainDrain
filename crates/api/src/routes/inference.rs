@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::app_state::AppState;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::error::{AppError, AppResult};
+use crate::services::billing_outbox;
 use crate::services::token_estimator;
 
 /// Maximum number of items in a single batch request.
@@ -233,14 +234,32 @@ pub async fn chat_completions(
             body.messages.iter().map(|m| m.content.as_str()),
         );
 
-        // Spawn billing task that waits for usage from the stream.
-        // NOTE: This is inherently fire-and-forget — the token count is only
-        // known after streaming completes. If the process crashes during
-        // streaming, this billing event is lost. This is an accepted tradeoff:
-        // the alternative (pre-billing max_tokens then crediting back) adds
-        // significant complexity. For streaming, billing is best-effort.
-        // Non-streaming and batch inference bill durably via the outbox.
+        let stream_metadata = serde_json::json!({
+            "api_key_id": key_id.to_string(),
+            "stream": true,
+        });
+        let pending_billing_row = if state.billing_outbox_relay_handle().is_some() {
+            Some(
+                billing_outbox::enqueue_stream_pending(
+                    state.db(),
+                    tenant_id,
+                    Some(model_id),
+                    estimated_prompt_tokens,
+                    max_tokens,
+                    token_estimator::estimate_inference_cost(estimated_prompt_tokens, max_tokens),
+                    stream_metadata.clone(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        // Spawn a finalizer for the pending streaming outbox row. If the process
+        // dies mid-stream, the row remains pending and the relay's stale-pending
+        // reaper finalizes the conservative fallback charge durably.
         let batcher_state = state.clone();
+        let db = state.db().clone();
         let capped_max_tokens = max_tokens;
         tokio::spawn(async move {
             let (tokens_in, tokens_out) = match usage_rx.recv().await {
@@ -255,18 +274,34 @@ pub async fn chat_completions(
                 }
             };
 
-            batcher_state
-                .record_billing_event(
-                    tenant_id,
-                    "inference",
-                    Some(model_id),
+            let cost = token_estimator::estimate_inference_cost(tokens_in, tokens_out);
+            if let Some(row_id) = pending_billing_row {
+                if let Err(e) = billing_outbox::finalize_stream_pending(
+                    &db,
+                    row_id,
                     tokens_in,
                     tokens_out,
-                    0,
-                    token_estimator::estimate_inference_cost(tokens_in, tokens_out),
-                    serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
+                    cost,
+                    stream_metadata,
                 )
-                .await;
+                .await
+                {
+                    tracing::error!(error = %e, row_id = %row_id, "Failed to finalize stream billing row");
+                }
+            } else {
+                batcher_state
+                    .record_billing_event_best_effort(
+                        tenant_id,
+                        "inference",
+                        Some(model_id),
+                        tokens_in,
+                        tokens_out,
+                        0,
+                        cost,
+                        serde_json::json!({"api_key_id": key_id.to_string(), "stream": true}),
+                    )
+                    .await;
+            }
         });
 
         let body = Body::from_stream(forwarded_stream);
@@ -291,7 +326,7 @@ pub async fn chat_completions(
 
         if tokens_in > 0 || tokens_out > 0 {
             state
-                .record_billing_event(
+                .record_billing_event_required(
                     api_key.tenant_id,
                     "inference",
                     Some(api_key.model_id),
@@ -301,7 +336,7 @@ pub async fn chat_completions(
                     token_estimator::estimate_inference_cost(tokens_in, tokens_out),
                     serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
                 )
-                .await;
+                .await?;
         }
 
         Ok(Json(response).into_response())
@@ -528,7 +563,7 @@ pub async fn batch_chat_completions(
     // Bill aggregated tokens
     if total_prompt > 0 || total_completion > 0 {
         state
-            .record_billing_event(
+            .record_billing_event_required(
                 api_key.tenant_id,
                 "inference",
                 Some(api_key.model_id),
@@ -542,7 +577,7 @@ pub async fn batch_chat_completions(
                     "batch_size": results.len(),
                 }),
             )
-            .await;
+            .await?;
     }
 
     Ok(Json(BatchChatCompletionResponse {

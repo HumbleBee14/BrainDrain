@@ -52,6 +52,119 @@ pub async fn enqueue(
     Ok(())
 }
 
+/// Enqueue a pending streaming inference row before the SSE response starts.
+///
+/// The row is inserted durably with a conservative fallback charge so a crash
+/// during streaming can still be finalized by the stale-pending reaper.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_stream_pending(
+    db: &PgPool,
+    tenant_id: Uuid,
+    resource_id: Option<Uuid>,
+    fallback_tokens_in: i64,
+    fallback_tokens_out: i64,
+    fallback_cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<Uuid, sqlx::Error> {
+    let row_id = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO billing_outbox \
+         (id, tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, 'inference', $3, $4, $5, 0, $6, $7)",
+    )
+    .bind(row_id)
+    .bind(tenant_id)
+    .bind(resource_id)
+    .bind(fallback_tokens_in)
+    .bind(fallback_tokens_out)
+    .bind(fallback_cost_usd)
+    .bind(metadata_with_stream_state(metadata, true, false))
+    .execute(db)
+    .await?;
+
+    Ok(row_id)
+}
+
+/// Finalize a pending streaming row with actual token usage.
+#[allow(clippy::too_many_arguments)]
+pub async fn finalize_stream_pending(
+    db: &PgPool,
+    row_id: Uuid,
+    tokens_in: i64,
+    tokens_out: i64,
+    cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE billing_outbox \
+         SET tokens_in = $2, tokens_out = $3, cost_usd = $4, metadata = $5 \
+         WHERE id = $1 \
+           AND delivered_at IS NULL \
+           AND COALESCE((metadata->>'stream_pending')::boolean, false) = true",
+    )
+    .bind(row_id)
+    .bind(tokens_in)
+    .bind(tokens_out)
+    .bind(cost_usd)
+    .bind(metadata_with_stream_state(metadata, false, false))
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+/// Enqueue into billing_outbox within an existing transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: Uuid,
+    operation: &str,
+    resource_id: Option<Uuid>,
+    tokens_in: i64,
+    tokens_out: i64,
+    gpu_seconds: i32,
+    cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO billing_outbox \
+         (tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(tenant_id)
+    .bind(operation)
+    .bind(resource_id)
+    .bind(tokens_in)
+    .bind(tokens_out)
+    .bind(gpu_seconds)
+    .bind(cost_usd)
+    .bind(metadata)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn metadata_with_stream_state(
+    metadata: serde_json::Value,
+    stream_pending: bool,
+    stream_reaped: bool,
+) -> serde_json::Value {
+    let mut metadata = match metadata {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    metadata.insert(
+        "stream_pending".to_string(),
+        serde_json::Value::Bool(stream_pending),
+    );
+    metadata.insert(
+        "stream_reaped".to_string(),
+        serde_json::Value::Bool(stream_reaped),
+    );
+    serde_json::Value::Object(metadata)
+}
+
 pub struct BillingOutboxRelay {
     shutdown: Mutex<Option<ShutdownHandle>>,
 }
@@ -64,6 +177,7 @@ struct ShutdownHandle {
 const MAX_ATTEMPTS: i32 = 5;
 const RELAY_BATCH_SIZE: i64 = 500;
 const RELAY_LOCK_ID: i64 = 900_200_001;
+const STREAM_PENDING_STALE_SECS: i64 = 300;
 
 enum BatchResult {
     Processed(usize),
@@ -171,11 +285,15 @@ async fn do_relay_work(
 ) -> Result<BatchResult, sqlx::Error> {
     let mut tx = conn.begin().await?;
 
+    reap_stale_pending_streams(&mut tx).await?;
+
     let rows = sqlx::query_as::<_, OutboxRow>(
         "SELECT id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
                 gpu_seconds, cost_usd, metadata, created_at \
          FROM billing_outbox \
-         WHERE delivered_at IS NULL AND attempt_count < $1 \
+         WHERE delivered_at IS NULL \
+           AND attempt_count < $1 \
+           AND COALESCE((metadata->>'stream_pending')::boolean, false) = false \
          ORDER BY created_at \
          LIMIT $2 \
          FOR UPDATE SKIP LOCKED",
@@ -249,6 +367,25 @@ async fn do_relay_work(
     }
 
     Ok(BatchResult::Processed(count))
+}
+
+async fn reap_stale_pending_streams(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE billing_outbox \
+         SET metadata = jsonb_set(
+                 jsonb_set(metadata, '{stream_pending}', 'false'::jsonb, true),
+                 '{stream_reaped}', 'true'::jsonb, true
+             ) \
+         WHERE delivered_at IS NULL \
+           AND COALESCE((metadata->>'stream_pending')::boolean, false) = true \
+           AND created_at < NOW() - make_interval(secs => $1)",
+    )
+    .bind(STREAM_PENDING_STALE_SECS as f64)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// Idempotent delivery: uses outbox `(id, created_at)` as billing_events composite PK.

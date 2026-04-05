@@ -307,14 +307,6 @@ pub trait ModelRepository: Send + Sync {
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<Option<Model>>>;
 
-    fn update_deployment(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-        status: DeploymentStatus,
-        config: serde_json::Value,
-    ) -> BoxFuture<'_, AppResult<Option<Model>>>;
-
     #[allow(dead_code)]
     fn update_eval_scores(
         &self,

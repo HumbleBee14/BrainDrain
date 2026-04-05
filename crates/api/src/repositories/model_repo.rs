@@ -210,33 +210,6 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
-    fn update_deployment(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-        status: DeploymentStatus,
-        config: serde_json::Value,
-    ) -> BoxFuture<'_, AppResult<Option<Model>>> {
-        Box::pin(async move {
-            let model = sqlx::query_as::<_, Model>(
-                r#"
-                UPDATE models
-                SET deployment_status = $3, deployment_config = $4, updated_at = NOW()
-                WHERE id = $1 AND tenant_id = $2
-                RETURNING *
-                "#,
-            )
-            .bind(model_id)
-            .bind(tenant_id)
-            .bind(status.to_string())
-            .bind(config)
-            .fetch_optional(&self.db)
-            .await?;
-
-            Ok(model)
-        })
-    }
-
     fn update_eval_scores(
         &self,
         tenant_id: Uuid,
