@@ -77,8 +77,7 @@ echo ""
 # ── Confirm ──
 
 echo "WARNING: This will REPLACE the current database cluster at ${PGDATA}."
-BACKUP_DIR="${PGDATA}.old.$(date +%Y%m%d%H%M%S)"
-echo "The existing data directory will be moved to ${BACKUP_DIR}"
+echo "The existing data directory will be moved to ${PGDATA}.old.<timestamp>"
 read -p "Type 'yes' to continue: " CONFIRM
 if [ "$CONFIRM" != "yes" ]; then
     echo "Aborted."
@@ -86,7 +85,9 @@ if [ "$CONFIRM" != "yes" ]; then
 fi
 
 # ── Move existing data directory ──
+# Compute timestamp right before the move so it matches the actual operation.
 
+BACKUP_DIR="${PGDATA}.old.$(date +%Y%m%d%H%M%S)"
 echo "Moving existing PGDATA to ${BACKUP_DIR}..."
 mv "$PGDATA" "$BACKUP_DIR"
 

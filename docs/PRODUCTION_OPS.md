@@ -241,7 +241,7 @@ docker compose -f docker-compose.prod.yml up -d --no-deps workers
 | `PGBOUNCER_MAX_CLIENT_CONN` | 200 | Total client connections |
 | `PGBOUNCER_MIN_POOL_SIZE` | 5 | Warm connections |
 | `PGBOUNCER_RESERVE_POOL_SIZE` | 5 | Burst connections |
-| `PGBOUNCER_ADMIN_PASSWORD` | pgbouncer_admin | Admin console password |
+| `PGBOUNCER_ADMIN_PASSWORD` | (required) | Admin console password |
 
 ### PITR
 

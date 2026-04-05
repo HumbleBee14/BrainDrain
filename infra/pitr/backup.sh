@@ -31,20 +31,12 @@ echo "=== Platform Backup $(date -Iseconds) ==="
 # ── Verify archiver health ──
 
 echo "Checking WAL archiver status..."
-ARCHIVER_STATUS=$(psql -U platform -d platform -tAc "
-    SELECT json_build_object(
-        'archived_count', archived_count,
-        'failed_count', failed_count,
-        'last_archived_wal', last_archived_wal,
-        'last_archived_time', last_archived_time,
-        'last_failed_wal', last_failed_wal,
-        'last_failed_time', last_failed_time
-    ) FROM pg_stat_archiver;
-")
-echo "  Archiver: ${ARCHIVER_STATUS}"
-
-# Check for recent failures
-FAILED_COUNT=$(echo "$ARCHIVER_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['failed_count'])" 2>/dev/null || echo "0")
+ARCHIVED_COUNT=$(psql -U platform -d platform -tAc "SELECT archived_count FROM pg_stat_archiver" 2>/dev/null || echo "0")
+FAILED_COUNT=$(psql -U platform -d platform -tAc "SELECT failed_count FROM pg_stat_archiver" 2>/dev/null || echo "0")
+LAST_ARCHIVED=$(psql -U platform -d platform -tAc "SELECT last_archived_wal FROM pg_stat_archiver" 2>/dev/null || echo "none")
+LAST_ARCHIVED_TIME=$(psql -U platform -d platform -tAc "SELECT last_archived_time FROM pg_stat_archiver" 2>/dev/null || echo "never")
+echo "  Archived: ${ARCHIVED_COUNT} WALs, last: ${LAST_ARCHIVED} at ${LAST_ARCHIVED_TIME}"
+echo "  Failed:   ${FAILED_COUNT}"
 if [ "$FAILED_COUNT" -gt 0 ]; then
     echo "WARNING: pg_stat_archiver shows ${FAILED_COUNT} failed WAL archives."
     echo "Check last_failed_wal and archive_command logs."
