@@ -69,12 +69,22 @@ chmod 700 "$WAL_G_DIR"
 chmod 600 "$WAL_G_DIR"/*
 echo "Wrote wal-g envdir config to ${WAL_G_DIR}"
 
+# ── Install wal-g wrapper into PATH ──
+# The wrapper loads envdir-layout config and exec's wal-g.
+# It must be in a standard PATH location so archive_command and
+# restore_command can find it inside the postgres container.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cp "$SCRIPT_DIR/wal-g-wrapper.sh" /usr/local/bin/wal-g-wrapper
+chmod 755 /usr/local/bin/wal-g-wrapper
+echo "Installed wal-g-wrapper to /usr/local/bin/"
+
 # ── Set PostgreSQL parameters ──
 
 psql -U platform -d platform -c "
     ALTER SYSTEM SET wal_level = 'replica';
     ALTER SYSTEM SET archive_mode = 'on';
-    ALTER SYSTEM SET archive_command = '/opt/platform/infra/pitr/wal-g-wrapper.sh wal-push %p';
+    ALTER SYSTEM SET archive_command = '/usr/local/bin/wal-g-wrapper wal-push %p';
     ALTER SYSTEM SET archive_timeout = '60';
 "
 echo "PostgreSQL archive settings applied."

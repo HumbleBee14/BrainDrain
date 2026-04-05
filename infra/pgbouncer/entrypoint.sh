@@ -23,6 +23,11 @@ echo "\"${DB_USER}\" \"${DB_PASSWORD}\"" > /etc/pgbouncer/userlist.txt
 echo "\"pgbouncer_admin\" \"${PGBOUNCER_ADMIN_PASSWORD}\"" >> /etc/pgbouncer/userlist.txt
 chmod 600 /etc/pgbouncer/userlist.txt
 
+# Write .pgpass for healthcheck (psql reads this automatically).
+# This avoids exposing DB_PASSWORD in the healthcheck command line.
+echo "127.0.0.1:6432:${DB_NAME}:${DB_USER}:${DB_PASSWORD}" > /root/.pgpass
+chmod 600 /root/.pgpass
+
 # Expand environment variables in the config template.
 envsubst < /etc/pgbouncer/pgbouncer.ini > /tmp/pgbouncer.ini
 
