@@ -433,15 +433,21 @@ async fn mark_failed(db: &PgPool, principal_id: &str, key: &str, method: &str, r
 }
 
 /// Cleanup expired + stale idempotency keys. Advisory-locked for multi-instance safety.
+///
+/// Uses `pg_try_advisory_xact_lock` (transaction-scoped) for PgBouncer
+/// transaction mode compatibility. Lock auto-releases on commit.
 pub async fn cleanup_expired_keys(db: &PgPool) -> Result<u64, sqlx::Error> {
     const CLEANUP_LOCK_ID: i64 = 900_100_001;
 
-    let locked: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
+    let mut tx = db.begin().await?;
+
+    let locked: (bool,) = sqlx::query_as("SELECT pg_try_advisory_xact_lock($1)")
         .bind(CLEANUP_LOCK_ID)
-        .fetch_one(db)
+        .fetch_one(&mut *tx)
         .await?;
 
     if !locked.0 {
+        tx.rollback().await?;
         return Ok(0);
     }
 
@@ -450,15 +456,13 @@ pub async fn cleanup_expired_keys(db: &PgPool) -> Result<u64, sqlx::Error> {
          WHERE expires_at < NOW() \
             OR (status = 'processing' AND created_at < NOW() - INTERVAL '5 minutes')",
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await;
 
-    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(CLEANUP_LOCK_ID)
-        .execute(db)
-        .await;
+    let rows = result?.rows_affected();
+    tx.commit().await?;
 
-    Ok(result?.rows_affected())
+    Ok(rows)
 }
 
 #[derive(sqlx::FromRow)]

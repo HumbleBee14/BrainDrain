@@ -160,8 +160,8 @@ The production compose enforces this dependency chain:
 
 ```
 postgres (healthy) ──→ pgbouncer (healthy) ──→ api (healthy) ──→ web
-                   └─→ migrate (completed) ──┘
-                   └─→ temporal (healthy) ──→ workers
+                   └─→ migrate (completed) ──┤
+                   └─→ temporal (healthy) ────┴─→ workers
 ```
 
 1. **Infrastructure starts first:** Postgres, Redis, MinIO, Temporal
@@ -169,7 +169,7 @@ postgres (healthy) ──→ pgbouncer (healthy) ──→ api (healthy) ──�
 3. **Migrate** runs directly against Postgres (not PgBouncer), then exits
 4. **API** starts only after migrate completes successfully
 5. **Web** starts after API is healthy
-6. **Workers** start after PgBouncer, Redis, and Temporal are healthy
+6. **Workers** start after migrate completes, PgBouncer, Redis, and Temporal are healthy
 
 ### Migration safety
 
