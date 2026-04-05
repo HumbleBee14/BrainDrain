@@ -50,8 +50,8 @@ pub async fn deploy_model(
 ) -> AppResult<Json<ModelResponse>> {
     require_role(&user, TeamRole::Member)?;
     let result = DeploymentService::deploy(
+        state.db(),
         state.model_repo(),
-        state.billing_event_repo(),
         state.inference_backend(),
         state.config(),
         user.tenant_id,

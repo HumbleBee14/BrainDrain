@@ -129,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Grab background worker handles before moving state into the router
     let billing_batcher = state.billing_batcher_handle();
+    let billing_outbox_relay = state.billing_outbox_relay_handle();
     let delivery_worker = state.delivery_worker_handle();
 
     // Build router (layers applied outside-in: last .layer() is outermost)
@@ -180,7 +181,15 @@ async fn main() -> anyhow::Result<()> {
     // Shut down background workers after server stops accepting requests
     tracing::info!("Shutting down background workers...");
     let _ = idempotency_shutdown_tx.send(());
-    tokio::join!(billing_batcher.shutdown(), delivery_worker.shutdown());
+    if let Some(relay) = billing_outbox_relay {
+        tokio::join!(
+            billing_batcher.shutdown(),
+            relay.shutdown(),
+            delivery_worker.shutdown()
+        );
+    } else {
+        tokio::join!(billing_batcher.shutdown(), delivery_worker.shutdown());
+    }
 
     tracing::info!("Server shutdown complete");
     Ok(())

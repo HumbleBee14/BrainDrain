@@ -307,14 +307,6 @@ pub trait ModelRepository: Send + Sync {
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<Option<Model>>>;
 
-    fn update_deployment(
-        &self,
-        tenant_id: Uuid,
-        model_id: Uuid,
-        status: DeploymentStatus,
-        config: serde_json::Value,
-    ) -> BoxFuture<'_, AppResult<Option<Model>>>;
-
     #[allow(dead_code)]
     fn update_eval_scores(
         &self,
@@ -431,7 +423,7 @@ pub trait ApiKeyRepository: Send + Sync {
 }
 
 /// Contract for billing event database operations.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub trait BillingEventRepository: Send + Sync {
     fn create(
         &self,

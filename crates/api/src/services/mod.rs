@@ -1,6 +1,7 @@
 pub mod api_key_service;
 pub mod audit_logger;
 pub mod billing_batcher;
+pub mod billing_outbox;
 pub mod billing_provider;
 pub mod circuit_breaker;
 pub mod dashboard_service;
