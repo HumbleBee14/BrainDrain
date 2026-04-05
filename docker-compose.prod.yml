@@ -241,6 +241,7 @@ services:
       UNLEASH_API_TOKEN: ${UNLEASH_API_TOKEN:-}
       UNLEASH_APP_NAME: ${UNLEASH_APP_NAME:-platform-api}
       UNLEASH_ENVIRONMENT: ${UNLEASH_ENVIRONMENT:-production}
+      UNLEASH_POLL_INTERVAL_SECS: ${UNLEASH_POLL_INTERVAL_SECS:-15}
       # Operational knobs (all have sensible defaults — override only if needed)
       BILLING_CHANNEL_CAPACITY: ${BILLING_CHANNEL_CAPACITY:-10000}
       BILLING_BATCH_SIZE: ${BILLING_BATCH_SIZE:-1000}

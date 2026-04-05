@@ -61,6 +61,7 @@ UNLEASH_URL=http://unleash:4242
 UNLEASH_API_TOKEN=your-client-token
 UNLEASH_APP_NAME=platform-api
 UNLEASH_ENVIRONMENT=production
+UNLEASH_POLL_INTERVAL_SECS=15
 ```
 
 **Failure behavior:**
@@ -74,7 +75,7 @@ UNLEASH_ENVIRONMENT=production
 level with old and new values. Unleash server also has a native audit log UI.
 
 **Kill switch pattern:** Toggle any flag in the Unleash UI → takes effect
-within 15 seconds on all API instances.
+within `UNLEASH_POLL_INTERVAL_SECS` on all API instances.
 
 ## Production guards
 

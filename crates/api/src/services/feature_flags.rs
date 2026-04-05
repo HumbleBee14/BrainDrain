@@ -213,7 +213,7 @@ impl UnleashProvider {
         };
 
         // Start background poller
-        let poll_interval = std::time::Duration::from_secs(15);
+        let poll_interval = std::time::Duration::from_secs(config.unleash_poll_interval_secs);
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
         let poller_cache = Arc::clone(&cache);

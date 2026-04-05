@@ -204,11 +204,9 @@ pub async fn inject_request_id_into_errors(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    if request_id.is_none() {
+    let Some(request_id) = request_id else {
         return response;
-    }
-
-    let request_id = request_id.unwrap();
+    };
     let status = response.status();
     let headers = response.headers().clone();
 

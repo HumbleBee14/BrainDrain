@@ -224,6 +224,10 @@ pub struct Config {
     /// Unleash environment name (e.g., "development", "production").
     #[serde(default = "default_unleash_environment")]
     pub unleash_environment: String,
+
+    /// Unleash poll interval in seconds for remote flag refresh.
+    #[serde(default = "default_unleash_poll_interval_secs")]
+    pub unleash_poll_interval_secs: u64,
 }
 
 impl Config {
@@ -326,6 +330,9 @@ fn default_unleash_app_name() -> String {
 }
 fn default_unleash_environment() -> String {
     "development".to_string()
+}
+fn default_unleash_poll_interval_secs() -> u64 {
+    15
 }
 fn default_rate_limit_enabled() -> bool {
     true
