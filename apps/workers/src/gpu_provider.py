@@ -38,6 +38,7 @@ class GpuProvider(Protocol):
         mode: str,
         hyperparams: dict,
         gpu_class: str | None,
+        llm_config: dict,
     ) -> dict:
         """Execute a training job and return result dict.
 
@@ -69,6 +70,7 @@ class LocalGpuProvider:
         mode: str,
         hyperparams: dict,
         gpu_class: str | None,
+        llm_config: dict,
     ) -> dict:
         logger.info(
             "Running training locally (job=%s, model=%s, gpu_class=%s)",
@@ -79,7 +81,8 @@ class LocalGpuProvider:
 
         # Import here to avoid loading heavy ML deps when using Modal provider
         from src.activities.stubs import StartTrainingInput
-        from src.activities.train_model import _run_training
+        from src.activities.train_model import run_training_core
+        from src.tenant_config import TenantLlmConfig
 
         input_data = StartTrainingInput(
             tenant_id=tenant_id,
@@ -91,9 +94,13 @@ class LocalGpuProvider:
             hyperparams=hyperparams,
             gpu_class=gpu_class,
         )
-
-        result = await _run_training(input_data, self.infra)
-
+        result = await run_training_core(
+            input_data,
+            s3=self.infra.s3,
+            s3_bucket=self.infra.s3_bucket,
+            settings=self.infra.settings,
+            llm_config=TenantLlmConfig(**llm_config),
+        )
         return {
             "adapter_path": result.adapter_path,
             "adapter_size_bytes": result.adapter_size_bytes,

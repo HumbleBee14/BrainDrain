@@ -69,6 +69,18 @@ class StartTrainingActivity:
                 job_id,
             )
 
+            from dataclasses import asdict
+
+            from src.tenant_config import get_tenant_llm_config
+
+            llm_config = await get_tenant_llm_config(
+                db=self.infra.db,
+                tenant_id=input.tenant_id,
+                default_api_base_url=self.infra.settings.llm_api_base_url,
+                default_api_key=self.infra.settings.llm_api_key,
+                default_model=self.infra.settings.llm_model,
+            )
+
             if self.gpu_provider is not None:
                 result_dict = await self.gpu_provider.run_training(
                     tenant_id=input.tenant_id,
@@ -79,6 +91,7 @@ class StartTrainingActivity:
                     mode=input.mode,
                     hyperparams=input.hyperparams,
                     gpu_class=input.gpu_class,
+                    llm_config=asdict(llm_config),
                 )
                 result = StartTrainingOutput(
                     adapter_path=result_dict["adapter_path"],
