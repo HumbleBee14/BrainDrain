@@ -111,6 +111,7 @@ class EvaluateHoldoutInput:
     dataset_path: str  # S3 path to training data (we derive _val.jsonl)
     hyperparams: dict
     iteration: int
+    gpu_class: str | None = None
 
 
 @dataclass
@@ -147,6 +148,7 @@ class RunEvaluationInput:
     dataset_path: str
     judge_model: str = ""
     judge_api_base: str = ""
+    gpu_class: str | None = None
 
 
 @dataclass

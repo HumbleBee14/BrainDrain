@@ -56,23 +56,29 @@ app = modal.App("platform-training")
 _secret = modal.Secret.from_name("platform-training-secrets")
 
 
-@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
-async def train(payload: dict) -> dict:
-    """Remote GPU entrypoint. payload = {"input": {...}, "llm_config": {...}}."""
+def _remote_env_setup():
+    """Container-start env defaults shared by every remote function.
+
+    Metrics sink: a compose-internal Redis (redis://localhost:6379) is
+    unreachable from Modal, so DEFAULT to the log-only sink — but let the
+    secret override it: set APP_METRICS_BACKEND=redis AND a PUBLIC
+    APP_REDIS_URL (e.g. an Upstash rediss:// URL Modal can reach) in the
+    Modal secret to stream live per-step metrics instead. Using setdefault
+    (not hard assignment) preserves that override while keeping the safe
+    default when no reachable Redis is configured. Must run BEFORE
+    build_settings() reads WorkerSettings from the environment. Do not change
+    the local default in config.py.
+    """
     import os
 
     os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
-
-    # Metrics sink for the remote container. A compose-internal Redis
-    # (redis://localhost:6379) is unreachable from Modal, so DEFAULT to the
-    # log-only sink — but let the secret override it: set APP_METRICS_BACKEND=redis
-    # AND a PUBLIC APP_REDIS_URL (e.g. an Upstash rediss:// URL that Modal can
-    # reach) in the Modal secret to stream live per-step metrics instead. Using
-    # setdefault (not hard assignment) preserves that override while keeping the
-    # safe default when no reachable Redis is configured. Must run BEFORE
-    # build_settings() reads WorkerSettings from the environment. Do not change
-    # the local default in config.py.
     os.environ.setdefault("APP_METRICS_BACKEND", "log")
+
+
+@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+async def train(payload: dict) -> dict:
+    """Remote GPU entrypoint. payload = {"input": {...}, "llm_config": {...}}."""
+    _remote_env_setup()
 
     from src.activities.stubs import StartTrainingInput
     from src.activities.train_model import run_training_core
@@ -94,3 +100,72 @@ async def train(payload: dict) -> dict:
         "adapter_size_bytes": result.adapter_size_bytes,
         "metrics": result.metrics,
     }
+
+
+@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+async def train_sft_round(payload: dict) -> dict:
+    """Remote SFT round for the iterative workflow. payload = {"input": {...}}."""
+    _remote_env_setup()
+
+    from src.activities.stubs import TrainSftRoundInput
+    from src.activities.train_model import run_sft_round_core
+    from src.modal_runtime import build_s3_client, build_settings
+
+    settings = build_settings()
+    s3, bucket = build_s3_client(settings)
+
+    result = await run_sft_round_core(
+        TrainSftRoundInput(**payload["input"]),
+        s3=s3,
+        s3_bucket=bucket,
+        settings=settings,
+    )
+    return {
+        "adapter_path": result.adapter_path,
+        "adapter_size_bytes": result.adapter_size_bytes,
+        "metrics": result.metrics,
+    }
+
+
+@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+async def evaluate_holdout(payload: dict) -> dict:
+    """Remote holdout eval for the iterative workflow. payload = {"input": {...}}."""
+    _remote_env_setup()
+
+    from src.activities.stubs import EvaluateHoldoutInput
+    from src.activities.train_model import run_evaluate_holdout_core
+    from src.modal_runtime import build_s3_client, build_settings
+
+    settings = build_settings()
+    s3, bucket = build_s3_client(settings)
+
+    result = await run_evaluate_holdout_core(
+        EvaluateHoldoutInput(**payload["input"]),
+        s3=s3,
+        s3_bucket=bucket,
+        settings=settings,
+    )
+    return {"eval_loss": result.eval_loss, "metrics": result.metrics}
+
+
+@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+async def run_evaluation(payload: dict) -> dict:
+    """Remote full evaluation suite. payload = {"input": {...}, "llm_config": {...}}."""
+    _remote_env_setup()
+
+    from src.activities.run_evaluation import run_evaluation_core
+    from src.activities.stubs import RunEvaluationInput
+    from src.modal_runtime import build_s3_client, build_settings
+    from src.tenant_config import TenantLlmConfig
+
+    settings = build_settings()
+    s3, bucket = build_s3_client(settings)
+
+    result = await run_evaluation_core(
+        RunEvaluationInput(**payload["input"]),
+        s3=s3,
+        s3_bucket=bucket,
+        settings=settings,
+        llm_config=TenantLlmConfig(**payload["llm_config"]),
+    )
+    return {"scores": result.scores, "report": result.report}

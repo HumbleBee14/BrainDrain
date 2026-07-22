@@ -15,6 +15,7 @@ import logging
 import math
 import random
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -24,7 +25,9 @@ from src.activities.llm_judge import LLMJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
 from src.backends.judge import get as get_judge
 from src.constants import EvaluationStatus
+from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
+from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 
 logger = logging.getLogger("platform.evaluation")
 
@@ -82,8 +85,9 @@ def get_registered_suites() -> list[EvaluationSuite]:
 
 
 class RunEvaluationActivity:
-    def __init__(self, infra: InfraContainer):
+    def __init__(self, infra: InfraContainer, gpu_provider: GpuProvider | None = None):
         self.infra = infra
+        self.gpu_provider = gpu_provider
 
     @activity.defn(name="run_evaluation")
     async def run(self, input: RunEvaluationInput) -> RunEvaluationOutput:
@@ -98,7 +102,41 @@ class RunEvaluationActivity:
                 eval_id,
             )
 
-            scores, report = await _run_all_suites(input, self.infra)
+            # Resolve the tenant's judge LLM config on the worker (DB), then pass
+            # it as data — the GPU-bound suite run never touches Postgres.
+            llm_config = await get_tenant_llm_config(
+                db=db,
+                tenant_id=input.tenant_id,
+                default_api_base_url=self.infra.settings.llm_api_base_url,
+                default_api_key=self.infra.settings.llm_api_key,
+                default_model=self.infra.settings.llm_model,
+            )
+
+            # Dispatch the GPU work to the configured provider (local or Modal).
+            # Falls back to in-process execution when no provider is set.
+            if self.gpu_provider is not None:
+                result_dict = await self.gpu_provider.run_evaluation(
+                    tenant_id=input.tenant_id,
+                    model_id=input.model_id,
+                    evaluation_id=eval_id,
+                    adapter_path=input.adapter_path,
+                    base_model=input.base_model,
+                    dataset_path=input.dataset_path,
+                    judge_model=input.judge_model,
+                    judge_api_base=input.judge_api_base,
+                    gpu_class=input.gpu_class,
+                    llm_config=asdict(llm_config),
+                )
+                scores, report = result_dict["scores"], result_dict["report"]
+            else:
+                output = await run_evaluation_core(
+                    input,
+                    s3=self.infra.s3,
+                    s3_bucket=self.infra.s3_bucket,
+                    settings=self.infra.settings,
+                    llm_config=llm_config,
+                )
+                scores, report = output.scores, output.report
 
             await db.execute(
                 """UPDATE evaluations
@@ -134,11 +172,24 @@ class RunEvaluationActivity:
             raise
 
 
-async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> tuple[dict, dict]:
-    """Run all registered evaluation suites and aggregate results."""
+async def run_evaluation_core(
+    input: RunEvaluationInput,
+    *,
+    s3,
+    s3_bucket: str,
+    settings,
+    llm_config: TenantLlmConfig,
+) -> RunEvaluationOutput:
+    """Pure-compute evaluation core — needs only S3 + a resolved llm_config.
+
+    No Postgres, no Redis. Loads the fine-tuned + base models, runs every
+    registered evaluation suite (LLM-as-judge via the passed llm_config), and
+    returns aggregated scores + report. Runs identically in-process
+    (LocalGpuProvider) or inside a remote Modal GPU container.
+    """
     from src.activities.training_engine import get_engine
 
-    engine = get_engine(infra.settings)
+    engine = get_engine(settings)
 
     with tempfile.TemporaryDirectory(prefix=f"eval-{input.evaluation_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -153,7 +204,7 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
 
         adapter_local = tmpdir_path / "adapter"
         adapter_local.mkdir()
-        _download_adapter(input.adapter_path, adapter_local, infra.s3, infra.s3_bucket)
+        _download_adapter(input.adapter_path, adapter_local, s3, s3_bucket)
 
         from peft import PeftModel
 
@@ -171,24 +222,14 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
 
         activity.heartbeat("models_loaded")
 
-        # Create judge using per-tenant LLM config (DB lookup, falls back to env defaults)
-        from src.tenant_config import get_tenant_llm_config
-
-        llm_config = await get_tenant_llm_config(
-            db=infra.db,
-            tenant_id=input.tenant_id,
-            default_api_base_url=infra.settings.llm_api_base_url,
-            default_api_key=infra.settings.llm_api_key,
-            default_model=infra.settings.llm_model,
-        )
-
-        # Workflow-level overrides still take precedence over tenant config
+        # Create judge from the resolved per-tenant LLM config.
+        # Workflow-level overrides still take precedence over tenant config.
         judge_api_base = input.judge_api_base or llm_config.api_base_url
         judge_model = input.judge_model or llm_config.model
         judge_api_key = llm_config.api_key
 
         judge = get_judge(
-            infra.settings.judge_backend,
+            settings.judge_backend,
             api_base=judge_api_base,
             api_key=judge_api_key,
             model=judge_model,
@@ -199,7 +240,7 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
         try:
             val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
             val_local = tmpdir_path / "val.jsonl"
-            _download_from_s3(val_s3_path, val_local, infra.s3, infra.s3_bucket)
+            _download_from_s3(val_s3_path, val_local, s3, s3_bucket)
             val_dataset = _load_jsonl(val_local)
             logger.info("Loaded %d validation samples", len(val_dataset))
         except Exception as e:
@@ -223,7 +264,7 @@ async def _run_all_suites(input: RunEvaluationInput, infra: InfraContainer) -> t
         scores["overall"] = overall
         report["recommendations"] = _generate_recommendations(scores)
 
-        return scores, report
+        return RunEvaluationOutput(scores=scores, report=report)
 
 
 # -- Suite 1: Domain Evaluation --

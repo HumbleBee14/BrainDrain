@@ -140,9 +140,9 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
     assert calls["from_id"] == 0
     assert calls["gpu"] == "A100-80GB"
     assert db.updates, "call_id must be persisted before polling"
-    # persisted call_id must be the spawned FunctionCall's object_id
+    # persisted value must be the spawned object_id, tagged with the function name
     _, args = db.updates[0]
-    assert args[0] == "call-xyz"
+    assert args[0] == "train:call-xyz"
 
 
 @pytest.mark.asyncio
