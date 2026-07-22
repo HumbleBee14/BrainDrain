@@ -109,30 +109,17 @@ class LocalGpuProvider:
 
 
 class ModalGpuProvider:
-    """Run training on Modal serverless GPUs.
+    """Run training on Modal serverless GPUs via a pre-deployed app.
 
-    Provisions an ephemeral GPU container on Modal, executes the training
-    job, and returns results. The container auto-terminates after training.
+    Invokes the deployed `train` function (see apps/workers/modal_app.py) with
+    spawn/poll so the worker event loop never blocks. Persists the Modal
+    FunctionCall id to training_jobs.modal_call_id BEFORE polling, so an
+    activity retry / worker restart recovers the in-flight job instead of
+    launching (and paying for) a duplicate GPU run.
 
-    Requires:
-      - modal package installed (pip install modal)
-      - MODAL_TOKEN_ID and MODAL_TOKEN_SECRET env vars set
-      - APP_GPU_PROVIDER=modal in worker config
-
-    GPU selection:
-      - gpu_class maps to Modal GPU types: "A10G", "A100", "H100"
-      - Default: "A10G" (cost-effective for 7B-13B LoRA fine-tuning)
+    The remote function is pure-compute; this provider (worker-side) owns the
+    reservation DB writes.
     """
-
-    # Map platform gpu_class to Modal GPU specifiers
-    GPU_MAP = {
-        "A10G": "a10g",
-        "A100": "a100",
-        "A100-80GB": "a100-80gb",
-        "H100": "h100",
-    }
-
-    DEFAULT_GPU = "a10g"
 
     def __init__(self, infra):
         self.infra = infra
@@ -141,16 +128,16 @@ class ModalGpuProvider:
     def _validate_modal_available(self):
         try:
             import modal  # noqa: F401
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
-                "Modal is not installed. Install with: pip install modal\n"
-                "Or add 'modal' to pyproject.toml optional dependencies."
-            )
+                "Modal is not installed. Install the gpu-cloud extra: "
+                "uv sync --extra gpu-cloud"
+            ) from e
 
     def _resolve_gpu(self, gpu_class: str | None) -> str:
-        if gpu_class and gpu_class in self.GPU_MAP:
-            return self.GPU_MAP[gpu_class]
-        return self.DEFAULT_GPU
+        from src.constants import MODAL_DEFAULT_GPU, MODAL_GPU_MAP
+
+        return MODAL_GPU_MAP.get(gpu_class or "", MODAL_DEFAULT_GPU)
 
     async def run_training(
         self,
@@ -163,131 +150,67 @@ class ModalGpuProvider:
         mode: str,
         hyperparams: dict,
         gpu_class: str | None,
+        llm_config: dict,
     ) -> dict:
+        import asyncio
+
         import modal
+        from temporalio import activity
 
-        gpu_spec = self._resolve_gpu(gpu_class)
-
-        logger.info(
-            "Provisioning Modal GPU (job=%s, gpu=%s, model=%s)",
-            training_job_id[:8],
-            gpu_spec,
-            base_model,
-        )
-
-        # Build the Modal image with all ML dependencies
-        image = modal.Image.debian_slim(python_version="3.11").pip_install(
-            "unsloth>=2025.12",
-            "transformers>=4.51.0,<5.0.0",
-            "datasets>=3.2.0",
-            "trl>=0.16.0",
-            "peft>=0.14.0",
-            "accelerate>=1.2.0",
-            "bitsandbytes>=0.45.0",
-            "pynvml>=12.0.0",
-            "boto3>=1.35.0",
-            "asyncpg>=0.29.0",
-            "redis>=5.0.0",
-            "httpx>=0.27.0",
-            "temporalio>=1.9.0",
-            "pydantic>=2.10.0",
-            "pydantic-settings>=2.7.0",
-        )
-
-        app = modal.App(f"training-{training_job_id[:8]}")
-
-        # Pass infra config as secrets (not the clients themselves)
         settings = self.infra.settings
+        gpu = self._resolve_gpu(gpu_class)
 
-        @app.function(
-            image=image,
-            gpu=gpu_spec,
-            timeout=6 * 3600,  # 6 hours max
-            secrets=[
-                modal.Secret.from_dict(
-                    {
-                        "APP_DATABASE_URL": settings.database_url,
-                        "APP_REDIS_URL": settings.redis_url,
-                        "APP_S3_ENDPOINT": settings.s3_endpoint,
-                        "APP_S3_ACCESS_KEY": settings.s3_access_key,
-                        "APP_S3_SECRET_KEY": settings.s3_secret_key,
-                        "APP_S3_BUCKET": settings.s3_bucket,
-                        "APP_S3_REGION": settings.s3_region,
-                        "APP_LLM_API_BASE_URL": settings.llm_api_base_url,
-                        "APP_LLM_API_KEY": settings.llm_api_key,
-                        "APP_LLM_MODEL": settings.llm_model,
-                        "APP_HF_TOKEN": settings.hf_token or "",
-                        "HF_HOME": "/tmp/hf_cache",
-                    }
-                ),
-            ],
+        # 1. Recover an in-flight call if one was already reserved for this job.
+        existing = await self.infra.db.fetchval(
+            "SELECT modal_call_id FROM training_jobs WHERE id = $1 AND tenant_id = $2",
+            training_job_id,
+            tenant_id,
         )
-        async def remote_train(
-            t_tenant_id: str,
-            t_job_id: str,
-            t_dataset_path: str,
-            t_base_model: str,
-            t_method: str,
-            t_mode: str,
-            t_hyperparams: dict,
-            t_gpu_class: str | None,
-        ) -> dict:
-            """This function runs on the Modal GPU container."""
-            import os
 
-            os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
-
-            # Initialize infrastructure inside the Modal container
-            from src.config import WorkerSettings
-            from src.infra import init_container
-
-            remote_settings = WorkerSettings()
-            remote_infra = await init_container(remote_settings)
-
-            from src.activities.stubs import StartTrainingInput
-            from src.activities.train_model import _run_training
-
-            input_data = StartTrainingInput(
-                tenant_id=t_tenant_id,
-                training_job_id=t_job_id,
-                dataset_path=t_dataset_path,
-                base_model=t_base_model,
-                method=t_method,
-                mode=t_mode,
-                hyperparams=t_hyperparams,
-                gpu_class=t_gpu_class,
-            )
-
-            result = await _run_training(input_data, remote_infra)
-
-            from src.infra import close_container
-
-            await close_container()
-
-            return {
-                "adapter_path": result.adapter_path,
-                "adapter_size_bytes": result.adapter_size_bytes,
-                "metrics": result.metrics,
+        if existing:
+            logger.info("Recovering Modal call %s for job %s", existing, training_job_id[:8])
+            fc = modal.FunctionCall.from_id(existing)
+        else:
+            payload = {
+                "input": {
+                    "tenant_id": tenant_id,
+                    "training_job_id": training_job_id,
+                    "dataset_path": dataset_path,
+                    "base_model": base_model,
+                    "method": method,
+                    "mode": mode,
+                    "hyperparams": hyperparams,
+                    "gpu_class": gpu_class,
+                },
+                "llm_config": llm_config,
             }
-
-        # Execute on Modal — this blocks until training completes
-        with app.run():
-            result = remote_train.remote(
-                tenant_id,
-                training_job_id,
-                dataset_path,
+            fn = modal.Function.from_name(settings.modal_app_name, settings.modal_function_name)
+            logger.info(
+                "Spawning Modal training (job=%s, gpu=%s, model=%s)",
+                training_job_id[:8],
+                gpu,
                 base_model,
-                method,
-                mode,
-                hyperparams,
-                gpu_class,
+            )
+            fc = await fn.options(gpu=gpu).spawn.aio(payload)
+
+            # 2. Reservation: persist BEFORE polling so a crash reconnects, no respawn.
+            await self.infra.db.execute(
+                "UPDATE training_jobs SET modal_call_id = $1 WHERE id = $2 AND tenant_id = $3",
+                fc.object_id,
+                training_job_id,
+                tenant_id,
             )
 
-        logger.info(
-            "Modal training complete (job=%s, adapter=%s)",
-            training_job_id[:8],
-            result.get("adapter_path"),
-        )
+        # 3. Non-blocking poll until the remote run completes.
+        while True:
+            try:
+                result = await fc.get.aio(timeout=0)
+                break
+            except TimeoutError:
+                activity.heartbeat()
+                await asyncio.sleep(settings.modal_poll_interval_secs)
+
+        logger.info("Modal training complete (job=%s)", training_job_id[:8])
         return result
 
 
