@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::{
-    ApiKey, AuditLog, BillingEvent, Dataset, Document, Evaluation, InferenceInstance, Invitation,
-    Model, ModelExport, NotificationDelivery, NotificationPreference, Project, TeamMember, Tenant,
-    TrainingJob,
+    ApiKey, AuditLog, BillingEvent, DataGuide, Dataset, Document, Evaluation, InferenceInstance,
+    Invitation, Model, ModelExport, NotificationDelivery, NotificationPreference, Project,
+    TeamMember, Tenant, TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus,
@@ -164,6 +164,69 @@ pub trait DatasetRepository: Send + Sync {
         dataset_id: Uuid,
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
+}
+
+/// Contract for data guide database operations.
+///
+/// Tracks the guided synthesis session (facets → preview → guidance → dataset)
+/// that precedes dataset generation. One active session per project.
+///
+/// Not yet wired into `AppState` — the service layer consuming this trait
+/// lands in a later task, so `#[allow(dead_code)]` is temporary.
+#[allow(dead_code)]
+pub trait DataGuideRepository: Send + Sync {
+    fn create(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        task_type: &str,
+    ) -> BoxFuture<'_, AppResult<DataGuide>>;
+
+    fn get(&self, tenant_id: Uuid, id: Uuid) -> BoxFuture<'_, AppResult<Option<DataGuide>>>;
+
+    /// Latest data guide session for a project (ordered by created_at DESC).
+    fn get_for_project(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<DataGuide>>>;
+
+    fn update_status(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        status: &str,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn update_facets(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        facets: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    /// Overwrites `preview_samples` with the rating-updated array computed by the service.
+    fn apply_ratings(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        preview_samples: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn update_guidance(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        guidance: &str,
+        refinement_history: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn set_dataset_id(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        dataset_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<()>>;
 }
 
 /// Contract for training job database operations.

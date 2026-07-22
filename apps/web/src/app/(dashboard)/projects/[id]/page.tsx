@@ -323,6 +323,15 @@ export default function ProjectDetailPage() {
                   ? "Generating..."
                   : "Generate Training Data"}
             </button>
+            {hasParsed && (
+              <Link
+                href={`/projects/${params.id}/data-studio`}
+                className="rounded-lg border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 px-4 py-2 text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition inline-flex items-center"
+                title="Review facets and preview samples before generating the dataset"
+              >
+                Data Studio (Guided)
+              </Link>
+            )}
             <button
               onClick={() =>
                 triggerFullPipeline.mutate({

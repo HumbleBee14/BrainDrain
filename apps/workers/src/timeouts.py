@@ -88,6 +88,11 @@ def export_heartbeat() -> timedelta:
     return timedelta(minutes=15)
 
 
+# Data Studio (interactive facet/preview/refine generation)
+def datagen_interactive_activity() -> timedelta:
+    return timedelta(minutes=_s().timeout_datagen_interactive_minutes)
+
+
 # Lightweight lookups
 def db_lookup() -> timedelta:
     return timedelta(seconds=30)

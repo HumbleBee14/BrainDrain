@@ -2,7 +2,9 @@
 
 Uses a configurable LLM API (OpenAI-compatible format) to generate
 training data from document chunks. LLM provider config is resolved
-per-tenant from the database at execution time.
+per-tenant from the database at execution time. Structured generation
+(PairGenerator), facet-diversity distribution, and a faithfulness
+quality-gate (FaithfulnessScorer) are provided via src.datagen.registry.
 """
 
 import json
@@ -15,40 +17,20 @@ from temporalio import activity
 
 from src import s3_paths
 from src.backends.llm_provider import get as get_llm_provider
-from src.backends.llm_provider import parse_pairs_json
+from src.circuit_breaker import CircuitBreakerOpen
+from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, PairGenerator
+from src.datagen.registry import get_faithfulness_scorer, get_pair_generator
 from src.infra import InfraContainer
 from src.tenant_config import get_tenant_llm_config
 
 logger = logging.getLogger("platform.generate")
 
-# Prompt templates per task type
-PROMPTS = {
-    "question_answering": (
-        "You are a training data generator. Given the following text excerpt from a document, "
-        "generate {count} diverse question-answer pairs. Each question should be answerable "
-        "from the text. Include factual, inferential, and comparative questions.\n\n"
-        "Text:\n{text}\n\n"
-        "Respond with a JSON array of objects, each with 'question' and 'answer' keys. "
-        "Answers should be detailed and grounded in the source text."
-    ),
-    "instruction_following": (
-        "You are a training data generator. Given the following text, generate {count} "
-        "instruction-response pairs. Instructions should ask to perform tasks related "
-        "to the content (summarize, explain, extract, compare, etc.).\n\n"
-        "Text:\n{text}\n\n"
-        "Respond with a JSON array of objects, each with 'instruction' and 'response' keys."
-    ),
-    "reasoning": (
-        "You are a training data generator. Given the following text, generate {count} "
-        "complex reasoning scenarios. Each should require analysis, critical thinking, "
-        "or multi-step reasoning based on the content.\n\n"
-        "Text:\n{text}\n\n"
-        "Respond with a JSON array of objects, each with 'question' and 'answer' keys. "
-        "Answers should include step-by-step reasoning."
-    ),
-}
-
-DEFAULT_PROMPT = PROMPTS["question_answering"]
+# Transport-level/transient errors that are tolerated per-chunk: one flaky
+# call must not discard already-succeeded chunks. TimeoutError also catches
+# asyncio.TimeoutError (an alias of it since Python 3.11). ValueError is
+# deliberately excluded — that's a structured-parse/contract failure from
+# the pair generator and must propagate (fail loud), not be swallowed here.
+TRANSIENT_GENERATION_ERRORS = (httpx.HTTPError, TimeoutError, CircuitBreakerOpen)
 
 
 @dataclass
@@ -58,12 +40,100 @@ class GenerateSyntheticPairsInput:
     chunks_storage_path: str
     task_type: str
     pairs_per_chunk: int = 5
+    guidance: str = ""
+    facets: list[dict] | None = None
 
 
 @dataclass
 class GenerateSyntheticPairsOutput:
     pair_count: int
     storage_path: str
+
+
+async def apply_faithfulness_gate(
+    pairs: list[GeneratedPair],
+    scorer: FaithfulnessScorer | None,
+    *,
+    enabled: bool,
+) -> tuple[list[GeneratedPair], int]:
+    """Drop pairs whose response isn't grounded in their source text.
+
+    If the gate is disabled or no scorer is configured, all pairs pass through
+    unchanged. Scorer failures propagate — a broken judge must not silently
+    let unfaithful pairs through.
+    """
+    if not enabled or scorer is None:
+        return pairs, 0
+
+    kept: list[GeneratedPair] = []
+    dropped = 0
+    for pair in pairs:
+        verdict = await scorer.score(pair=pair, source_text=pair.source_text)
+        if verdict.consistent is True:
+            kept.append(pair)
+        else:
+            dropped += 1
+    return kept, dropped
+
+
+async def generate_pairs_for_chunks(
+    chunks: list[dict],
+    facets: list[Facet],
+    pair_generator: PairGenerator,
+    *,
+    task_type: str,
+    guidance: str,
+    pairs_per_chunk: int,
+) -> tuple[list[GeneratedPair], dict[int, tuple[str | None, str | None]], int]:
+    """Generate pairs for every eligible chunk, tolerating transient per-chunk errors.
+
+    A single chunk hitting a timeout, rate limit, or transport error must not
+    discard chunks that already succeeded. Only `TRANSIENT_GENERATION_ERRORS`
+    are swallowed here; a `ValueError` from the generator (malformed/missing
+    LLM output) indicates a real bug and always propagates.
+
+    Raises if every attempted chunk failed and no pairs were produced — that's
+    a real failure, not an empty-input case.
+    """
+    generated: list[GeneratedPair] = []
+    pair_meta: dict[int, tuple[str | None, str | None]] = {}
+    avoid: list[str] = []
+    failed_chunks = 0
+
+    for i, chunk in enumerate(chunks):
+        activity.heartbeat()
+        chunk_text = chunk.get("text", "")
+        if len(chunk_text) < 50:
+            continue
+
+        facet = facets[i % len(facets)] if facets else None
+
+        try:
+            pairs = await pair_generator.generate(
+                chunk_text=chunk_text[:3000],
+                task_type=task_type,
+                guidance=guidance,
+                facet=facet,
+                count=pairs_per_chunk,
+                avoid=list(avoid),
+            )
+        except TRANSIENT_GENERATION_ERRORS as exc:
+            failed_chunks += 1
+            activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
+            continue
+
+        for pair in pairs:
+            pair_meta[id(pair)] = (chunk.get("doc_id"), chunk.get("chunk_id"))
+        generated.extend(pairs)
+        avoid.extend(p.prompt for p in pairs)
+
+    if failed_chunks > 0 and not generated:
+        raise RuntimeError(
+            f"All {failed_chunks} chunk(s) failed synthetic pair generation due to "
+            "transient errors; refusing to return an empty dataset."
+        )
+
+    return generated, pair_meta, failed_chunks
 
 
 class GeneratePairsActivity:
@@ -75,15 +145,16 @@ class GeneratePairsActivity:
         """Generate instruction/response pairs from chunked text using LLM API."""
         s3 = self.infra.s3
         bucket = self.infra.s3_bucket
+        settings = self.infra.settings
 
         # Resolve LLM config for this tenant (DB lookup, falls back to env var defaults)
         llm_config = await get_tenant_llm_config(
             db=self.infra.db,
             tenant_id=input.tenant_id,
-            default_api_base_url=self.infra.settings.llm_api_base_url,
-            default_api_key=self.infra.settings.llm_api_key,
-            default_model=self.infra.settings.llm_model,
-            default_max_tokens=self.infra.settings.llm_max_tokens,
+            default_api_base_url=settings.llm_api_base_url,
+            default_api_key=settings.llm_api_key,
+            default_model=settings.llm_model,
+            default_max_tokens=settings.llm_max_tokens,
         )
 
         if not llm_config.api_key:
@@ -111,55 +182,68 @@ class GeneratePairsActivity:
         if not chunks:
             return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
 
-        # Select prompt template
-        prompt_template = PROMPTS.get(input.task_type, DEFAULT_PROMPT)
+        provider = get_llm_provider(settings.llm_provider_backend)
 
-        provider = get_llm_provider(self.infra.settings.llm_provider_backend)
+        # Track source chunk metadata per pair by identity — apply_faithfulness_gate
+        # operates on plain GeneratedPair objects, so doc/chunk ids ride alongside
+        # rather than through the gate itself.
+        # Only user-kept facets steer generation; a discarded facet must not
+        # leak back in via a stale `input.facets` payload. Missing `keep`
+        # defaults to kept (matches the DTO default on the Rust side).
+        facets = [Facet(**f) for f in input.facets if f.get("keep", True)] if input.facets else []
 
-        all_pairs = []
         async with httpx.AsyncClient(timeout=120.0) as http:
-            for chunk in chunks:
-                activity.heartbeat()
-                chunk_text = chunk.get("text", "")
-                if len(chunk_text) < 50:
-                    continue
 
-                prompt = prompt_template.format(
-                    count=input.pairs_per_chunk,
-                    text=chunk_text[:3000],  # limit context to avoid token overflow
+            async def llm_call(prompt: str) -> str:
+                return await self.infra.circuit_breaker.call(
+                    provider.generate,
+                    http,
+                    prompt,
+                    model=llm_config.model,
+                    api_base_url=llm_config.api_base_url,
+                    api_key=llm_config.api_key,
+                    max_tokens=llm_config.max_tokens,
                 )
 
-                try:
-                    raw = await self.infra.circuit_breaker.call(
-                        provider.generate,
-                        http,
-                        prompt,
-                        model=llm_config.model,
-                        api_base_url=llm_config.api_base_url,
-                        api_key=llm_config.api_key,
-                        max_tokens=llm_config.max_tokens,
-                    )
-                    pairs = parse_pairs_json(raw)
-                    for pair in pairs:
-                        all_pairs.append(
-                            {
-                                "id": str(uuid.uuid4()),
-                                "doc_id": chunk.get("doc_id"),
-                                "chunk_id": chunk.get("chunk_id"),
-                                "task_type": input.task_type,
-                                "instruction": pair.get("question") or pair.get("instruction", ""),
-                                "response": pair.get("answer") or pair.get("response", ""),
-                                "source_text": chunk_text[:500],
-                            }
-                        )
-                except Exception as e:
-                    activity.logger.warning(
-                        "LLM call failed for chunk %s: %s", chunk.get("chunk_id"), e
-                    )
-                    continue
+            pair_generator: PairGenerator = get_pair_generator(settings, llm_call)
+            scorer = get_faithfulness_scorer(settings, llm_call)
 
-        if not all_pairs:
+            generated, pair_meta, failed_chunks = await generate_pairs_for_chunks(
+                chunks,
+                facets,
+                pair_generator,
+                task_type=input.task_type,
+                guidance=input.guidance,
+                pairs_per_chunk=input.pairs_per_chunk,
+            )
+
+        kept, dropped_unfaithful = await apply_faithfulness_gate(
+            generated, scorer, enabled=settings.faithfulness_gate_enabled
+        )
+
+        activity.logger.info(
+            "Pair generation: generated=%d dropped_unfaithful=%d failed_chunks=%d chunks=%d",
+            len(generated),
+            dropped_unfaithful,
+            failed_chunks,
+            len(chunks),
+        )
+
+        if not kept:
             return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
+
+        all_pairs = [
+            {
+                "id": str(uuid.uuid4()),
+                "doc_id": pair_meta[id(pair)][0],
+                "chunk_id": pair_meta[id(pair)][1],
+                "task_type": input.task_type,
+                "instruction": pair.prompt,
+                "response": pair.response,
+                "source_text": pair.source_text[:500],
+            }
+            for pair in kept
+        ]
 
         # Upload pairs as JSONL
         batch_id = str(uuid.uuid4())
@@ -172,5 +256,4 @@ class GeneratePairsActivity:
             ContentType="application/jsonl",
         )
 
-        activity.logger.info("Generated %d pairs from %d chunks", len(all_pairs), len(chunks))
         return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)

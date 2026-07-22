@@ -5,6 +5,7 @@ pub mod billing_outbox;
 pub mod billing_provider;
 pub mod circuit_breaker;
 pub mod dashboard_service;
+pub mod data_guide_service;
 pub mod dataset_service;
 pub mod delivery_worker;
 pub mod deployment_service;
