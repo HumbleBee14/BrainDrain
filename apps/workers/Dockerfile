@@ -7,7 +7,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 
-RUN uv sync --no-dev
+RUN uv sync --no-dev --extra gpu-cloud
 
 # ── Stage 2: Runtime ──
 FROM python:3.11-slim AS runtime

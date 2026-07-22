@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability setup-hooks
+.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability setup-hooks modal-deploy
 
 # Start all infrastructure (PostgreSQL, Redis, MinIO)
 infra:
@@ -58,6 +58,10 @@ lint:
 build:
 	cargo build --release
 	cd apps/web && pnpm build
+
+# Deploy Modal app (cloud GPU training orchestrator)
+modal-deploy:
+	cd apps/workers && uv run modal deploy modal_app.py
 
 # Install git pre-commit hook (auto-formats Rust, Python, syncs constants)
 setup-hooks:
