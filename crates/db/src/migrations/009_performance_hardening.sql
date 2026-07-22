@@ -9,10 +9,10 @@
 -- =============================================================================
 -- 1. Add missing index for model version queries (list_versions)
 -- =============================================================================
--- list_versions() queries: WHERE tenant_id = $1 AND project_id = $2 AND base_model = $3 ORDER BY version DESC
--- Without this index, PostgreSQL falls back to sequential scan.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_models_base_model_version
-    ON models (tenant_id, project_id, base_model, version DESC);
+-- The non-blocking (CONCURRENTLY) creation of idx_models_base_model_version
+-- lives in migration 018, which runs outside a transaction. CREATE INDEX
+-- CONCURRENTLY cannot run inside the transaction sqlx wraps this migration in,
+-- so keeping it here would break a from-scratch migration.
 
 -- =============================================================================
 -- 2. Drop duplicate indexes
