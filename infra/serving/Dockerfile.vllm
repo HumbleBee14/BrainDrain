@@ -1,0 +1,25 @@
+# vLLM serving image with the S3 LoRA resolver plugin baked in.
+#
+# Adapters are NOT copied into the image. They are fetched at request time from
+# the object store (S3 / MinIO / Cloudflare R2) by the resolver plugin and
+# cached under VLLM_LORA_RESOLVER_CACHE_DIR. This keeps the image generic and
+# lets any tenant's adapter be served without a rebuild.
+#
+# Build:  docker build -f infra/serving/Dockerfile.vllm -t platform-vllm infra/serving
+# Run:    see infra/serving/README.md for the required env vars and CLI flags.
+ARG VLLM_VERSION=v0.8.5
+FROM vllm/vllm-openai:${VLLM_VERSION}
+
+COPY vllm_s3_lora_resolver /opt/vllm_s3_lora_resolver
+RUN pip install --no-cache-dir /opt/vllm_s3_lora_resolver
+
+# Enable runtime LoRA updates and select our resolver plugin. Concrete S3
+# connection vars (bucket, endpoint, credentials) are supplied at run time.
+ENV VLLM_ALLOW_RUNTIME_LORA_UPDATING=true \
+    VLLM_PLUGINS=s3_lora_resolver \
+    VLLM_LORA_RESOLVER_CACHE_DIR=/var/lora-cache
+
+RUN mkdir -p /var/lora-cache
+
+# Inherit the base image's entrypoint (python -m vllm.entrypoints.openai.api_server).
+# Pass --enable-lora, --model, etc. as CMD args from compose / the orchestrator.

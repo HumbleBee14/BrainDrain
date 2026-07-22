@@ -330,36 +330,46 @@ services:
       temporal:
         condition: service_healthy
 
-  # ── Optional: vLLM inference server (requires NVIDIA GPU) ──
-  # Uncomment to enable model deployment/inference.
-  #
-  # vllm:
-  #   image: vllm/vllm-openai:latest
-  #   restart: unless-stopped
-  #   ports:
-  #     - "8080:8000"
-  #   command: >
-  #     --model meta-llama/Llama-3.1-8B
-  #     --enable-lora
-  #     --max-lora-rank 64
-  #     --max-loras 4
-  #     --gpu-memory-utilization 0.85
-  #     --max-model-len 4096
-  #   volumes:
-  #     - vllm_cache:/root/.cache/huggingface
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 120s
+  # ── vLLM inference server with the S3 LoRA resolver (requires NVIDIA GPU) ──
+  # Adapters are fetched from object storage on demand (see infra/serving/).
+  # Runs only under the "gpu" profile:  docker compose --profile gpu up -d vllm
+  vllm:
+    build:
+      context: infra/serving
+      dockerfile: Dockerfile.vllm
+    profiles: ["gpu"]
+    restart: unless-stopped
+    ports:
+      - "8080:8000"
+    environment:
+      # Reuse the platform's object-store credentials for adapter fetches.
+      S3_LORA_BUCKET: ${S3_BUCKET:-platform}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    command: >
+      --model ${VLLM_MODEL:-meta-llama/Llama-3.1-8B}
+      --enable-lora
+      --max-lora-rank 64
+      --max-loras ${VLLM_MAX_LORAS:-4}
+      --gpu-memory-utilization 0.85
+      --max-model-len 4096
+    volumes:
+      - vllm_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
 
 volumes:
   postgres_data:
@@ -367,4 +377,4 @@ volumes:
   minio_data:
   temporal_postgres_data:
   model_cache:
-  # vllm_cache:
+  vllm_cache:
