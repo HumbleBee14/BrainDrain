@@ -77,15 +77,9 @@ async def init_container(settings: WorkerSettings) -> InfraContainer:
     """Initialize the infrastructure container. Call once at worker startup."""
     global _container  # noqa: PLW0603
 
-    import boto3
+    from src.s3_client import create_s3_client
 
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-    )
+    s3 = create_s3_client(settings)
     logger.info("S3 client initialized (endpoint: %s)", settings.s3_endpoint)
 
     db = await asyncpg.create_pool(

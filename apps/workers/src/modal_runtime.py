@@ -14,14 +14,12 @@ def build_settings() -> WorkerSettings:
 
 
 def build_s3_client(settings: WorkerSettings):
-    """Create a boto3 S3 client from settings. Returns (client, bucket)."""
-    import boto3
+    """Create a boto3 S3 client from settings. Returns (client, bucket).
 
-    client = boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-    )
-    return client, settings.s3_bucket
+    Uses the shared backend-agnostic factory so the remote container talks to
+    whatever S3-compatible store is configured (AWS/MinIO/R2) identically to
+    the worker side.
+    """
+    from src.s3_client import create_s3_client
+
+    return create_s3_client(settings), settings.s3_bucket

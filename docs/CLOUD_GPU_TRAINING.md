@@ -353,6 +353,47 @@ Re-running `modal secret create` with the same name and `--force` updates an
 existing secret's values (see `modal secret create --help`); the deployed
 function picks up new secret values on its next cold start.
 
+### 7.1 Object storage backends (AWS S3 / MinIO / Cloudflare R2 / other)
+
+The platform never hard-codes AWS. Both the worker (`src/infra.py`) and the
+remote Modal container (`src/modal_runtime.py`) build their S3 client through
+one shared factory, `src/s3_client.create_s3_client()`, so **any
+S3-compatible store works by config alone** — set `APP_S3_ENDPOINT`,
+`APP_S3_ACCESS_KEY`, `APP_S3_SECRET_KEY`, `APP_S3_BUCKET`, `APP_S3_REGION` and
+nothing else changes. The factory's `S3_COMPAT_CONFIG` (SigV4, path-style
+addressing, and `request/response_checksum_calculation="when_required"`) is a
+single setting that is safe for AWS, MinIO, and R2 alike — it disables the
+botocore ≥1.36 default CRC32 upload checksum that otherwise makes plain
+`PutObject` fail against non-AWS stores.
+
+| Backend | `APP_S3_ENDPOINT` | `APP_S3_REGION` |
+|---|---|---|
+| AWS S3 | `https://s3.<region>.amazonaws.com` (or omit for default) | real region, e.g. `us-east-1` |
+| MinIO (local/self-host) | `http://minio:9000` | `us-east-1` |
+| Cloudflare R2 | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` | `auto` |
+
+**Cloudflare R2 is the recommended free option** for the cloud-GPU E2E if you
+don't run AWS: its free tier is permanent (10 GB storage, 1M Class-A + 10M
+Class-B ops/month) and — most relevant here — **egress is always free**, so
+Modal pulling the dataset and pushing the LoRA adapter costs nothing in
+bandwidth. It satisfies the "cloud-reachable S3" prerequisite in §9 (unlike a
+localhost MinIO, which Modal's network can't reach).
+
+R2 credential setup: Cloudflare dashboard → **R2** → **Manage R2 API Tokens**
+→ create a token (Object Read & Write is enough) → copy the **Access Key ID**
+and **Secret Access Key** (shown once) and use them as `APP_S3_ACCESS_KEY` /
+`APP_S3_SECRET_KEY` against the `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`
+endpoint with `APP_S3_REGION=auto`. Buckets created with an `eu`/`fedramp`
+jurisdiction use the matching `https://<ACCOUNT_ID>.<jurisdiction>.r2.cloudflarestorage.com`
+endpoint.
+
+> **Scope note:** this shared factory covers the **Python worker** paths
+> (training data + adapters, the cloud-GPU flow). The Rust control plane's
+> object-storage client (`crates/storage`, used for user document uploads)
+> is a separate SDK and is **not** yet given the same R2/MinIO checksum
+> treatment — a full "bring your own storage" story for the upload path is a
+> follow-up.
+
 ## 8. Deploy
 
 ```bash
