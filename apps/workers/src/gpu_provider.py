@@ -157,7 +157,6 @@ class ModalGpuProvider:
         from temporalio import activity
 
         settings = self.infra.settings
-        gpu = self._resolve_gpu(gpu_class)
 
         # 1. Recover an in-flight call if one was already reserved for this job.
         existing = await self.infra.db.fetchval(
@@ -170,6 +169,7 @@ class ModalGpuProvider:
             logger.info("Recovering Modal call %s for job %s", existing, training_job_id[:8])
             fc = modal.FunctionCall.from_id(existing)
         else:
+            gpu = self._resolve_gpu(gpu_class)
             payload = {
                 "input": {
                     "tenant_id": tenant_id,

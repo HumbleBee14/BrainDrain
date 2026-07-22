@@ -51,7 +51,7 @@ class TrainReasoningWorkflow:
             task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.train_activity(),
             heartbeat_timeout=timeouts.train_heartbeat(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=1),
+            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
         )
 
         workflow.set_current_details("Reasoning training complete")

@@ -66,7 +66,7 @@ class TrainWorkflow:
                 task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timeouts.train_activity(),
                 heartbeat_timeout=timeouts.train_heartbeat(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=1),
+                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
             )
 
         elif mode == "iterative":

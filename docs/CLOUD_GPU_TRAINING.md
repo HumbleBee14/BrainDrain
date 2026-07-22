@@ -42,12 +42,17 @@ Temporal worker (CPU host, ml-pipeline-gpu queue)
        append billing_outbox row
 ```
 
-The Modal container never talks to Postgres or Redis — it only reaches S3
-(to move the dataset and adapter) and the tenant's judge LLM endpoint (for
-DPO/GRPO reward scoring). All state changes (job status, model row, billing
-ledger) are written by the worker process after the remote call returns, in
-one Postgres transaction (see `crates/db` invariant: DB writes for training
-completion are transactional with the billing side effect).
+The Modal container never talks to Postgres — it only reaches S3 (to move
+the dataset and adapter) and the tenant's judge LLM endpoint (for DPO/GRPO
+reward scoring). It also never talks to Redis: the remote entrypoint forces
+`APP_METRICS_BACKEND=log` before loading settings, so training metrics are
+written to the container's log output (visible via Modal logs / Temporal
+heartbeat detail) instead of streamed live to Redis — there is no real-time
+metrics dashboard for Modal-run jobs, only coarse progress via the activity
+heartbeat. All state changes (job status, model row, billing ledger) are
+written by the worker process after the remote call returns, in one Postgres
+transaction (see `crates/db` invariant: DB writes for training completion
+are transactional with the billing side effect).
 
 `LocalGpuProvider` (same activity, `APP_GPU_PROVIDER=local`) takes the same
 `StartTrainingActivity` code path but calls the training core directly
@@ -77,8 +82,12 @@ This shaped a hard design rule: **the remote training function is pure
 compute.** It receives everything it needs as a plain-data payload (dataset
 S3 path, base model name, hyperparameters, a resolved `llm_config`) and
 returns everything the worker needs (`adapter_path`, `adapter_size_bytes`,
-`metrics`) as a plain dict. It never opens a DB connection and never touches
-Redis. All persistence — job status transitions, the `models` row, the
+`metrics`) as a plain dict. It never opens a DB connection, and it forces a
+log-only metrics sink (`APP_METRICS_BACKEND=log`, set in `modal_app.py`
+before settings load) so it never streams to Redis either — training
+metrics land in the container's log output instead, and progress reaches
+the worker only as coarse `activity.heartbeat()` calls, not live per-step
+metrics. All persistence — job status transitions, the `models` row, the
 billing outbox entry — is owned exclusively by `StartTrainingActivity` on
 the worker side, which already has the DB pool.
 
@@ -178,6 +187,17 @@ job (real money, twice).
    commits, any future retry or restart will take the "recover" branch in
    step 1 instead of respawning.
 4. Only then does it start polling.
+
+For the recovery branch (step 1) to ever actually fire, the calling
+workflow's `start_training` activity must be allowed to retry at least once.
+`train.py`, `train_aligned.py`, and `train_reasoning.py` set
+`retry_policy=workflow.RetryPolicy(maximum_attempts=2)` on the
+`start_training` activity call for exactly this reason — with the previous
+`maximum_attempts=1`, Temporal never retried the activity at all, so a
+crashed or timed-out worker orphaned the in-flight Modal `FunctionCall`
+instead of reconnecting to it. `maximum_attempts=2` gives one retry, which
+is enough to hit the `existing` branch above and resume polling rather than
+respawning.
 
 The column is `crates/db/src/migrations/015_training_jobs_modal_call_id.sql`
 — a single nullable `TEXT` column, `NULL` for jobs run on `LocalGpuProvider`
@@ -303,6 +323,14 @@ Required keys:
   `WorkerSettings()` simply fails to construct in the container. A
   placeholder like `postgresql://unused:unused@unused:5432/unused` is
   sufficient and intentional — do not point this at a real database.
+- `APP_METRICS_BACKEND=log` — not required in the secret itself.
+  `modal_app.py`'s `train()` sets `os.environ["APP_METRICS_BACKEND"] = "log"`
+  unconditionally before calling `build_settings()`, so the remote container
+  always uses the log-only metrics sink regardless of what (if anything) the
+  secret provides for this key. Documented here so the behavior isn't a
+  surprise: even if you set `APP_METRICS_BACKEND=redis` in the secret, the
+  remote path ignores it and logs instead — this is intentional (Redis is
+  unreachable from Modal; see §2).
 
 Create the secret with the Modal CLI (values below are placeholders — do not
 paste real credentials into shell history or CI logs):
@@ -350,10 +378,25 @@ this must be the last layer in the image chain, since Modal's local-source
 mount is layered on top of (not baked into) the built image; adding pip
 layers after it would not see the mounted source. If you add new imports
 under `apps/workers/src/` that the remote `train` function needs, no image
-change is required — the whole `src` package is mounted. If you add a new
-*pip dependency*, add it to the `image = modal.Image...pip_install(...)`
-list in `modal_app.py`, matching the `[ml]` extra in `pyproject.toml`, and
-redeploy.
+change is required — the whole `src` package is mounted, but check whether
+the new import pulls in a package not already in the image (see below).
+
+The image's `pip_install(...)` list is **not** a literal copy of any single
+`pyproject.toml` dependency group. It is: the pyproject `[ml]` extra
+(unsloth, transformers, datasets, trl, peft, accelerate, bitsandbytes,
+pynvml) **minus** `distilabel` (that's data-generation tooling, never
+imported by the training path), **plus** `temporalio`, `asyncpg`, `redis`,
+`boto3`, `httpx`, `pydantic`, `pydantic-settings` from the base
+`dependencies` list — these are pulled in transitively at import time by
+`src.activities.stubs` / `src.activities.train_model` (via `src.infra`,
+which does `import asyncpg` and `import redis.asyncio`) and `from
+temporalio import activity`, even though the remote code path never
+actually calls Postgres or Redis. Without them the remote module import
+fails with `ModuleNotFoundError` before training starts. If you add a new
+*pip dependency* anywhere in the modules the remote `train` function
+imports (directly or transitively), add it to the `image =
+modal.Image...pip_install(...)` list in `modal_app.py` and redeploy — do
+not assume the `[ml]` extra alone covers it.
 
 Redeploy any time `modal_app.py`, `modal_runtime.py`, or anything under
 `apps/workers/src/` that the remote path imports changes. The deployed

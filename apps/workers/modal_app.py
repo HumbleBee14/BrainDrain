@@ -5,7 +5,8 @@ The worker then invokes it via modal.Function.from_name(...).spawn.aio(...).
 
 The remote `train` function runs the SAME pure-compute core as the local
 provider (src.activities.train_model.run_training_core). It touches only S3 +
-the judge LLM — never Postgres/Redis (those stay on the worker side).
+the judge LLM — never Postgres, and never Redis (metrics are forced to the
+log-only sink below; those stay on the worker side).
 
 GPU type is chosen per-call by the worker via `.options(gpu=...)`, so a single
 deployed function serves every gpu_class.
@@ -13,7 +14,11 @@ deployed function serves every gpu_class.
 
 import modal
 
-# Mirror the pyproject [ml] extra. Modal builds this image on its own infra.
+# Base deps (temporalio/asyncpg/redis/boto3/httpx/pydantic*, needed transitively
+# at import time — see comment below) plus the pyproject [ml] extra minus
+# distilabel (data-generation only, not used by remote training). This is NOT
+# a literal mirror of either dependency group — see docs/CLOUD_GPU_TRAINING.md
+# §8. Modal builds this image on its own infra.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -29,6 +34,15 @@ image = (
         "httpx>=0.27.0",
         "pydantic>=2.10.0",
         "pydantic-settings>=2.7.0",
+        # Transitively imported at load time by src.activities.stubs /
+        # src.activities.train_model (via src.infra): temporalio (`from
+        # temporalio import activity`), asyncpg, redis. Not used at runtime
+        # remotely (remote never touches Postgres/Redis — see I3/§2 in
+        # docs/CLOUD_GPU_TRAINING.md) but required for the module graph to
+        # import without ModuleNotFoundError. Versions match apps/workers/pyproject.toml.
+        "temporalio>=1.9.0",
+        "asyncpg>=0.29.0",
+        "redis>=5.0.0",
     )
     # Make our own `src` package importable remotely (replaces removed auto-mount).
     # Must be the last layer since copy defaults to False (mounted, not built).
@@ -48,6 +62,14 @@ async def train(payload: dict) -> dict:
     import os
 
     os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
+
+    # The remote container cannot reach the compose-network Redis instance
+    # (redis://localhost:6379 is unreachable from Modal), so force the
+    # log-only metrics sink instead of the "redis" default. This must be set
+    # BEFORE build_settings() reads WorkerSettings from the environment.
+    # Progress still surfaces via activity.heartbeat(), just without live
+    # Redis stream metrics. Do not change the local default (config.py).
+    os.environ["APP_METRICS_BACKEND"] = "log"
 
     from src.activities.stubs import StartTrainingInput
     from src.activities.train_model import run_training_core
