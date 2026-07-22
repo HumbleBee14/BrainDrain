@@ -198,118 +198,48 @@ class TrainSftRoundActivity:
     save adapter checkpoint to S3. The loop lives in TrainIterativeWorkflow.
     """
 
-    def __init__(self, infra: InfraContainer):
+    def __init__(self, infra: InfraContainer, gpu_provider: GpuProvider | None = None):
         self.infra = infra
+        self.gpu_provider = gpu_provider
 
     @activity.defn(name="train_sft_round")
     async def run(self, input: TrainSftRoundInput) -> TrainSftRoundOutput:
-        engine = get_engine(self.infra.settings)
-        hp = input.hyperparams
         job_id = input.training_job_id
-        iteration = input.iteration
 
-        _get_metrics_collector(self.infra.settings)
-
-        # Mark training as started on the first iteration
-        if iteration == 0:
+        # Mark training as started on the first iteration (DB — always worker-side)
+        if input.iteration == 0:
             await self.infra.db.execute(
                 "UPDATE training_jobs SET status = $1, started_at = NOW() WHERE id = $2",
                 TrainingJobStatus.TRAINING,
                 job_id,
             )
 
-        with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
-            tmpdir_path = Path(tmpdir)
-
-            # Download dataset
-            dataset_local = tmpdir_path / "dataset.jsonl"
-            _download_dataset(
-                input.dataset_path,
-                dataset_local,
-                self.infra.s3,
-                self.infra.s3_bucket,
-            )
-            dataset = _load_chatml_dataset(dataset_local)
-
-            # Load model
-            load_in_4bit = input.method == "qlora"
-            max_seq_length = hp.get("max_seq_length", 2048)
-            model, tokenizer = engine.load_model(
-                model_name=input.base_model,
-                max_seq_length=max_seq_length,
-                load_in_4bit=load_in_4bit,
-            )
-
-            # Attach adapter
-            target_modules = hp.get(
-                "target_modules",
-                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            )
-            model = engine.attach_adapter(
-                model,
-                r=hp.get("r", 16),
-                lora_alpha=hp.get("lora_alpha", 16),
-                lora_dropout=hp.get("lora_dropout", 0),
-                target_modules=target_modules,
-            )
-
-            # If resuming from previous iteration, load adapter weights
-            if input.adapter_path:
-                prev_adapter_dir = tmpdir_path / "prev_adapter"
-                prev_adapter_dir.mkdir(parents=True)
-                _download_adapter(
-                    input.adapter_path,
-                    prev_adapter_dir,
-                    self.infra.s3,
-                    self.infra.s3_bucket,
-                )
-                model.load_adapter(
-                    str(prev_adapter_dir),
-                    adapter_name="default",
-                )
-                logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
-
-            # Train one SFT round
-            phase = f"iter_{iteration}"
-            metrics = _train_sft(
-                model,
-                tokenizer,
-                dataset,
-                hp,
-                job_id,
-                max_seq_length,
-                phase=phase,
+        # Dispatch the GPU work to the configured provider (local or Modal).
+        # Falls back to in-process execution when no provider is set.
+        if self.gpu_provider is not None:
+            result_dict = await self.gpu_provider.run_sft_round(
                 tenant_id=input.tenant_id,
-                s3=self.infra.s3,
-                bucket=self.infra.s3_bucket,
+                training_job_id=job_id,
+                dataset_path=input.dataset_path,
+                base_model=input.base_model,
+                method=input.method,
+                hyperparams=input.hyperparams,
+                iteration=input.iteration,
+                adapter_path=input.adapter_path,
+                gpu_class=input.gpu_class,
             )
-
-            # Save adapter checkpoint
-            adapter_dir = tmpdir_path / "adapter"
-            engine.save_adapter(model, tokenizer, adapter_dir)
-
-            ckpt_s3_path = (
-                s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
-            )
-            adapter_size = _upload_adapter(
-                adapter_dir,
-                ckpt_s3_path,
-                self.infra.s3,
-                self.infra.s3_bucket,
-            )
-
-            logger.info(
-                "Iteration %d complete for job %s, checkpoint: %s",
-                iteration,
-                job_id,
-                ckpt_s3_path,
-            )
-
             return TrainSftRoundOutput(
-                adapter_path=ckpt_s3_path,
-                adapter_size_bytes=adapter_size,
-                metrics=metrics,
+                adapter_path=result_dict["adapter_path"],
+                adapter_size_bytes=result_dict["adapter_size_bytes"],
+                metrics=result_dict["metrics"],
             )
+
+        return await run_sft_round_core(
+            input,
+            s3=self.infra.s3,
+            s3_bucket=self.infra.s3_bucket,
+            settings=self.infra.settings,
+        )
 
 
 class EvaluateHoldoutActivity:
@@ -320,107 +250,37 @@ class EvaluateHoldoutActivity:
     Streams progress metrics to Redis for real-time UI visibility.
     """
 
-    def __init__(self, infra: InfraContainer):
+    def __init__(self, infra: InfraContainer, gpu_provider: GpuProvider | None = None):
         self.infra = infra
+        self.gpu_provider = gpu_provider
 
     @activity.defn(name="evaluate_holdout")
     async def run(self, input: EvaluateHoldoutInput) -> EvaluateHoldoutOutput:
-        engine = get_engine(self.infra.settings)
-        hp = input.hyperparams
-        job_id = input.training_job_id
-        iteration = input.iteration
-
-        _get_metrics_collector(self.infra.settings)
-
-        _stream_metric(
-            job_id,
-            {
-                "event": "eval_begin",
-                "phase": f"eval_iter_{iteration}",
-                "timestamp": datetime.now(UTC).isoformat(),
-            },
-        )
-
-        job_prefix = job_id[:8]
-        with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
-            tmpdir_path = Path(tmpdir)
-
-            # Download validation dataset
-            val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
-            val_local = tmpdir_path / "val.jsonl"
-            _download_dataset(val_s3_path, val_local, self.infra.s3, self.infra.s3_bucket)
-            val_dataset = _load_chatml_dataset(val_local)
-            logger.info("Loaded validation set: %d examples", len(val_dataset))
-
-            _stream_metric(
-                job_id,
-                {
-                    "event": "eval_dataset_loaded",
-                    "phase": f"eval_iter_{iteration}",
-                    "val_examples": str(len(val_dataset)),
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
+        # Dispatch the GPU work to the configured provider (local or Modal).
+        # Falls back to in-process execution when no provider is set.
+        if self.gpu_provider is not None:
+            result_dict = await self.gpu_provider.run_evaluate_holdout(
+                tenant_id=input.tenant_id,
+                training_job_id=input.training_job_id,
+                adapter_path=input.adapter_path,
+                base_model=input.base_model,
+                method=input.method,
+                dataset_path=input.dataset_path,
+                hyperparams=input.hyperparams,
+                iteration=input.iteration,
+                gpu_class=input.gpu_class,
             )
-
-            # Load model + adapter from this iteration's checkpoint
-            max_seq_length = hp.get("max_seq_length", 2048)
-            load_in_4bit = input.method == "qlora"
-            model, tokenizer = engine.load_model(
-                model_name=input.base_model,
-                max_seq_length=max_seq_length,
-                load_in_4bit=load_in_4bit,
-            )
-
-            target_modules = hp.get(
-                "target_modules",
-                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            )
-            model = engine.attach_adapter(
-                model,
-                r=hp.get("r", 16),
-                lora_alpha=hp.get("lora_alpha", 16),
-                lora_dropout=hp.get("lora_dropout", 0),
-                target_modules=target_modules,
-            )
-
-            # Load the adapter weights from this iteration
-            adapter_dir = tmpdir_path / "adapter"
-            adapter_dir.mkdir(parents=True)
-            _download_adapter(input.adapter_path, adapter_dir, self.infra.s3, self.infra.s3_bucket)
-            model.load_adapter(str(adapter_dir), adapter_name="default")
-
-            try:
-                activity.heartbeat(f"eval_iter_{iteration}_running")
-            except Exception:
-                pass
-
-            # Evaluate
-            eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
-
-            _stream_metric(
-                job_id,
-                {
-                    "event": "eval_end",
-                    "phase": f"eval_iter_{iteration}",
-                    "eval_loss": str(round(eval_loss, 6)),
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
-            )
-
-            logger.info(
-                "Holdout eval iteration %d for job %s: eval_loss=%.4f",
-                iteration,
-                job_id,
-                eval_loss,
-            )
-
             return EvaluateHoldoutOutput(
-                eval_loss=eval_loss,
-                metrics={
-                    "iteration": iteration,
-                    "eval_loss": eval_loss,
-                },
+                eval_loss=result_dict["eval_loss"],
+                metrics=result_dict["metrics"],
             )
+
+        return await run_evaluate_holdout_core(
+            input,
+            s3=self.infra.s3,
+            s3_bucket=self.infra.s3_bucket,
+            settings=self.infra.settings,
+        )
 
 
 class FinalizeIterativeTrainingActivity:
@@ -612,6 +472,194 @@ async def run_training_core(
             adapter_path=adapter_s3_path,
             adapter_size_bytes=adapter_size,
             metrics=metrics,
+        )
+
+
+async def run_sft_round_core(
+    input: TrainSftRoundInput,
+    *,
+    s3,
+    s3_bucket: str,
+    settings,
+) -> TrainSftRoundOutput:
+    """Pure-compute SFT round — needs only S3. No Postgres, no Redis.
+
+    One iteration of the iterative workflow: load model (+ prior adapter if
+    continuing), train one SFT pass, save the adapter checkpoint to S3.
+    Runs identically in-process (LocalGpuProvider) or inside a remote Modal
+    GPU container. The `iteration == 0` status write stays worker-side.
+    """
+    engine = get_engine(settings)
+    hp = input.hyperparams
+    job_id = input.training_job_id
+    iteration = input.iteration
+
+    _get_metrics_collector(settings)
+
+    with tempfile.TemporaryDirectory(prefix=f"sft-round-{job_id[:8]}-") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        dataset_local = tmpdir_path / "dataset.jsonl"
+        _download_dataset(input.dataset_path, dataset_local, s3, s3_bucket)
+        dataset = _load_chatml_dataset(dataset_local)
+
+        load_in_4bit = input.method == "qlora"
+        max_seq_length = hp.get("max_seq_length", 2048)
+        model, tokenizer = engine.load_model(
+            model_name=input.base_model,
+            max_seq_length=max_seq_length,
+            load_in_4bit=load_in_4bit,
+        )
+
+        target_modules = hp.get(
+            "target_modules",
+            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        )
+        model = engine.attach_adapter(
+            model,
+            r=hp.get("r", 16),
+            lora_alpha=hp.get("lora_alpha", 16),
+            lora_dropout=hp.get("lora_dropout", 0),
+            target_modules=target_modules,
+        )
+
+        # If resuming from a previous iteration, load adapter weights
+        if input.adapter_path:
+            prev_adapter_dir = tmpdir_path / "prev_adapter"
+            prev_adapter_dir.mkdir(parents=True)
+            _download_adapter(input.adapter_path, prev_adapter_dir, s3, s3_bucket)
+            model.load_adapter(str(prev_adapter_dir), adapter_name="default")
+            logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
+
+        phase = f"iter_{iteration}"
+        metrics = _train_sft(
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            phase=phase,
+            tenant_id=input.tenant_id,
+            s3=s3,
+            bucket=s3_bucket,
+        )
+
+        adapter_dir = tmpdir_path / "adapter"
+        engine.save_adapter(model, tokenizer, adapter_dir)
+
+        ckpt_s3_path = s3_paths.checkpoint_prefix(input.tenant_id, job_id) + f"iter-{iteration}/"
+        adapter_size = _upload_adapter(adapter_dir, ckpt_s3_path, s3, s3_bucket)
+
+        logger.info(
+            "Iteration %d complete for job %s, checkpoint: %s", iteration, job_id, ckpt_s3_path
+        )
+
+        return TrainSftRoundOutput(
+            adapter_path=ckpt_s3_path,
+            adapter_size_bytes=adapter_size,
+            metrics=metrics,
+        )
+
+
+async def run_evaluate_holdout_core(
+    input: EvaluateHoldoutInput,
+    *,
+    s3,
+    s3_bucket: str,
+    settings,
+) -> EvaluateHoldoutOutput:
+    """Pure-compute holdout eval — needs only S3. No Postgres, no Redis-required.
+
+    Loads the adapter from this iteration's checkpoint, evaluates on the
+    validation split, returns eval_loss. Streams progress via the configured
+    metrics sink (log by default remotely; Redis if a reachable APP_REDIS_URL
+    is set). Runs identically in-process or inside a remote Modal container.
+    """
+    engine = get_engine(settings)
+    hp = input.hyperparams
+    job_id = input.training_job_id
+    iteration = input.iteration
+
+    _get_metrics_collector(settings)
+
+    _stream_metric(
+        job_id,
+        {
+            "event": "eval_begin",
+            "phase": f"eval_iter_{iteration}",
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
+
+    job_prefix = job_id[:8]
+    with tempfile.TemporaryDirectory(prefix=f"eval-holdout-{job_prefix}-") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        # Download validation dataset
+        val_s3_path = input.dataset_path.replace(".jsonl", "_val.jsonl")
+        val_local = tmpdir_path / "val.jsonl"
+        _download_dataset(val_s3_path, val_local, s3, s3_bucket)
+        val_dataset = _load_chatml_dataset(val_local)
+        logger.info("Loaded validation set: %d examples", len(val_dataset))
+
+        _stream_metric(
+            job_id,
+            {
+                "event": "eval_dataset_loaded",
+                "phase": f"eval_iter_{iteration}",
+                "val_examples": str(len(val_dataset)),
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+
+        # Load base model, then load THIS iteration's trained adapter from its
+        # checkpoint. Use PeftModel.from_pretrained (same as run_evaluation_core)
+        # so the saved adapter's own config + weights are restored exactly. The
+        # earlier attach_adapter()+load_adapter("default") approach created a
+        # fresh random adapter named "default" and then tried to load saved
+        # weights into that same name, which fails with a state_dict mismatch.
+        max_seq_length = hp.get("max_seq_length", 2048)
+        load_in_4bit = input.method == "qlora"
+        model, tokenizer = engine.load_model(
+            model_name=input.base_model,
+            max_seq_length=max_seq_length,
+            load_in_4bit=load_in_4bit,
+        )
+
+        adapter_dir = tmpdir_path / "adapter"
+        adapter_dir.mkdir(parents=True)
+        _download_adapter(input.adapter_path, adapter_dir, s3, s3_bucket)
+
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(model, str(adapter_dir))
+
+        try:
+            activity.heartbeat(f"eval_iter_{iteration}_running")
+        except Exception:
+            pass
+
+        # Evaluate
+        eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
+
+        _stream_metric(
+            job_id,
+            {
+                "event": "eval_end",
+                "phase": f"eval_iter_{iteration}",
+                "eval_loss": str(round(eval_loss, 6)),
+                "timestamp": datetime.now(UTC).isoformat(),
+            },
+        )
+
+        logger.info(
+            "Holdout eval iteration %d for job %s: eval_loss=%.4f", iteration, job_id, eval_loss
+        )
+
+        return EvaluateHoldoutOutput(
+            eval_loss=eval_loss,
+            metrics={"iteration": iteration, "eval_loss": eval_loss},
         )
 
 
@@ -906,9 +954,14 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
         report_to="none",
     )
 
+    # train_dataset is required even for an eval-only run: Unsloth's trainer
+    # init calls fix_zero_training_loss(), which does len(train_dataset) and
+    # raises TypeError on None. We only ever call .evaluate() (never .train()),
+    # so reusing val_dataset as the train_dataset is inert — no training happens.
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
+        train_dataset=val_dataset,
         eval_dataset=val_dataset,
         args=eval_args,
     )

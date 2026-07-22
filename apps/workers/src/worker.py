@@ -181,10 +181,10 @@ async def main() -> None:
     # GPU-bound activities (training, evaluation)
     gpu_activities = [
         StartTrainingActivity(infra, gpu_provider=gpu_provider),
-        TrainSftRoundActivity(infra),
-        EvaluateHoldoutActivity(infra),
+        TrainSftRoundActivity(infra, gpu_provider=gpu_provider),
+        EvaluateHoldoutActivity(infra, gpu_provider=gpu_provider),
         FinalizeIterativeTrainingActivity(infra),
-        RunEvaluationActivity(infra),
+        RunEvaluationActivity(infra, gpu_provider=gpu_provider),
         DeployModelActivity(infra),
         ExportGgufActivity(infra),
     ]

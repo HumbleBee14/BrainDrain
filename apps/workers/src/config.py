@@ -43,9 +43,13 @@ class WorkerSettings(BaseSettings):
     # GPU provider: "local" (default, worker's own GPU) | "modal" (serverless)
     gpu_provider: str = "local"
 
-    # Cloud GPU (Modal serverless) — used when gpu_provider="modal"
+    # Cloud GPU (Modal serverless) — used when gpu_provider="modal".
+    # One deployed function per GPU-bound activity (see apps/workers/modal_app.py).
     modal_app_name: str = "platform-training"
     modal_function_name: str = "train"
+    modal_sft_round_function_name: str = "train_sft_round"
+    modal_evaluate_holdout_function_name: str = "evaluate_holdout"
+    modal_evaluation_function_name: str = "run_evaluation"
     modal_secret_name: str = "platform-training-secrets"
     modal_poll_interval_secs: int = 15
 

@@ -75,6 +75,9 @@ class FullPipelineWorkflow:
                 train_result.adapter_path,
                 base_model,
                 refine_result.storage_path,
+                "",  # judge_model — use tenant/default config
+                "",  # judge_api_base — use tenant/default config
+                training_config.get("gpu_class"),  # eval on the same GPU class as training
             ],
             id=f"evaluate-{project_id}",
         )

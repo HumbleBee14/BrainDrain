@@ -141,6 +141,7 @@ class TrainIterativeWorkflow:
                         dataset_path=dataset_path,
                         hyperparams=hyperparams,
                         iteration=iteration,
+                        gpu_class=gpu_class,
                     ),
                     task_queue="ml-pipeline-gpu",
                     start_to_close_timeout=timeouts.holdout_eval_activity(),

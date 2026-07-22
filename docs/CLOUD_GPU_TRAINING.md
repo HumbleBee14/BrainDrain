@@ -204,7 +204,28 @@ respawning.
 
 The column is `crates/db/src/migrations/015_training_jobs_modal_call_id.sql`
 — a single nullable `TEXT` column, `NULL` for jobs run on `LocalGpuProvider`
-where there's no remote call to reconnect to.
+where there's no remote call to reconnect to. The full-evaluation path uses a
+separate `evaluations.modal_call_id`
+(`016_evaluations_modal_call_id.sql`), since evaluations key on
+`evaluations.id`, not `training_jobs.id`.
+
+**Shared column across activity types → tagged reservations.** The iterative
+workflow reuses the single `training_jobs.modal_call_id` for *both*
+`train_sft_round` and `evaluate_holdout`, across every round (they run
+sequentially, so at most one Modal call is ever in flight per job). To make
+that safe, the stored value is tagged `"<function_name>:<call_id>"` and
+`ModalGpuProvider._recoverable_call_id` recovers a reservation **only when the
+tag matches the function about to run**. This closes a real corruption bug:
+`TrainIterativeWorkflow` deliberately *tolerates* a failed `evaluate_holdout`
+(e.g. no `_val.jsonl` split) and continues; without tagging, the stale
+holdout `modal_call_id` would be "recovered" by the next round's
+`train_sft_round`, which would return the holdout result (or its error)
+instead of training — silently skipping a round or killing the job. Iterative
+methods also `SET modal_call_id = NULL` after a *successful* call so a later
+same-function round doesn't recover the finished one. Bare (untagged) values
+written by the pre-tagging release are treated as legacy single-shot-training
+reservations, so training jobs in flight across the upgrade deploy still
+recover correctly.
 
 **Honest caveat:** there is still a narrow crash window between step 2
 (spawn succeeds, Modal is now running the job and billing for it) and step 3
@@ -502,32 +523,49 @@ Steps:
 
 ## 10. Known limitations / deferred work
 
-- **Iterative training rounds and evaluation are not yet offloaded to
-  Modal.** `TrainSftRoundActivity`, `EvaluateHoldoutActivity` (used by
-  `TrainIterativeWorkflow`), and `RunEvaluationActivity` all call
-  `get_engine(settings)` and load models directly in-process — they do not
-  go through `GpuProvider` at all, regardless of `APP_GPU_PROVIDER`. Only
-  the single-shot `TrainWorkflow` path (`StartTrainingActivity` →
-  `GpuProvider.run_training`) is cloud-GPU-capable today. Running the
-  iterative or evaluation workflows still requires a worker process with an
-  attached CUDA GPU (the `Dockerfile.gpu` image, `--extra ml`) consuming the
-  `ml-pipeline-gpu` queue. Offloading these to Modal as well would need a
-  provider-style wrapper per activity, following the same reservation
-  pattern as `ModalGpuProvider`.
-- **A `gpu`-mode worker on `ml-pipeline-gpu` is not automatically
-  GPU-free just because `APP_GPU_PROVIDER=modal`.** The same worker process
-  registers `StartTrainingActivity` (cloud-capable) alongside
-  `TrainSftRoundActivity`, `EvaluateHoldoutActivity`, `RunEvaluationActivity`,
-  and `ExportGgufActivity` (all still local-GPU-only, per the point above).
-  A worker built from the slim `Dockerfile` (`--extra gpu-cloud`, no `ml`
-  extra, no CUDA) can run `StartTrainingActivity` against Modal, but will
-  fail if Temporal ever schedules one of the still-local GPU activities on
-  it. Until the remaining activities are offloaded, keep at least one
-  `Dockerfile.gpu`-based worker on the `ml-pipeline-gpu` queue if your
-  pipeline uses iterative training or evaluation.
+- **Iterative training rounds and full evaluation now run on Modal too.**
+  `TrainSftRoundActivity`, `EvaluateHoldoutActivity` (used by
+  `TrainIterativeWorkflow`), and `RunEvaluationActivity` all go through
+  `GpuProvider` — each has a pure-compute core (`run_sft_round_core`,
+  `run_evaluate_holdout_core`, `run_evaluation_core`) shared by the local
+  and remote paths, a dedicated deployed Modal function (`train_sft_round`,
+  `evaluate_holdout`, `run_evaluation`), and a `ModalGpuProvider` method with
+  the same spawn/poll/reservation flow as `run_training`. With
+  `APP_GPU_PROVIDER=modal`, the single-shot **and** iterative training and
+  evaluation workflows are all cloud-GPU-capable. `ExportGgufActivity`
+  remains local-only (it packages an already-trained adapter; it is not a
+  training/eval GPU workload).
+- **A slim (`--extra gpu-cloud`, no CUDA) worker can serve the whole
+  training + evaluation pipeline against Modal** — `StartTrainingActivity`,
+  `TrainSftRoundActivity`, `EvaluateHoldoutActivity`, and
+  `RunEvaluationActivity` all offload. Only `ExportGgufActivity` still needs
+  local compute, so keep a `Dockerfile.gpu`-based worker on `ml-pipeline-gpu`
+  if your pipeline exports GGUF. Standalone evaluation started from the Rust
+  control plane (`EvaluateWorkflow` via `evaluation_service.rs`) does not yet
+  forward a `gpu_class`, so remote eval on that path uses `MODAL_DEFAULT_GPU`
+  (A10) — fine for the two 4-bit models it loads; the automatic
+  post-training eval in `FullPipelineWorkflow` forwards the training
+  `gpu_class`.
+- **Holdout eval correctness (fixed while offloading).** Two pre-existing
+  bugs in `_evaluate_on_holdout` / the holdout adapter load surfaced only when
+  the path was actually exercised on Modal: (1) the iteration's saved adapter
+  is now loaded with `PeftModel.from_pretrained` (the old
+  `attach_adapter()` + `load_adapter("default")` created a fresh random
+  adapter and then failed to load real weights into the same name — a
+  state_dict mismatch); (2) Unsloth's trainer init requires a `train_dataset`
+  even for an eval-only run (`fix_zero_training_loss` calls `len()` on it), so
+  the eval-only `SFTTrainer` is given the val set as its (never-trained)
+  `train_dataset`. Before these fixes the holdout eval always raised and
+  `TrainIterativeWorkflow`'s tolerate-and-proxy fallback silently compared
+  *train* loss for early stopping; it now produces a real held-out
+  `eval_loss`.
 - **Only S3 (and the judge LLM endpoint) must be cloud-reachable.** No other
-  service needs to be exposed to the public internet for the `TrainWorkflow`
-  cloud-GPU path to work.
+  service needs to be exposed to the public internet for the cloud-GPU path
+  to work. Live per-step metrics streaming to Upstash (`APP_METRICS_BACKEND=redis`
+  + a `rediss://` `APP_REDIS_URL` in the Modal secret) is verified end-to-end:
+  a remote `evaluate_holdout` on Modal streamed `eval_begin`/`eval_end` events
+  to an Upstash stream (`training:metrics:<job_id>`) read back over the public
+  endpoint.
 - **A tenant-supplied custom LLM key is not read from the Modal secret.**
   `StartTrainingActivity` resolves `TenantLlmConfig` from Postgres (per
   tenant) *before* building the spawn payload, then serializes it
