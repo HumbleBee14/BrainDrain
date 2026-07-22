@@ -38,6 +38,7 @@ class ExportWorkflow:
                 base_model=base_model,
                 quant_type=quant_type,
             ),
+            task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.export_activity(),
             heartbeat_timeout=timeouts.export_heartbeat(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
