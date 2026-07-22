@@ -233,6 +233,8 @@ async def run_evaluation_core(
             api_base=judge_api_base,
             api_key=judge_api_key,
             model=judge_model,
+            max_retries=settings.judge_max_retries,
+            on_failure=settings.judge_on_failure,
         )
 
         # Download validation set

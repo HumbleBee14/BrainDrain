@@ -8,17 +8,34 @@ Provides a single JudgeLLM class that handles:
   - Reasoning reward scoring (for GRPO)
   - Refusal classification (for safety checks)
 
-All judge calls go through the same OpenAI-compatible API client,
-with consistent error handling and heuristic fallbacks.
+All judge calls go through the same OpenAI-compatible API client. Transient
+errors are retried with backoff; a persistently-unavailable judge raises
+JudgeUnavailableError (default) rather than silently returning a fabricated
+score — see the on_failure policy on OpenAICompatibleJudge.
 """
 
 import json
 import logging
+import random
+import time
 from typing import Protocol
 
 import httpx
 
 logger = logging.getLogger("platform.judge")
+
+# HTTP statuses worth retrying (transient): rate limit + gateway/5xx.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+class JudgeUnavailableError(RuntimeError):
+    """Raised when the judge LLM cannot produce a usable result.
+
+    This propagates out of scoring calls (unless on_failure='heuristic') so a
+    broken judge fails the training/eval activity loudly instead of silently
+    poisoning GRPO rewards, DPO pair selection, or eval scores with fabricated
+    heuristic numbers. See the repo's "Correctness Over Convenience" rules.
+    """
 
 
 class LLMJudge(Protocol):
@@ -56,31 +73,74 @@ class OpenAICompatibleJudge:
     heuristic fallbacks when the API is unavailable.
     """
 
-    def __init__(self, api_base: str, api_key: str, model: str):
+    def __init__(
+        self,
+        api_base: str,
+        api_key: str,
+        model: str,
+        max_retries: int = 3,
+        on_failure: str = "error",
+    ):
         self.client = httpx.Client(
             base_url=api_base,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=60.0,
         )
         self.model = model
+        self.max_retries = max_retries
+        # "error"  → raise JudgeUnavailableError so the run fails loudly (default,
+        #            correctness-first). "heuristic" → advanced opt-in: log and
+        #            fall back to the length/keyword heuristics.
+        self.on_failure = on_failure
 
     def _call(self, prompt: str, max_tokens: int = 200) -> str:
-        """Make a single LLM call. Returns empty string on failure."""
-        try:
-            resp = self.client.post(
-                "/chat/completions",
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                    "temperature": 0.0,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            logger.warning("LLM judge call failed: %s", e)
-            return ""
+        """Call the judge, retrying transient errors with backoff+jitter.
+
+        Raises JudgeUnavailableError if no usable response is obtained after
+        max_retries+1 attempts, or immediately on a non-retryable HTTP error
+        (e.g. 401/403 bad credentials, 400 bad request). Never returns "" —
+        callers must not mistake an outage for a low-quality response.
+        """
+        last_err: str | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = self.client.post(
+                    "/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": max_tokens,
+                        "temperature": 0.0,
+                    },
+                )
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_err = f"{type(e).__name__}: {e}"
+            else:
+                if resp.status_code in _RETRYABLE_STATUS:
+                    last_err = f"HTTP {resp.status_code}"
+                elif resp.status_code >= 400:
+                    # Non-retryable (auth / bad request): retrying won't help.
+                    raise JudgeUnavailableError(f"judge HTTP {resp.status_code}: {resp.text[:200]}")
+                else:
+                    try:
+                        return resp.json()["choices"][0]["message"]["content"].strip()
+                    except (KeyError, IndexError, ValueError, TypeError) as e:
+                        last_err = f"malformed response: {e}"
+
+            if attempt < self.max_retries:
+                # Exponential backoff (cap 8s) + full jitter to avoid thundering herd.
+                time.sleep(min(2**attempt, 8) + random.uniform(0, 0.5))
+
+        raise JudgeUnavailableError(
+            f"judge unavailable after {self.max_retries + 1} attempts: {last_err}"
+        )
+
+    def _handle_failure(self, what: str, heuristic):
+        """Apply the on_failure policy: raise (default) or log + heuristic."""
+        if self.on_failure == "heuristic":
+            logger.warning("Judge %s failed; using heuristic (on_failure='heuristic')", what)
+            return heuristic()
+        raise JudgeUnavailableError(f"judge {what} produced no usable result")
 
     def score_response(self, prompt: str, response: str) -> float:
         """Score a response quality (1-10) using LLM judge.
@@ -95,16 +155,17 @@ class OpenAICompatibleJudge:
             f"Response:\n{response[:1000]}\n\n"
             "Score (1-10):"
         )
-        result = self._call(judge_prompt, max_tokens=5)
-        if result:
-            try:
-                score = float(result.strip().split()[0])
-                return max(1.0, min(10.0, score))
-            except (ValueError, IndexError):
-                pass
 
-        # Heuristic fallback
-        return min(10.0, len(response) / 100 + 3)
+        def _heuristic():
+            return min(10.0, len(response) / 100 + 3)
+
+        try:
+            result = self._call(judge_prompt, max_tokens=5)
+            return max(1.0, min(10.0, float(result.strip().split()[0])))
+        except (ValueError, IndexError):
+            return self._handle_failure("score_response (unparseable)", _heuristic)
+        except JudgeUnavailableError:
+            return self._handle_failure("score_response", _heuristic)
 
     def score_reasoning(self, completion: str) -> float:
         """Score reasoning quality, normalized to [-1, 1].
@@ -118,16 +179,18 @@ class OpenAICompatibleJudge:
             f"Response:\n{completion[:1500]}\n\n"
             "Score (1-10):"
         )
-        result = self._call(judge_prompt, max_tokens=5)
-        if result:
-            try:
-                raw_score = float(result.strip().split()[0])
-                return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
-            except (ValueError, IndexError):
-                pass
-
-        # Heuristic fallback
-        return _heuristic_reasoning_score(completion)
+        try:
+            result = self._call(judge_prompt, max_tokens=5)
+            raw_score = float(result.strip().split()[0])
+            return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
+        except (ValueError, IndexError):
+            return self._handle_failure(
+                "score_reasoning (unparseable)", lambda: _heuristic_reasoning_score(completion)
+            )
+        except JudgeUnavailableError:
+            return self._handle_failure(
+                "score_reasoning", lambda: _heuristic_reasoning_score(completion)
+            )
 
     def score_domain(self, prompt: str, generated: str, expected: str) -> dict:
         """Score on accuracy, completeness, faithfulness (1-5 each)."""
@@ -142,11 +205,16 @@ class OpenAICompatibleJudge:
             "3. Faithfulness: Is the answer consistent with the expected answer?\n\n"
             'Respond ONLY in JSON: {"accuracy": N, "completeness": N, "faithfulness": N}'
         )
-        result = self._call(judge_prompt)
-        try:
-            return json.loads(result)
-        except (json.JSONDecodeError, TypeError):
+
+        def _heuristic():
             return {"accuracy": 3, "completeness": 3, "faithfulness": 3}
+
+        try:
+            return json.loads(self._call(judge_prompt))
+        except (json.JSONDecodeError, TypeError):
+            return self._handle_failure("score_domain (unparseable)", _heuristic)
+        except JudgeUnavailableError:
+            return self._handle_failure("score_domain", _heuristic)
 
     def compare_ab(self, prompt: str, response_a: str, response_b: str) -> str:
         """Blind A/B comparison. Returns 'A', 'B', or 'tie'."""
@@ -158,8 +226,10 @@ class OpenAICompatibleJudge:
             "Consider helpfulness, accuracy, and clarity.\n"
             "Respond with ONLY one letter: A, B, or T (for tie)."
         )
-        result = self._call(judge_prompt, max_tokens=5)
-        result = result.strip().upper()
+        try:
+            result = self._call(judge_prompt, max_tokens=5).strip().upper()
+        except JudgeUnavailableError:
+            return self._handle_failure("compare_ab", lambda: "tie")
         if result.startswith("A"):
             return "A"
         elif result.startswith("B"):
@@ -174,7 +244,10 @@ class OpenAICompatibleJudge:
             f"Given: {answer[:300]}\n\n"
             "Respond with ONLY 'yes' or 'no'."
         )
-        result = self._call(judge_prompt, max_tokens=5)
+        try:
+            result = self._call(judge_prompt, max_tokens=5)
+        except JudgeUnavailableError:
+            return self._handle_failure("check_correctness", lambda: False)
         return result.strip().lower().startswith("y")
 
 
@@ -222,4 +295,6 @@ async def create_judge_for_tenant(
         api_base=llm_config.api_base_url,
         api_key=llm_config.api_key,
         model=llm_config.model,
+        max_retries=getattr(settings, "judge_max_retries", 3),
+        on_failure=getattr(settings, "judge_on_failure", "error"),
     )
