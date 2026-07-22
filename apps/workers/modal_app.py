@@ -8,8 +8,8 @@ provider (src.activities.train_model.run_training_core). It touches only S3 +
 the judge LLM — never Postgres, and never Redis (metrics are forced to the
 log-only sink below; those stay on the worker side).
 
-GPU type is chosen per-call by the worker via `.options(gpu=...)`, so a single
-deployed function serves every gpu_class.
+GPU type is chosen per-call by the worker via `.with_options(gpu=...)`, so a
+single deployed function serves every gpu_class.
 """
 
 import modal
