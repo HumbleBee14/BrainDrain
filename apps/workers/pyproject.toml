@@ -49,7 +49,9 @@ ml = [
     "pynvml>=12.0.0",
 ]
 gpu-cloud = [
-    "modal>=0.73.0",
+    # >=1.4.3: Function.with_options(gpu=...) for per-call GPU override
+    # (used in ModalGpuProvider); it did not exist on modal.Function before then.
+    "modal>=1.4.3",
 ]
 # Alternative PDF backend (richer structure extraction, larger install)
 pdf-ml = [

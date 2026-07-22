@@ -3,7 +3,7 @@
 Exercises the three required behaviors without a real `modal` install:
   1. Spawn-once + persist-before-poll (no existing call_id).
   2. Recover-no-respawn (existing modal_call_id short-circuits to FunctionCall.from_id).
-  3. GPU class mapped through MODAL_GPU_MAP and forwarded to .options(gpu=...).
+  3. GPU class mapped through MODAL_GPU_MAP and forwarded to .with_options(gpu=...).
 """
 
 import sys
@@ -17,7 +17,7 @@ def _install_fake_modal(
 ):
     """Install a fake `modal` module matching ModalGpuProvider's real call sites:
 
-    - modal.Function.from_name(app, fn).options(gpu=...).spawn.aio(payload) -> FunctionCall-like
+    - Function.from_name(app, fn).with_options(gpu=...).spawn.aio(payload) -> FunctionCall
     - modal.FunctionCall.from_id(call_id) -> FunctionCall-like
     - FunctionCall-like exposes .object_id and .get.aio(timeout=0)
     """
@@ -43,7 +43,7 @@ def _install_fake_modal(
     class _FunctionHandle:
         """What Function.from_name(...) returns."""
 
-        def options(self, gpu=None):
+        def with_options(self, gpu=None):
             calls["gpu"] = gpu
             return self
 

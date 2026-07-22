@@ -190,7 +190,7 @@ class ModalGpuProvider:
                 gpu,
                 base_model,
             )
-            fc = await fn.options(gpu=gpu).spawn.aio(payload)
+            fc = await fn.with_options(gpu=gpu).spawn.aio(payload)
 
             # 2. Reservation: persist BEFORE polling so a crash reconnects, no respawn.
             await self.infra.db.execute(

@@ -124,7 +124,7 @@ BrainDrain uses the deployed-app pattern exclusively
 
 ```python
 fn = modal.Function.from_name(settings.modal_app_name, settings.modal_function_name)
-fc = await fn.options(gpu=gpu).spawn.aio(payload)
+fc = await fn.with_options(gpu=gpu).spawn.aio(payload)
 ```
 
 The reason is job lifetime. An ephemeral app's lifecycle is tied to the
@@ -181,7 +181,7 @@ job (real money, twice).
    `modal.FunctionCall.from_id(existing)` and skips straight to polling. No
    new GPU is provisioned, no money is spent twice.
 2. **Spawn only if there's no existing reservation.**
-   `fc = await fn.options(gpu=gpu).spawn.aio(payload)`.
+   `fc = await fn.with_options(gpu=gpu).spawn.aio(payload)`.
 3. **Persist `fc.object_id` to `training_jobs.modal_call_id` immediately,
    before entering the poll loop.** This is the reservation write. Once it
    commits, any future retry or restart will take the "recover" branch in
@@ -279,7 +279,7 @@ All cloud-GPU config lives in `apps/workers/src/config.py`
 GPU class mapping (`apps/workers/src/constants.py`, `MODAL_GPU_MAP`) translates
 the platform's `gpu_class` values (also used for cost estimation via
 `GPU_HOURLY_RATES`) into the GPU type string Modal expects in
-`.options(gpu=...)`:
+`.with_options(gpu=...)`:
 
 | `gpu_class` | Modal GPU string |
 |---|---|
@@ -293,7 +293,7 @@ the platform's `gpu_class` values (also used for cost estimation via
 
 Anything not in the map falls back to `MODAL_DEFAULT_GPU` (`A10`). A single
 deployed function (`train`) serves every GPU class — the GPU type is chosen
-per-call via `.options(gpu=...)`, not baked into the deployed app.
+per-call via `.with_options(gpu=...)`, not baked into the deployed app.
 
 ## 7. Modal secret setup
 
