@@ -1,4 +1,5 @@
 use platform_db::models::Document;
+use platform_db::tenant::begin_tenant_tx;
 use platform_shared::enums::DocumentStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -33,6 +34,7 @@ impl DocumentRepository for PgDocumentRepo {
         let mime_type = mime_type.to_string();
         let storage_path = storage_path.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let doc = sqlx::query_as::<_, Document>(
                 r#"
                 INSERT INTO documents (tenant_id, project_id, filename, file_size, mime_type, storage_path)
@@ -46,9 +48,10 @@ impl DocumentRepository for PgDocumentRepo {
             .bind(file_size)
             .bind(&mime_type)
             .bind(&storage_path)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(doc)
         })
     }
@@ -61,6 +64,7 @@ impl DocumentRepository for PgDocumentRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Document>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let docs = sqlx::query_as::<_, Document>(
                 r#"
                 SELECT * FROM documents
@@ -73,9 +77,10 @@ impl DocumentRepository for PgDocumentRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(docs)
         })
     }
@@ -86,14 +91,16 @@ impl DocumentRepository for PgDocumentRepo {
         document_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Document>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let doc = sqlx::query_as::<_, Document>(
                 "SELECT * FROM documents WHERE id = $1 AND tenant_id = $2",
             )
             .bind(document_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(doc)
         })
     }
@@ -105,6 +112,7 @@ impl DocumentRepository for PgDocumentRepo {
         status: DocumentStatus,
     ) -> BoxFuture<'_, AppResult<Vec<Document>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let docs = sqlx::query_as::<_, Document>(
                 r#"
                 SELECT * FROM documents
@@ -115,9 +123,10 @@ impl DocumentRepository for PgDocumentRepo {
             .bind(project_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(docs)
         })
     }
@@ -129,15 +138,17 @@ impl DocumentRepository for PgDocumentRepo {
         status: DocumentStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM documents WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
             )
             .bind(project_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -151,6 +162,7 @@ impl DocumentRepository for PgDocumentRepo {
     ) -> BoxFuture<'_, AppResult<bool>> {
         let error_message = error_message.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
                 UPDATE documents
@@ -162,35 +174,40 @@ impl DocumentRepository for PgDocumentRepo {
             .bind(tenant_id)
             .bind(status.to_string())
             .bind(error_message.as_deref())
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(result.rows_affected() > 0)
         })
     }
 
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM documents WHERE project_id = $1 AND tenant_id = $2",
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE tenant_id = $1")
                     .bind(tenant_id)
-                    .fetch_one(&self.db)
+                    .fetch_one(&mut *tx)
                     .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }

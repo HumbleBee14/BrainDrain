@@ -3,8 +3,6 @@ use axum::routing::{delete, get, patch};
 use axum::{Json, Router};
 use uuid::Uuid;
 
-use platform_shared::enums::TeamRole;
-
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::inference_instance::{
@@ -12,7 +10,7 @@ use crate::dto::inference_instance::{
     UpdateInferenceInstanceLifecycleRequest,
 };
 use crate::error::AppResult;
-use crate::rbac::require_role;
+use crate::rbac::require_platform_admin;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::inference_instance_service::InferenceInstanceService;
 
@@ -43,7 +41,7 @@ pub async fn list_instances(
     State(state): State<AppState>,
     user: AuthenticatedUser,
 ) -> AppResult<Json<Vec<InferenceInstanceResponse>>> {
-    require_role(&user, TeamRole::Owner)?;
+    require_platform_admin(&user, state.config())?;
     Ok(Json(InferenceInstanceService::list(&state).await?))
 }
 
@@ -60,7 +58,7 @@ pub async fn register_instance(
     user: AuthenticatedUser,
     Json(request): Json<CreateInferenceInstanceRequest>,
 ) -> AppResult<(axum::http::StatusCode, Json<InferenceInstanceResponse>)> {
-    require_role(&user, TeamRole::Owner)?;
+    require_platform_admin(&user, state.config())?;
     let response = InferenceInstanceService::register(&state, request).await?;
     AuditLogger::log(
         state.audit_log_repo(),
@@ -92,7 +90,7 @@ pub async fn update_lifecycle(
     Path(instance_id): Path<Uuid>,
     Json(request): Json<UpdateInferenceInstanceLifecycleRequest>,
 ) -> AppResult<Json<InferenceInstanceResponse>> {
-    require_role(&user, TeamRole::Owner)?;
+    require_platform_admin(&user, state.config())?;
     let response = InferenceInstanceService::update_lifecycle(&state, instance_id, request).await?;
     AuditLogger::log(
         state.audit_log_repo(),
@@ -120,7 +118,7 @@ pub async fn delete_instance(
     user: AuthenticatedUser,
     Path(instance_id): Path<Uuid>,
 ) -> AppResult<Json<serde_json::Value>> {
-    require_role(&user, TeamRole::Owner)?;
+    require_platform_admin(&user, state.config())?;
     InferenceInstanceService::delete(&state, instance_id).await?;
     AuditLogger::log(
         state.audit_log_repo(),

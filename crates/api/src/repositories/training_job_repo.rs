@@ -1,4 +1,5 @@
 use platform_db::models::TrainingJob;
+use platform_db::tenant::begin_tenant_tx;
 use platform_shared::enums::TrainingJobStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -38,6 +39,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         let mode = mode.to_string();
         let gpu_class = gpu_class.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 INSERT INTO training_jobs
@@ -55,9 +57,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(hyperparams)
             .bind(gpu_class.as_deref())
             .bind(cost_estimate)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
@@ -81,6 +84,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         let mode = mode.to_string();
         let gpu_class = gpu_class.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 INSERT INTO training_jobs
@@ -100,9 +104,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(gpu_class.as_deref())
             .bind(cost_estimate)
             .bind(max_models)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
@@ -113,14 +118,16 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 "SELECT * FROM training_jobs WHERE id = $1 AND tenant_id = $2",
             )
             .bind(job_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
@@ -133,6 +140,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<TrainingJob>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let jobs = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 SELECT * FROM training_jobs
@@ -145,23 +153,26 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(jobs)
         })
     }
 
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2",
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -173,15 +184,17 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         status: TrainingJobStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM training_jobs WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
             )
             .bind(project_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -194,6 +207,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
     ) -> BoxFuture<'_, AppResult<bool>> {
         let workflow_id = workflow_id.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
                 UPDATE training_jobs
@@ -204,9 +218,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(job_id)
             .bind(tenant_id)
             .bind(&workflow_id)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(result.rows_affected() > 0)
         })
     }
@@ -217,6 +232,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 UPDATE training_jobs
@@ -227,9 +243,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             )
             .bind(job_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
@@ -240,6 +257,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 UPDATE training_jobs
@@ -250,9 +268,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             )
             .bind(job_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
@@ -263,6 +282,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         job_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 UPDATE training_jobs
@@ -273,22 +293,25 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             )
             .bind(job_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(job)
         })
     }
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -299,14 +322,16 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         status: TrainingJobStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1 AND status = $2",
             )
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }

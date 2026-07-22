@@ -1,4 +1,5 @@
 use platform_db::models::TeamMember;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -29,6 +30,7 @@ impl TeamMemberRepository for PgTeamMemberRepo {
         let role = role.to_string();
         let invited_by = invited_by.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             // Use ON CONFLICT DO NOTHING to handle race conditions (e.g. auto-create owner).
             // If the row already exists, RETURNING returns nothing, so we fall back to SELECT.
             let maybe = sqlx::query_as::<_, TeamMember>(
@@ -44,11 +46,14 @@ impl TeamMemberRepository for PgTeamMemberRepo {
             .bind(&email)
             .bind(&role)
             .bind(invited_by.as_deref())
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
             match maybe {
-                Some(member) => Ok(member),
+                Some(member) => {
+                    tx.commit().await?;
+                    Ok(member)
+                }
                 None => {
                     // Row already existed — fetch it
                     let member = sqlx::query_as::<_, TeamMember>(
@@ -56,8 +61,9 @@ impl TeamMemberRepository for PgTeamMemberRepo {
                     )
                     .bind(tenant_id)
                     .bind(&user_id)
-                    .fetch_one(&self.db)
+                    .fetch_one(&mut *tx)
                     .await?;
+                    tx.commit().await?;
                     Ok(member)
                 }
             }
@@ -71,14 +77,16 @@ impl TeamMemberRepository for PgTeamMemberRepo {
     ) -> BoxFuture<'_, AppResult<Option<TeamMember>>> {
         let user_id = user_id.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let member = sqlx::query_as::<_, TeamMember>(
                 "SELECT * FROM team_members WHERE tenant_id = $1 AND user_id = $2",
             )
             .bind(tenant_id)
             .bind(&user_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(member)
         })
     }
@@ -86,20 +94,23 @@ impl TeamMemberRepository for PgTeamMemberRepo {
     fn get_role(&self, tenant_id: Uuid, user_id: &str) -> BoxFuture<'_, AppResult<Option<String>>> {
         let user_id = user_id.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let role = sqlx::query_scalar::<_, String>(
                 "SELECT role FROM team_members WHERE tenant_id = $1 AND user_id = $2",
             )
             .bind(tenant_id)
             .bind(&user_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(role)
         })
     }
 
     fn list_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<Vec<TeamMember>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let members = sqlx::query_as::<_, TeamMember>(
                 r#"
                 SELECT * FROM team_members
@@ -109,9 +120,10 @@ impl TeamMemberRepository for PgTeamMemberRepo {
                 "#,
             )
             .bind(tenant_id)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(members)
         })
     }
@@ -119,13 +131,15 @@ impl TeamMemberRepository for PgTeamMemberRepo {
     fn email_exists(&self, tenant_id: Uuid, email: &str) -> BoxFuture<'_, AppResult<bool>> {
         let email = email.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let exists: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM team_members WHERE tenant_id = $1 AND email = $2)",
             )
             .bind(tenant_id)
             .bind(&email)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
             Ok(exists)
         })
     }
@@ -139,6 +153,7 @@ impl TeamMemberRepository for PgTeamMemberRepo {
         let user_id = user_id.to_string();
         let role = role.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let member = sqlx::query_as::<_, TeamMember>(
                 r#"
                 UPDATE team_members
@@ -150,9 +165,10 @@ impl TeamMemberRepository for PgTeamMemberRepo {
             .bind(tenant_id)
             .bind(&user_id)
             .bind(&role)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(member)
         })
     }
@@ -160,6 +176,7 @@ impl TeamMemberRepository for PgTeamMemberRepo {
     fn remove(&self, tenant_id: Uuid, user_id: &str) -> BoxFuture<'_, AppResult<()>> {
         let user_id = user_id.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             // Atomic check: only delete if the member is NOT the last owner.
             // The subquery prevents TOCTOU races where concurrent requests
             // both pass the owner check and remove the last owner.
@@ -175,7 +192,7 @@ impl TeamMemberRepository for PgTeamMemberRepo {
             )
             .bind(tenant_id)
             .bind(&user_id)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
             if result.rows_affected() == 0 {
@@ -184,19 +201,22 @@ impl TeamMemberRepository for PgTeamMemberRepo {
                 });
             }
 
+            tx.commit().await?;
             Ok(())
         })
     }
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM team_members WHERE tenant_id = $1",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }

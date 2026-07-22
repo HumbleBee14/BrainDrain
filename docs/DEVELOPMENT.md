@@ -291,12 +291,45 @@ Platform/
 - **ObjectStorage trait** — S3 backend is swappable (AWS S3, Cloudflare R2, MinIO)
 - **WorkflowOrchestrator trait** — Temporal is swappable for any orchestrator (object-safe via BoxFuture)
 - **TrainingEngine Protocol** — Unsloth is swappable for any ML backend (PEFT, axolotl, etc.)
-- **Multi-tenancy: repo + RLS** — every query requires tenant_id, PostgreSQL RLS as defense-in-depth
+- **Multi-tenancy: repo + RLS** — every query requires `tenant_id` (primary isolation), with PostgreSQL Row-Level Security as an enforced second layer. See "Database roles & tenant isolation" below.
+- **Platform admin** — infrastructure/admin endpoints (e.g. the inference-instance fleet) require a platform admin, not a tenant `Owner`. Grant via the `PLATFORM_ADMIN_USER_IDS` (JWT `sub`) / `PLATFORM_ADMIN_EMAILS` allowlists; both empty = deny-all.
 - **Dual auth** — Clerk JWT for platform users, API keys for model consumers (separate extractors)
 - **Dev token auth** — `dev_{tenant_uuid}_{user_id}` format for local development without Clerk
 - **Soft deletes** — projects use `deleted_at` instead of hard delete
 - **Strategy pattern** — training modes and evaluation suites are registered classes, not if-elif chains
 - **Protocol-based DI** — Python workers use `InfraContainer` with typed protocols, not globals
+
+### Database roles & tenant isolation
+
+Tenant isolation uses two PostgreSQL connections with different privileges:
+
+- **Owner (`DATABASE_URL`)** — owns the schema. Runs migrations, billing-partition
+  DDL, admin/infra endpoints, and the few genuinely cross-tenant operations
+  (batched billing writes, the stale-deployment reaper, the global adapter-cap
+  count, auth-by-hash / invitation acceptance before a tenant is known). Bypasses
+  RLS by virtue of ownership.
+- **`app_rls` (`DATABASE_RLS_URL`)** — a least-privilege role (`NOSUPERUSER
+  NOBYPASSRLS`, not the owner) created by migration `017`. Carries all tenant
+  request traffic. Tenant-scoped repository methods run each query inside a
+  transaction that sets `app.tenant_id` (`begin_tenant_tx`), so RLS filters rows
+  by tenant and **fails closed** (zero rows) when no tenant context is set.
+
+`WHERE tenant_id` stays in every query as the primary filter; RLS is an enforced
+second layer. At startup the API asserts the RLS connection is actually subject
+to RLS (`row_security_active`) and refuses to boot otherwise. If
+`DATABASE_RLS_URL` is unset, tenant traffic falls back to the owner connection
+and the RLS layer is inactive (a startup warning is emitted) — set it in every
+real deployment.
+
+**Provisioning `app_rls`:**
+- **Dev** — migration `017` creates the role automatically with a local-only
+  default password; `DATABASE_RLS_URL` in `.env.example` matches it.
+- **Production** — create the role with a STRONG password *before* running
+  migrations (migration `017` skips creation if it already exists), then set
+  `APP_RLS_PASSWORD` / `DATABASE_RLS_URL`:
+  ```sql
+  CREATE ROLE app_rls LOGIN PASSWORD '<strong>' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  ```
 
 ---
 

@@ -1,4 +1,5 @@
 use platform_db::models::Project;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -31,6 +32,7 @@ impl ProjectRepository for PgProjectRepo {
         let description = description.map(|s| s.to_string());
         let task_type = task_type.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let project = sqlx::query_as::<_, Project>(
                 r#"
                 INSERT INTO projects (tenant_id, name, description, task_type)
@@ -42,9 +44,10 @@ impl ProjectRepository for PgProjectRepo {
             .bind(&name)
             .bind(description.as_deref())
             .bind(task_type.as_deref())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(project)
         })
     }
@@ -61,6 +64,7 @@ impl ProjectRepository for PgProjectRepo {
         let description = description.map(|s| s.to_string());
         let task_type = task_type.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let project = sqlx::query_as::<_, Project>(
                 r#"
                 INSERT INTO projects (tenant_id, name, description, task_type)
@@ -74,9 +78,10 @@ impl ProjectRepository for PgProjectRepo {
             .bind(description.as_deref())
             .bind(task_type.as_deref())
             .bind(max_count)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(project)
         })
     }
@@ -87,6 +92,7 @@ impl ProjectRepository for PgProjectRepo {
         project_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Project>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let project = sqlx::query_as::<_, Project>(
                 r#"
                 SELECT * FROM projects
@@ -95,9 +101,10 @@ impl ProjectRepository for PgProjectRepo {
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(project)
         })
     }
@@ -109,6 +116,7 @@ impl ProjectRepository for PgProjectRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Project>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let projects = sqlx::query_as::<_, Project>(
                 r#"
                 SELECT * FROM projects
@@ -120,22 +128,25 @@ impl ProjectRepository for PgProjectRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(projects)
         })
     }
 
     fn count(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM projects WHERE tenant_id = $1 AND deleted_at IS NULL",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -152,6 +163,7 @@ impl ProjectRepository for PgProjectRepo {
         let description = description.map(|s| s.to_string());
         let task_type = task_type.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let project = sqlx::query_as::<_, Project>(
                 r#"
                 UPDATE projects
@@ -168,9 +180,10 @@ impl ProjectRepository for PgProjectRepo {
             .bind(name.as_deref())
             .bind(description.as_deref())
             .bind(task_type.as_deref())
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(project)
         })
     }
@@ -183,6 +196,7 @@ impl ProjectRepository for PgProjectRepo {
     ) -> BoxFuture<'_, AppResult<Option<Project>>> {
         let status = status.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let project = sqlx::query_as::<_, Project>(
                 r#"
                 UPDATE projects
@@ -194,15 +208,17 @@ impl ProjectRepository for PgProjectRepo {
             .bind(project_id)
             .bind(tenant_id)
             .bind(&status)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(project)
         })
     }
 
     fn delete(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
                 UPDATE projects
@@ -212,9 +228,10 @@ impl ProjectRepository for PgProjectRepo {
             )
             .bind(project_id)
             .bind(tenant_id)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(result.rows_affected() > 0)
         })
     }

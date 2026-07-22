@@ -1,4 +1,5 @@
 use platform_db::models::Dataset;
+use platform_db::tenant::begin_tenant_tx;
 use platform_shared::enums::DatasetStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -28,6 +29,7 @@ impl DatasetRepository for PgDatasetRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Dataset>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let datasets = sqlx::query_as::<_, Dataset>(
                 r#"
                 SELECT * FROM datasets
@@ -40,9 +42,10 @@ impl DatasetRepository for PgDatasetRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(datasets)
         })
     }
@@ -53,28 +56,32 @@ impl DatasetRepository for PgDatasetRepo {
         dataset_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let dataset = sqlx::query_as::<_, Dataset>(
                 "SELECT * FROM datasets WHERE id = $1 AND tenant_id = $2",
             )
             .bind(dataset_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(dataset)
         })
     }
 
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM datasets WHERE project_id = $1 AND tenant_id = $2",
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -86,15 +93,17 @@ impl DatasetRepository for PgDatasetRepo {
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM datasets WHERE project_id = $1 AND tenant_id = $2 AND status = $3",
             )
             .bind(project_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -106,6 +115,7 @@ impl DatasetRepository for PgDatasetRepo {
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let dataset = sqlx::query_as::<_, Dataset>(
                 r#"
                 UPDATE datasets SET status = $3, updated_at = NOW()
@@ -116,9 +126,10 @@ impl DatasetRepository for PgDatasetRepo {
             .bind(dataset_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(dataset)
         })
     }
