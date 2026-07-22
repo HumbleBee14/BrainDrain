@@ -55,3 +55,7 @@ CLAUDE.md
 
 # Roopik IDE metadata
 .roopik/
+
+# Internal / local-only (not committed to repo)
+CLAUDE.md
+docs/superpowers/

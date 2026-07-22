@@ -3,6 +3,7 @@ pub mod audit_log;
 pub mod billing;
 pub mod common;
 pub mod dashboard;
+pub mod datagen;
 pub mod dataset;
 pub mod document;
 pub mod evaluation;

@@ -3,6 +3,7 @@ pub mod traits;
 pub mod api_key_repo;
 pub mod audit_log_repo;
 pub mod billing_event_repo;
+pub mod data_guide_repo;
 pub mod dataset_repo;
 pub mod document_repo;
 pub mod evaluation_repo;

@@ -19,6 +19,12 @@ from temporalio.worker import Worker
 
 from src.config import WorkerSettings
 from src.infra import init_container
+from src.workflows.datagen import (
+    GenerateDatasetWorkflow,
+    GenerateFacetsWorkflow,
+    GeneratePreviewWorkflow,
+    RefineGuidanceWorkflow,
+)
 from src.workflows.evaluate import EvaluateWorkflow
 from src.workflows.export import ExportWorkflow
 from src.workflows.full_pipeline import FullPipelineWorkflow
@@ -141,6 +147,12 @@ async def main() -> None:
     # Import and instantiate activity classes with injected infrastructure
     from src.activities.build_dataset import BuildDatasetActivity
     from src.activities.chunk_text import ChunkTextActivity
+    from src.activities.datagen_activities import (
+        GenerateFacetsActivity,
+        GeneratePreviewActivity,
+        RefineGuidanceActivity,
+        UpdateDataGuideActivity,
+    )
     from src.activities.export_gguf import ExportGgufActivity
     from src.activities.generate_pairs import GeneratePairsActivity
     from src.activities.parse_document import ParseDocumentActivity
@@ -160,6 +172,10 @@ async def main() -> None:
         ChunkTextActivity(infra),
         BuildDatasetActivity(infra),
         GetDocumentInfoActivity(infra),
+        GenerateFacetsActivity(infra),
+        GeneratePreviewActivity(infra),
+        RefineGuidanceActivity(infra),
+        UpdateDataGuideActivity(infra),
     ]
 
     # GPU-bound activities (training, evaluation)
@@ -184,6 +200,10 @@ async def main() -> None:
         EvaluateWorkflow,
         ExportWorkflow,
         FullPipelineWorkflow,
+        GenerateFacetsWorkflow,
+        GeneratePreviewWorkflow,
+        RefineGuidanceWorkflow,
+        GenerateDatasetWorkflow,
     ]
 
     mode = settings.worker_mode

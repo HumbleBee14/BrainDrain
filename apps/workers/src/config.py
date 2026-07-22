@@ -54,6 +54,13 @@ class WorkerSettings(BaseSettings):
     dataset_filter_backend: str = "heuristic"  # "heuristic"
     dedup_backend: str = "hash"  # "hash"
     judge_backend: str = "openai"  # "openai"
+    datagen_facet_backend: str = "llm"  # "llm"
+    datagen_pair_backend: str = "llm"  # "llm"
+    datagen_refiner_backend: str = "llm"  # "llm"
+    datagen_faithfulness_backend: str = "llm"  # "llm"
+
+    # Data Studio synthetic data-generation
+    faithfulness_gate_enabled: bool = True
 
     # Logging
     log_level: str = "INFO"
@@ -79,6 +86,7 @@ class WorkerSettings(BaseSettings):
     timeout_holdout_eval_hours: int = 1  # holdout validation during training
     timeout_eval_hours: int = 1  # full evaluation suite
     timeout_export_hours: int = 2  # GGUF export + quantize
+    timeout_datagen_interactive_minutes: int = 5  # Data Studio facet/preview/refine (LLM-backed)
 
     # Billing
     min_billable_seconds: int = 300  # 5 min — failed jobs shorter than this get voided

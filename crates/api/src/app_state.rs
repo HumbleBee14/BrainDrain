@@ -9,6 +9,7 @@ use crate::error::AppResult;
 use crate::repositories::api_key_repo::PgApiKeyRepo;
 use crate::repositories::audit_log_repo::PgAuditLogRepo;
 use crate::repositories::billing_event_repo::PgBillingEventRepo;
+use crate::repositories::data_guide_repo::PgDataGuideRepo;
 use crate::repositories::dataset_repo::PgDatasetRepo;
 use crate::repositories::document_repo::PgDocumentRepo;
 use crate::repositories::evaluation_repo::PgEvaluationRepo;
@@ -22,10 +23,10 @@ use crate::repositories::team_member_repo::PgTeamMemberRepo;
 use crate::repositories::tenant_repo::PgTenantRepo;
 use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
-    ApiKeyRepository, AuditLogRepository, BillingEventRepository, DatasetRepository,
-    DocumentRepository, EvaluationRepository, ExportRepository, InferenceInstanceRepository,
-    InvitationRepository, ModelRepository, NotificationRepository, ProjectRepository,
-    TeamMemberRepository, TenantRepository, TrainingJobRepository,
+    ApiKeyRepository, AuditLogRepository, BillingEventRepository, DataGuideRepository,
+    DatasetRepository, DocumentRepository, EvaluationRepository, ExportRepository,
+    InferenceInstanceRepository, InvitationRepository, ModelRepository, NotificationRepository,
+    ProjectRepository, TeamMemberRepository, TenantRepository, TrainingJobRepository,
 };
 use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_outbox::BillingOutboxRelay;
@@ -64,6 +65,7 @@ struct AppStateInner {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub document_repo: Arc<dyn DocumentRepository>,
     pub dataset_repo: Arc<dyn DatasetRepository>,
+    pub data_guide_repo: Arc<dyn DataGuideRepository>,
     pub training_job_repo: Arc<dyn TrainingJobRepository>,
     pub model_repo: Arc<dyn ModelRepository>,
     pub evaluation_repo: Arc<dyn EvaluationRepository>,
@@ -172,6 +174,8 @@ impl AppState {
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db.clone()));
         let document_repo: Arc<dyn DocumentRepository> = Arc::new(PgDocumentRepo::new(db.clone()));
         let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db.clone()));
+        let data_guide_repo: Arc<dyn DataGuideRepository> =
+            Arc::new(PgDataGuideRepo::new(db.clone()));
         let training_job_repo: Arc<dyn TrainingJobRepository> =
             Arc::new(PgTrainingJobRepo::new(db.clone()));
         let model_repo: Arc<dyn ModelRepository> = Arc::new(PgModelRepo::new(db.clone()));
@@ -310,6 +314,7 @@ impl AppState {
                 project_repo,
                 document_repo,
                 dataset_repo,
+                data_guide_repo,
                 training_job_repo,
                 model_repo,
                 evaluation_repo,
@@ -376,6 +381,10 @@ impl AppState {
 
     pub fn dataset_repo(&self) -> &dyn DatasetRepository {
         &*self.inner.dataset_repo
+    }
+
+    pub fn data_guide_repo(&self) -> &dyn DataGuideRepository {
+        &*self.inner.data_guide_repo
     }
 
     pub fn training_job_repo(&self) -> &dyn TrainingJobRepository {

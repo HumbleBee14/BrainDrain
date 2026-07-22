@@ -72,6 +72,21 @@ export type { InferenceInstanceLifecycleState } from "./InferenceInstanceLifecyc
 // Model versioning (from crates/api/src/dto/model.rs)
 export type { RollbackModelRequest } from "./RollbackModelRequest";
 
+// Data Studio (from crates/api/src/dto/datagen.rs)
+export type { DataGuideResponse } from "./DataGuideResponse";
+export type { DataGuideStatus } from "./DataGuideStatus";
+export type { Facet } from "./Facet";
+export type { PreviewSample } from "./PreviewSample";
+export type { SampleRating } from "./SampleRating";
+export type { SampleRatingItem } from "./SampleRatingItem";
+export type { CreateDataGuideRequest } from "./CreateDataGuideRequest";
+export type { GenerateFacetsRequest } from "./GenerateFacetsRequest";
+export type { UpdateFacetsRequest } from "./UpdateFacetsRequest";
+export type { GeneratePreviewRequest } from "./GeneratePreviewRequest";
+export type { RateSamplesRequest } from "./RateSamplesRequest";
+export type { UpdateGuidanceRequest } from "./UpdateGuidanceRequest";
+export type { GenerateDatasetRequest } from "./GenerateDatasetRequest";
+
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {
   data: T[];

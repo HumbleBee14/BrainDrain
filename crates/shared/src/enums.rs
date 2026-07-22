@@ -293,6 +293,36 @@ pub enum InvitationStatus {
     Revoked,
 }
 
+/// Status of a data guide through the guided synthesis pipeline.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum DataGuideStatus {
+    Draft,
+    GeneratingFacets,
+    FacetsReady,
+    GeneratingPreview,
+    Ready,
+    Generating,
+    Completed,
+    Failed,
+}
+
+/// User rating for a generated preview sample.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum SampleRating {
+    Realistic,
+    NeedsWork,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +492,15 @@ mod tests {
             InferenceInstanceLifecycleState::Retired.to_string(),
             "retired"
         );
+    }
+
+    #[test]
+    fn data_guide_status_roundtrips_snake_case() {
+        assert_eq!(DataGuideStatus::FacetsReady.to_string(), "facets_ready");
+        assert_eq!(
+            "generating_preview".parse::<DataGuideStatus>().unwrap(),
+            DataGuideStatus::GeneratingPreview
+        );
+        assert_eq!(SampleRating::NeedsWork.to_string(), "needs_work");
     }
 }

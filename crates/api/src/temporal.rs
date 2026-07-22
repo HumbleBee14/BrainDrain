@@ -76,6 +76,52 @@ pub trait WorkflowOrchestrator: Send + Sync {
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
+    fn start_generate_facets(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        num_facets: u32,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
+    fn start_generate_preview(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        facets: serde_json::Value,
+        num_samples: u32,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
+    fn start_refine_guidance(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        current_guidance: &str,
+        rated: serde_json::Value,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
+    fn start_generate_dataset(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        facets: serde_json::Value,
+        document_ids: Vec<Uuid>,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
+
     fn start_train(
         &self,
         tenant_id: Uuid,
@@ -234,6 +280,27 @@ impl TemporalClient {
     }
 }
 
+/// Build a workflow id of the form `{prefix}-{id}-{timestamp}`.
+fn build_workflow_id(prefix: &str, id: Uuid, timestamp: i64) -> String {
+    format!("{prefix}-{id}-{timestamp}")
+}
+
+fn build_facets_workflow_id(data_guide_id: Uuid, timestamp: i64) -> String {
+    build_workflow_id("facets", data_guide_id, timestamp)
+}
+
+fn build_preview_workflow_id(data_guide_id: Uuid, timestamp: i64) -> String {
+    build_workflow_id("preview", data_guide_id, timestamp)
+}
+
+fn build_refine_guidance_workflow_id(data_guide_id: Uuid, timestamp: i64) -> String {
+    build_workflow_id("refine-guidance", data_guide_id, timestamp)
+}
+
+fn build_generate_dataset_workflow_id(data_guide_id: Uuid, timestamp: i64) -> String {
+    build_workflow_id("generate-dataset", data_guide_id, timestamp)
+}
+
 impl WorkflowOrchestrator for TemporalClient {
     fn start_ingest(
         &self,
@@ -280,6 +347,147 @@ impl WorkflowOrchestrator for TemporalClient {
                     doc_ids,
                     task_type,
                     config,
+                ]),
+                None,
+                &trace_ctx,
+            )
+            .await
+        })
+    }
+
+    fn start_generate_facets(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        num_facets: u32,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let guidance = guidance.to_string();
+        Box::pin(async move {
+            let workflow_id =
+                build_facets_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
+
+            self.start_workflow_on_queue(
+                "GenerateFacetsWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    data_guide_id.to_string(),
+                    task_type,
+                    guidance,
+                    num_facets,
+                ]),
+                None,
+                &trace_ctx,
+            )
+            .await
+        })
+    }
+
+    fn start_generate_preview(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        facets: serde_json::Value,
+        num_samples: u32,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let guidance = guidance.to_string();
+        Box::pin(async move {
+            let workflow_id =
+                build_preview_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
+
+            self.start_workflow_on_queue(
+                "GeneratePreviewWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    data_guide_id.to_string(),
+                    task_type,
+                    guidance,
+                    facets,
+                    num_samples,
+                ]),
+                None,
+                &trace_ctx,
+            )
+            .await
+        })
+    }
+
+    fn start_refine_guidance(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        current_guidance: &str,
+        rated: serde_json::Value,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let current_guidance = current_guidance.to_string();
+        Box::pin(async move {
+            let workflow_id =
+                build_refine_guidance_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
+
+            self.start_workflow_on_queue(
+                "RefineGuidanceWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    data_guide_id.to_string(),
+                    task_type,
+                    current_guidance,
+                    rated,
+                ]),
+                None,
+                &trace_ctx,
+            )
+            .await
+        })
+    }
+
+    fn start_generate_dataset(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        data_guide_id: Uuid,
+        task_type: &str,
+        guidance: &str,
+        facets: serde_json::Value,
+        document_ids: Vec<Uuid>,
+        trace_ctx: TraceContext,
+    ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
+        let task_type = task_type.to_string();
+        let guidance = guidance.to_string();
+        let document_ids: Vec<String> = document_ids.iter().map(|id| id.to_string()).collect();
+        Box::pin(async move {
+            let workflow_id =
+                build_generate_dataset_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
+
+            self.start_workflow_on_queue(
+                "GenerateDatasetWorkflow",
+                &workflow_id,
+                serde_json::json!([
+                    tenant_id.to_string(),
+                    project_id.to_string(),
+                    data_guide_id.to_string(),
+                    task_type,
+                    guidance,
+                    facets,
+                    document_ids,
                 ]),
                 None,
                 &trace_ctx,
@@ -487,4 +695,15 @@ impl WorkflowOrchestrator for TemporalClient {
 fn base64_encode(input: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn facets_workflow_id_format() {
+        let id = build_facets_workflow_id(uuid::Uuid::nil(), 123);
+        assert!(id.starts_with("facets-"));
+    }
 }

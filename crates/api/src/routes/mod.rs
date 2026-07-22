@@ -4,6 +4,7 @@ pub mod audit_logs;
 pub mod billing;
 pub mod catalog;
 pub mod dashboard;
+pub mod datagen;
 pub mod datasets;
 pub mod deployments;
 pub mod documents;
@@ -64,6 +65,7 @@ fn v1_router() -> Router<AppState> {
         .merge(projects::router())
         .merge(documents::router())
         .merge(pipeline::router())
+        .merge(datagen::router())
         .merge(datasets::router())
         .merge(training::router())
         .merge(catalog::router())
@@ -107,6 +109,16 @@ fn v1_router() -> Router<AppState> {
         datasets::get_dataset,
         datasets::preview_dataset,
         datasets::get_parsed_content,
+        // Data Studio
+        datagen::create_data_guide,
+        datagen::get_data_guide,
+        datagen::start_facets,
+        datagen::update_facets,
+        datagen::start_preview,
+        datagen::rate_samples,
+        datagen::refine_guidance,
+        datagen::update_guidance,
+        datagen::generate_dataset,
         // Training
         training::create_training_job,
         training::list_training_jobs,
@@ -191,6 +203,18 @@ fn v1_router() -> Router<AppState> {
         // Datasets
         crate::dto::dataset::DatasetResponse,
         datasets::ParsedContentResponse,
+        // Data Studio
+        crate::dto::datagen::Facet,
+        crate::dto::datagen::PreviewSample,
+        crate::dto::datagen::DataGuideResponse,
+        crate::dto::datagen::CreateDataGuideRequest,
+        crate::dto::datagen::GenerateFacetsRequest,
+        crate::dto::datagen::UpdateFacetsRequest,
+        crate::dto::datagen::GeneratePreviewRequest,
+        crate::dto::datagen::SampleRatingItem,
+        crate::dto::datagen::RateSamplesRequest,
+        crate::dto::datagen::UpdateGuidanceRequest,
+        crate::dto::datagen::GenerateDatasetRequest,
         // Pipeline
         crate::dto::pipeline::TriggerParseResponse,
         crate::dto::pipeline::TriggerRefineRequest,
@@ -272,6 +296,8 @@ fn v1_router() -> Router<AppState> {
         platform_shared::enums::EvaluationStatus,
         platform_shared::enums::PipelineStage,
         platform_shared::enums::TaskType,
+        platform_shared::enums::DataGuideStatus,
+        platform_shared::enums::SampleRating,
         platform_shared::enums::Plan,
         platform_shared::enums::BillingOperation,
         platform_shared::enums::GpuClass,
@@ -297,6 +323,7 @@ fn v1_router() -> Router<AppState> {
         (name = "Documents", description = "Document upload and management"),
         (name = "Pipeline", description = "Pipeline trigger and status"),
         (name = "Datasets", description = "Dataset management and preview"),
+        (name = "Data Studio", description = "Guided synthetic-data generation sessions"),
         (name = "Training", description = "Training job management and models"),
         (name = "Evaluations", description = "Model evaluation"),
         (name = "Exports", description = "Dataset and model exports"),

@@ -68,6 +68,23 @@ pub struct Dataset {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct DataGuide {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub project_id: Uuid,
+    pub task_type: String,
+    pub status: String,
+    pub guidance: String,
+    pub facets: serde_json::Value,
+    pub preview_samples: serde_json::Value,
+    pub refinement_history: serde_json::Value,
+    pub config: serde_json::Value,
+    pub dataset_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct TrainingJob {
     pub id: Uuid,
     pub tenant_id: Uuid,

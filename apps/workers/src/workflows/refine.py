@@ -59,6 +59,8 @@ class RefineWorkflow:
                 chunks_storage_path=chunk_result.chunks_storage_path,
                 task_type=task_type,
                 pairs_per_chunk=config.get("pairs_per_chunk", 5),
+                guidance=config.get("guidance", ""),
+                facets=config.get("facets"),
             ),
             start_to_close_timeout=timeouts.generate_pairs_activity(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
