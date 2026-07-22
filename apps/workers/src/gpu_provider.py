@@ -130,8 +130,7 @@ class ModalGpuProvider:
             import modal  # noqa: F401
         except ImportError as e:
             raise RuntimeError(
-                "Modal is not installed. Install the gpu-cloud extra: "
-                "uv sync --extra gpu-cloud"
+                "Modal is not installed. Install the gpu-cloud extra: uv sync --extra gpu-cloud"
             ) from e
 
     def _resolve_gpu(self, gpu_class: str | None) -> str:

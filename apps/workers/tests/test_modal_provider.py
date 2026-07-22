@@ -12,8 +12,9 @@ import types
 import pytest
 
 
-def _install_fake_modal(monkeypatch, *, spawn_result, timeouts_before_result=1,
-                         from_id_result=None):
+def _install_fake_modal(
+    monkeypatch, *, spawn_result, timeouts_before_result=1, from_id_result=None
+):
     """Install a fake `modal` module matching ModalGpuProvider's real call sites:
 
     - modal.Function.from_name(app, fn).options(gpu=...).spawn.aio(payload) -> FunctionCall-like
@@ -117,10 +118,21 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
     prov = _make_provider(db)
 
     out = await prov.run_training(
-        tenant_id="t", training_job_id="j", dataset_path="p", base_model="m",
-        method="lora", mode="quick", hyperparams={}, gpu_class="A100-80GB",
-        llm_config={"api_base_url": "u", "api_key": "k", "model": "m",
-                    "max_tokens": 1, "is_custom": False},
+        tenant_id="t",
+        training_job_id="j",
+        dataset_path="p",
+        base_model="m",
+        method="lora",
+        mode="quick",
+        hyperparams={},
+        gpu_class="A100-80GB",
+        llm_config={
+            "api_base_url": "u",
+            "api_key": "k",
+            "model": "m",
+            "max_tokens": 1,
+            "is_custom": False,
+        },
     )
 
     assert out["adapter_path"] == "s3://a"
@@ -137,19 +149,30 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
 async def test_recovers_without_respawn(monkeypatch):
     monkeypatch.setattr("asyncio.sleep", _noop_sleep)
     calls = _install_fake_modal(
-        monkeypatch, spawn_result={"x": 1},
-        from_id_result={"adapter_path": "s3://recovered", "adapter_size_bytes": 2,
-                        "metrics": {}},
+        monkeypatch,
+        spawn_result={"x": 1},
+        from_id_result={"adapter_path": "s3://recovered", "adapter_size_bytes": 2, "metrics": {}},
     )
     monkeypatch.setattr("temporalio.activity.heartbeat", lambda *a, **k: None)
     db = _FakeDB(existing_call_id="call-existing")
     prov = _make_provider(db)
 
     out = await prov.run_training(
-        tenant_id="t", training_job_id="j", dataset_path="p", base_model="m",
-        method="lora", mode="quick", hyperparams={}, gpu_class="A10G",
-        llm_config={"api_base_url": "u", "api_key": "k", "model": "m",
-                    "max_tokens": 1, "is_custom": False},
+        tenant_id="t",
+        training_job_id="j",
+        dataset_path="p",
+        base_model="m",
+        method="lora",
+        mode="quick",
+        hyperparams={},
+        gpu_class="A10G",
+        llm_config={
+            "api_base_url": "u",
+            "api_key": "k",
+            "model": "m",
+            "max_tokens": 1,
+            "is_custom": False,
+        },
     )
 
     assert out["adapter_path"] == "s3://recovered"
