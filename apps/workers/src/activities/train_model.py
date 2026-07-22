@@ -453,6 +453,7 @@ async def run_training_core(
             s3=s3,
             bucket=s3_bucket,
             llm_config=llm_config,
+            settings=settings,
         )
 
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
@@ -736,7 +737,14 @@ class AlignedStrategy:
         )
         llm_config = kwargs.get("llm_config")
         metrics_dpo = _train_dpo(
-            model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config=llm_config
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            llm_config=llm_config,
+            settings=kwargs.get("settings"),
         )
         return {**metrics_sft, "dpo": metrics_dpo}
 
@@ -765,7 +773,14 @@ class ReasoningStrategy:
             bucket=bucket,
         )
         metrics_grpo = _train_grpo(
-            model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config=llm_config
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            llm_config=llm_config,
+            settings=kwargs.get("settings"),
         )
         return {**metrics_sft, "grpo": metrics_grpo}
 
@@ -842,14 +857,14 @@ def _train_sft(
 # -- DPO Training --
 
 
-def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config):
+def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config, settings=None):
     """Run DPO (Direct Preference Optimization) training."""
     from trl import DPOConfig, DPOTrainer
 
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase="dpo")
 
-    dpo_dataset = _create_dpo_pairs(dataset, tokenizer, llm_config)
+    dpo_dataset = _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings)
 
     dpo_epochs = max(1, hp.get("num_train_epochs", 3) // 2)
     training_args = DPOConfig(
@@ -888,7 +903,7 @@ def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config
 # -- GRPO Training --
 
 
-def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config):
+def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config, settings=None):
     """Run GRPO (Group Relative Policy Optimization) for reasoning tasks."""
     from trl import GRPOConfig, GRPOTrainer
 
@@ -918,6 +933,8 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_confi
         api_base=llm_config.api_base_url,
         api_key=llm_config.api_key,
         model=llm_config.model,
+        max_retries=getattr(settings, "judge_max_retries", 3),
+        on_failure=getattr(settings, "judge_on_failure", "error"),
     )
 
     def reasoning_reward(completions: list[str], **kwargs) -> list[float]:
@@ -1182,45 +1199,98 @@ def _format_chatml(messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def _create_dpo_pairs(dataset, tokenizer, llm_config):
-    """Create DPO preference pairs using per-tenant LLM judge."""
+def _normalize_text(s: str) -> str:
+    """Whitespace/case-insensitive normalization for near-identical detection."""
+    return " ".join(s.lower().split())
+
+
+def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
+    """Build on-policy, judge-filtered DPO preference pairs.
+
+    For each SFT example the dataset's gold assistant response is the `chosen`
+    answer; a fresh response sampled from the CURRENT model for the same prompt
+    is the `rejected` answer. This is the standard on-policy construction (the
+    model learns to prefer the gold answer over what it would produce itself),
+    replacing the previous approach that used the gold response truncated to a
+    third of its length — which only taught the model that longer is better.
+
+    A judge filters the pairs: a pair is dropped when the sampled response is
+    empty, near-identical to gold (no real preference signal), or judged
+    *better* than gold (so we never label a genuinely-better answer as
+    rejected). If the judge is unavailable, `on_failure='error'` (default) makes
+    this raise rather than silently building noisy pairs.
+
+    Configurable via hp: `max_dpo_pairs` (cap the number of pairs / generations,
+    default all), `dpo_gen_max_new_tokens` (default 256), `dpo_judge_filter`
+    (default True).
+    """
     from datasets import Dataset
+
+    from src.backends.model_inference import get as get_inference
 
     judge = OpenAICompatibleJudge(
         api_base=llm_config.api_base_url,
         api_key=llm_config.api_key,
         model=llm_config.model,
+        max_retries=getattr(settings, "judge_max_retries", 3),
+        on_failure=getattr(settings, "judge_on_failure", "error"),
     )
-    chosen_texts = []
-    rejected_texts = []
+    inference = get_inference("hf")
+
+    max_pairs = hp.get("max_dpo_pairs")
+    max_new_tokens = hp.get("dpo_gen_max_new_tokens", 256)
+    judge_filter = hp.get("dpo_judge_filter", True)
+
+    chosen_texts: list[str] = []
+    rejected_texts: list[str] = []
+    dropped = 0
 
     for text in dataset["text"]:
+        if max_pairs is not None and len(chosen_texts) >= max_pairs:
+            break
+
         parts = text.split("<|im_start|>assistant\n")
         if len(parts) <= 1:
             continue
 
         prompt_part = "<|im_start|>assistant\n".join(parts[:-1])
-        original_response = parts[-1].split("<|im_end|>")[0]
+        gold = parts[-1].split("<|im_end|>")[0].strip()
+        if not gold:
+            continue
 
-        truncated = original_response[: max(10, len(original_response) // 3)]
+        gen_prompt = prompt_part + "<|im_start|>assistant\n"
+        sampled = inference.generate(model, tokenizer, gen_prompt, max_new_tokens=max_new_tokens)
+        sampled = sampled.strip()
 
-        original_score = judge.score_response(prompt_part, original_response)
-        degraded_score = judge.score_response(prompt_part, truncated)
+        # Degenerate: no signal if empty or effectively equal to the gold answer.
+        if not sampled or _normalize_text(sampled) == _normalize_text(gold):
+            dropped += 1
+            continue
 
-        original_full = prompt_part + "<|im_start|>assistant\n" + original_response + "<|im_end|>"
-        degraded_full = prompt_part + "<|im_start|>assistant\n" + truncated + "<|im_end|>"
+        # Judge filter: keep only when gold is at least as good as the sample
+        # (winner "A"=gold or "tie"); drop when the sample is judged better ("B").
+        if judge_filter:
+            winner = judge.compare_ab(prompt_part, gold, sampled)
+            if winner == "B":
+                dropped += 1
+                continue
 
-        if original_score >= degraded_score:
-            chosen_texts.append(original_full)
-            rejected_texts.append(degraded_full)
-        else:
-            chosen_texts.append(degraded_full)
-            rejected_texts.append(original_full)
+        chosen_texts.append(gen_prompt + gold + "<|im_end|>")
+        rejected_texts.append(gen_prompt + sampled + "<|im_end|>")
+
+    logger.info(
+        "DPO on-policy pairs: kept=%d dropped=%d (of %d examples)",
+        len(chosen_texts),
+        dropped,
+        len(dataset["text"]),
+    )
 
     if not chosen_texts:
-        for text in dataset["text"]:
-            chosen_texts.append(text)
-            rejected_texts.append(text[: len(text) // 2])
+        raise ValueError(
+            "DPO pair construction produced no usable preference pairs "
+            "(all examples were degenerate or judge-filtered). Check the dataset "
+            "and judge configuration."
+        )
 
     return Dataset.from_dict({"chosen": chosen_texts, "rejected": rejected_texts})
 

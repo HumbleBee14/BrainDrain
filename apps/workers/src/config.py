@@ -64,6 +64,10 @@ class WorkerSettings(BaseSettings):
     dataset_filter_backend: str = "heuristic"  # "heuristic"
     dedup_backend: str = "hash"  # "hash"
     judge_backend: str = "openai"  # "openai"
+    # Judge resilience: retry transient errors, then fail loudly by default so a
+    # broken judge never silently poisons rewards/scores with fabricated numbers.
+    judge_max_retries: int = 3
+    judge_on_failure: str = "error"  # "error" (fail loud) | "heuristic" (advanced opt-in)
     datagen_facet_backend: str = "llm"  # "llm"
     datagen_pair_backend: str = "llm"  # "llm"
     datagen_refiner_backend: str = "llm"  # "llm"
