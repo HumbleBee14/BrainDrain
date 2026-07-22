@@ -135,6 +135,9 @@ pub struct AuthenticatedUser {
     pub tenant_id: Uuid,
     /// External organization ID (raw), if any.
     pub org_id: Option<String>,
+    /// Email address from the auth token, if the provider supplies it. Used for
+    /// the platform-admin email allowlist. `None` for dev/internal tokens.
+    pub email: Option<String>,
     /// Team role for RBAC enforcement.
     pub role: TeamRole,
 }
@@ -242,6 +245,7 @@ impl AuthProvider for ClerkAuthProvider {
                 user_id: claims.sub,
                 tenant_id,
                 org_id: claims.org_id,
+                email: claims.email,
                 role: TeamRole::Member,
             }))
         })
@@ -333,6 +337,7 @@ impl InternalTokenAuthProvider {
             user_id: "__internal_worker__".to_string(),
             tenant_id,
             org_id: None,
+            email: None,
             role: TeamRole::Owner,
         }))
     }
@@ -596,6 +601,9 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 struct ClerkClaims {
     sub: String,
     org_id: Option<String>,
+    /// Present only when the Clerk JWT template includes the email claim.
+    #[serde(default)]
+    email: Option<String>,
     // Clerk includes more claims; we only extract what we need.
 }
 
@@ -609,6 +617,7 @@ fn parse_dev_token(token: &str) -> Option<AuthenticatedUser> {
             user_id: parts[2].to_string(),
             tenant_id,
             org_id: None,
+            email: None,
             role: TeamRole::Owner,
         })
     } else {

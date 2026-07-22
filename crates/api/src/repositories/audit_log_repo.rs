@@ -1,4 +1,5 @@
 use platform_db::models::AuditLog;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -32,6 +33,7 @@ impl AuditLogRepository for PgAuditLogRepo {
         let action = action.to_string();
         let resource_type = resource_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let log = sqlx::query_as::<_, AuditLog>(
                 r#"
                 INSERT INTO audit_logs
@@ -46,9 +48,10 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(&resource_type)
             .bind(resource_id)
             .bind(metadata)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(log)
         })
     }
@@ -60,6 +63,7 @@ impl AuditLogRepository for PgAuditLogRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let logs = sqlx::query_as::<_, AuditLog>(
                 r#"
                 SELECT * FROM audit_logs
@@ -71,22 +75,25 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(logs)
         })
     }
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM audit_logs WHERE tenant_id = $1",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -101,6 +108,7 @@ impl AuditLogRepository for PgAuditLogRepo {
     ) -> BoxFuture<'_, AppResult<Vec<AuditLog>>> {
         let resource_type = resource_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let logs = sqlx::query_as::<_, AuditLog>(
                 r#"
                 SELECT * FROM audit_logs
@@ -114,9 +122,10 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(resource_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(logs)
         })
     }
@@ -129,6 +138,7 @@ impl AuditLogRepository for PgAuditLogRepo {
     ) -> BoxFuture<'_, AppResult<i64>> {
         let resource_type = resource_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 r#"
                 SELECT COUNT(*) FROM audit_logs
@@ -138,9 +148,10 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(tenant_id)
             .bind(&resource_type)
             .bind(resource_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -156,6 +167,7 @@ impl AuditLogRepository for PgAuditLogRepo {
         let action = action.map(|s| s.to_string());
         let resource_type = resource_type.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let logs = sqlx::query_as::<_, AuditLog>(
                 r#"
                 SELECT * FROM audit_logs
@@ -171,9 +183,10 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(resource_type.as_deref())
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(logs)
         })
     }
@@ -187,6 +200,7 @@ impl AuditLogRepository for PgAuditLogRepo {
         let action = action.map(|s| s.to_string());
         let resource_type = resource_type.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 r#"
                 SELECT COUNT(*) FROM audit_logs
@@ -198,9 +212,10 @@ impl AuditLogRepository for PgAuditLogRepo {
             .bind(tenant_id)
             .bind(action.as_deref())
             .bind(resource_type.as_deref())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }

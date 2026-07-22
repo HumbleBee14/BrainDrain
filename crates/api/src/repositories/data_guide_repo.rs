@@ -1,4 +1,5 @@
 use platform_db::models::DataGuide;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -27,6 +28,7 @@ impl DataGuideRepository for PgDataGuideRepo {
     ) -> BoxFuture<'_, AppResult<DataGuide>> {
         let task_type = task_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let guide = sqlx::query_as::<_, DataGuide>(
                 r#"
                 INSERT INTO data_guides (tenant_id, project_id, task_type)
@@ -37,23 +39,26 @@ impl DataGuideRepository for PgDataGuideRepo {
             .bind(tenant_id)
             .bind(project_id)
             .bind(task_type)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(guide)
         })
     }
 
     fn get(&self, tenant_id: Uuid, id: Uuid) -> BoxFuture<'_, AppResult<Option<DataGuide>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let guide = sqlx::query_as::<_, DataGuide>(
                 "SELECT * FROM data_guides WHERE id = $1 AND tenant_id = $2",
             )
             .bind(id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(guide)
         })
     }
@@ -64,6 +69,7 @@ impl DataGuideRepository for PgDataGuideRepo {
         project_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<DataGuide>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let guide = sqlx::query_as::<_, DataGuide>(
                 r#"
                 SELECT * FROM data_guides
@@ -74,9 +80,10 @@ impl DataGuideRepository for PgDataGuideRepo {
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(guide)
         })
     }
@@ -89,15 +96,17 @@ impl DataGuideRepository for PgDataGuideRepo {
     ) -> BoxFuture<'_, AppResult<()>> {
         let status = status.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 "UPDATE data_guides SET status = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $2",
             )
             .bind(id)
             .bind(tenant_id)
             .bind(status)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(())
         })
     }
@@ -109,15 +118,17 @@ impl DataGuideRepository for PgDataGuideRepo {
         facets: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 "UPDATE data_guides SET facets = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $2",
             )
             .bind(id)
             .bind(tenant_id)
             .bind(facets)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(())
         })
     }
@@ -129,15 +140,17 @@ impl DataGuideRepository for PgDataGuideRepo {
         preview_samples: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 "UPDATE data_guides SET preview_samples = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $2",
             )
             .bind(id)
             .bind(tenant_id)
             .bind(preview_samples)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(())
         })
     }
@@ -151,6 +164,7 @@ impl DataGuideRepository for PgDataGuideRepo {
     ) -> BoxFuture<'_, AppResult<()>> {
         let guidance = guidance.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 r#"
                 UPDATE data_guides
@@ -162,9 +176,10 @@ impl DataGuideRepository for PgDataGuideRepo {
             .bind(tenant_id)
             .bind(guidance)
             .bind(refinement_history)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(())
         })
     }
@@ -176,15 +191,17 @@ impl DataGuideRepository for PgDataGuideRepo {
         dataset_id: Uuid,
     ) -> BoxFuture<'_, AppResult<()>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 "UPDATE data_guides SET dataset_id = $3, updated_at = NOW() WHERE id = $1 AND tenant_id = $2",
             )
             .bind(id)
             .bind(tenant_id)
             .bind(dataset_id)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(())
         })
     }

@@ -1,4 +1,5 @@
 use platform_db::models::{NotificationDelivery, NotificationPreference};
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -7,14 +8,17 @@ use crate::repositories::traits::{BoxFuture, NotificationRepository};
 
 /// PostgreSQL implementation of the notification repository.
 ///
-/// All queries require `tenant_id` — multi-tenancy enforced at this layer.
+/// Tenant-scoped queries run on the RLS pool (`db`) inside a tenant-scoped
+/// transaction. The delivery worker's cross-tenant poll runs on the owner pool
+/// (`db_admin`) since it must see pending deliveries across all tenants.
 pub struct PgNotificationRepo {
     db: PgPool,
+    db_admin: PgPool,
 }
 
 impl PgNotificationRepo {
-    pub fn new(db: PgPool) -> Self {
-        Self { db }
+    pub fn new(db: PgPool, db_admin: PgPool) -> Self {
+        Self { db, db_admin }
     }
 }
 
@@ -24,6 +28,7 @@ impl NotificationRepository for PgNotificationRepo {
         tenant_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Vec<NotificationPreference>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let prefs = sqlx::query_as::<_, NotificationPreference>(
                 r#"
                 SELECT * FROM notification_preferences
@@ -32,8 +37,9 @@ impl NotificationRepository for PgNotificationRepo {
                 "#,
             )
             .bind(tenant_id)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(prefs)
         })
@@ -50,6 +56,7 @@ impl NotificationRepository for PgNotificationRepo {
         let channel = channel.to_string();
         let event_type = event_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let pref = sqlx::query_as::<_, NotificationPreference>(
                 r#"
                 INSERT INTO notification_preferences (tenant_id, channel, event_type, enabled, config)
@@ -64,8 +71,9 @@ impl NotificationRepository for PgNotificationRepo {
             .bind(&event_type)
             .bind(enabled)
             .bind(config)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(pref)
         })
@@ -78,6 +86,7 @@ impl NotificationRepository for PgNotificationRepo {
     ) -> BoxFuture<'_, AppResult<Vec<NotificationPreference>>> {
         let event_type = event_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let prefs = sqlx::query_as::<_, NotificationPreference>(
                 r#"
                 SELECT * FROM notification_preferences
@@ -86,8 +95,9 @@ impl NotificationRepository for PgNotificationRepo {
             )
             .bind(tenant_id)
             .bind(&event_type)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(prefs)
         })
@@ -104,6 +114,7 @@ impl NotificationRepository for PgNotificationRepo {
         let event_type = event_type.to_string();
         let channel = channel.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let delivery = sqlx::query_as::<_, NotificationDelivery>(
                 r#"
                 INSERT INTO notification_deliveries
@@ -117,8 +128,9 @@ impl NotificationRepository for PgNotificationRepo {
             .bind(&event_type)
             .bind(&channel)
             .bind(payload)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(delivery)
         })
@@ -131,6 +143,7 @@ impl NotificationRepository for PgNotificationRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let deliveries = sqlx::query_as::<_, NotificationDelivery>(
                 r#"
                 SELECT * FROM notification_deliveries
@@ -142,8 +155,9 @@ impl NotificationRepository for PgNotificationRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(deliveries)
         })
@@ -151,12 +165,14 @@ impl NotificationRepository for PgNotificationRepo {
 
     fn count_deliveries(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM notification_deliveries WHERE tenant_id = $1",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(count)
         })
@@ -172,6 +188,7 @@ impl NotificationRepository for PgNotificationRepo {
         let status = status.to_string();
         let error = error.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 r#"
                 UPDATE notification_deliveries
@@ -184,8 +201,9 @@ impl NotificationRepository for PgNotificationRepo {
             .bind(tenant_id)
             .bind(&status)
             .bind(error.as_deref())
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(())
         })
@@ -197,13 +215,15 @@ impl NotificationRepository for PgNotificationRepo {
         delivery_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<NotificationDelivery>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let delivery = sqlx::query_as::<_, NotificationDelivery>(
                 "SELECT * FROM notification_deliveries WHERE id = $1 AND tenant_id = $2",
             )
             .bind(delivery_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(delivery)
         })
@@ -215,18 +235,22 @@ impl NotificationRepository for PgNotificationRepo {
         preference_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let pref = sqlx::query_as::<_, NotificationPreference>(
                 "SELECT * FROM notification_preferences WHERE id = $1 AND tenant_id = $2",
             )
             .bind(preference_id)
             .bind(tenant_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(pref)
         })
     }
 
+    /// Cross-tenant poll for the delivery worker — runs on the owner pool since
+    /// it must see pending deliveries for every tenant.
     fn list_pending_deliveries(
         &self,
         max_attempts: i32,
@@ -243,7 +267,7 @@ impl NotificationRepository for PgNotificationRepo {
             )
             .bind(max_attempts)
             .bind(limit)
-            .fetch_all(&self.db)
+            .fetch_all(&self.db_admin)
             .await?;
 
             Ok(deliveries)

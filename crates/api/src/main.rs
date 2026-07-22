@@ -45,17 +45,10 @@ async fn main() -> anyhow::Result<()> {
         "Starting API server"
     );
 
-    // Build application state (connects to DB, Redis, S3)
+    // Build application state (connects to DB, Redis, S3). Migrations run inside
+    // AppState::new on the owner pool — before the RLS pool is created — because
+    // migration 017 provisions the `app_rls` role that pool connects as.
     let state = AppState::new(config.clone()).await?;
-
-    // Run database migrations (dev/staging only — production should use `make migrate`)
-    if config.is_dev() || config.environment == "staging" {
-        tracing::info!("Running database migrations (non-production)...");
-        platform_db::run_migrations(state.db()).await?;
-        tracing::info!("Migrations complete");
-    } else {
-        tracing::info!("Production mode — skipping auto-migration (use `make migrate`)");
-    }
 
     // Ensure billing partitions exist for the next 3 months.
     // Runs on every startup (idempotent, <1ms). Without this, inserts into

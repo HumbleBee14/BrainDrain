@@ -29,8 +29,17 @@ pub struct Config {
     pub api_port: u16,
 
     // ── Database ──
-    /// PostgreSQL connection URL.
+    /// PostgreSQL connection URL for the owner/admin role. Runs migrations,
+    /// partition DDL, admin endpoints, and cross-tenant maintenance.
     pub database_url: String,
+
+    /// PostgreSQL connection URL for the least-privilege `app_rls` role that
+    /// carries tenant request traffic and is subject to Row-Level Security.
+    /// When unset, tenant traffic falls back to `database_url` and the RLS
+    /// second layer is inactive (a startup WARN is emitted). Set this in every
+    /// real deployment.
+    #[serde(default)]
+    pub database_rls_url: Option<String>,
 
     /// Maximum number of database connections in the pool.
     #[serde(default = "default_max_connections")]
@@ -188,6 +197,19 @@ pub struct Config {
     #[serde(default)]
     pub platform_internal_token: String,
 
+    // ── Platform Admin ──
+    /// Comma-separated allowlist of auth subject IDs (JWT `sub`) that may call
+    /// platform/infrastructure admin endpoints. Empty ⇒ nobody is a platform
+    /// admin (deny-all, the secure default).
+    #[serde(default)]
+    pub platform_admin_user_ids: String,
+
+    /// Comma-separated allowlist of email addresses that may call platform admin
+    /// endpoints. Requires the auth token to carry an `email` claim. Empty ⇒ no
+    /// email grants anyone admin.
+    #[serde(default)]
+    pub platform_admin_emails: String,
+
     // ── Temporal Task Queue ──
     /// Default Temporal task queue for non-GPU workflows.
     /// Must match APP_TEMPORAL_TASK_QUEUE on the worker side.
@@ -248,10 +270,20 @@ impl Config {
 
     /// Parse CORS origins into a Vec.
     pub fn cors_origins_list(&self) -> Vec<String> {
-        self.cors_origins
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
+        split_csv(&self.cors_origins)
+    }
+
+    /// Platform-admin subject IDs (JWT `sub`), parsed from the allowlist.
+    pub fn platform_admin_user_ids_list(&self) -> Vec<String> {
+        split_csv(&self.platform_admin_user_ids)
+    }
+
+    /// Platform-admin emails, parsed from the allowlist and lowercased for
+    /// case-insensitive comparison.
+    pub fn platform_admin_emails_list(&self) -> Vec<String> {
+        split_csv(&self.platform_admin_emails)
+            .into_iter()
+            .map(|s| s.to_lowercase())
             .collect()
     }
 
@@ -277,6 +309,14 @@ impl Config {
         ];
         envy::from_iter(pairs).expect("Config::test_default should always work")
     }
+}
+
+/// Split a comma-separated env value into trimmed, non-empty entries.
+fn split_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn default_app_name() -> String {

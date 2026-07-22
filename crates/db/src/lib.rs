@@ -17,7 +17,8 @@ use sqlx::postgres::PgPoolOptions;
 /// - `before_acquire`: resets `app.tenant_id` to '' on every checkout, preventing
 ///   stale tenant context from leaking between requests (RLS enforcement)
 ///
-/// Actual per-request tenant context is set explicitly via `tenant::with_tenant`.
+/// Actual per-request tenant context is set explicitly via
+/// `tenant::begin_tenant_tx`.
 pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(max_connections)
@@ -43,6 +44,32 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgP
 /// Run all pending migrations against the database.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     sqlx::migrate!("src/migrations").run(pool).await
+}
+
+/// Assert that the given pool's role is actually subject to Row-Level Security.
+///
+/// This is the safety net for the two-role design: the RLS pool MUST connect as
+/// a role that PostgreSQL does not exempt from RLS (i.e. not a superuser, not a
+/// `BYPASSRLS` role, and not the table owner). `row_security_active('projects')`
+/// returns `false` for any exempt role, so if it is not `true` here the pool
+/// would silently leak across tenants — we refuse to start instead.
+///
+/// Call this only on the pool that carries tenant traffic, and only when a
+/// dedicated RLS connection is configured.
+pub async fn assert_rls_enforced(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let active: bool = sqlx::query_scalar("SELECT row_security_active('projects')")
+        .fetch_one(pool)
+        .await?;
+    if !active {
+        // Not a query error — a fatal misconfiguration. Surface it loudly.
+        return Err(sqlx::Error::Configuration(
+            "DATABASE_RLS_URL role is exempt from Row-Level Security \
+             (superuser, BYPASSRLS, or table owner). Tenant isolation would not \
+             be enforced. Connect as the least-privilege `app_rls` role."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Ensure billing partitions exist for the next N months.

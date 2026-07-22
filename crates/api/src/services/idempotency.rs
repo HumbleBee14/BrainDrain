@@ -581,6 +581,7 @@ mod tests {
             user_id: "user_123".to_string(),
             tenant_id: Uuid::nil(),
             org_id: None,
+            email: None,
             role: TeamRole::Member,
         };
 

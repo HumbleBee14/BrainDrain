@@ -1,4 +1,5 @@
 use platform_db::models::BillingEvent;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -54,6 +55,7 @@ impl BillingEventRepository for PgBillingEventRepo {
     ) -> BoxFuture<'_, AppResult<BillingEvent>> {
         let operation = operation.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let event = sqlx::query_as::<_, BillingEvent>(
                 r#"
                 INSERT INTO billing_events
@@ -70,9 +72,10 @@ impl BillingEventRepository for PgBillingEventRepo {
             .bind(gpu_seconds)
             .bind(cost_usd)
             .bind(metadata)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(event)
         })
     }
@@ -84,6 +87,7 @@ impl BillingEventRepository for PgBillingEventRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<BillingEvent>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let events = sqlx::query_as::<_, BillingEvent>(
                 r#"
                 SELECT * FROM billing_events
@@ -95,22 +99,25 @@ impl BillingEventRepository for PgBillingEventRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(events)
         })
     }
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM billing_events WHERE tenant_id = $1",
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(count)
         })
     }
@@ -121,6 +128,7 @@ impl BillingEventRepository for PgBillingEventRepo {
         resource_id: Uuid,
     ) -> BoxFuture<'_, AppResult<UsageSummary>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let row = sqlx::query_as::<_, UsageSummary>(
                 r#"
                 SELECT
@@ -135,9 +143,10 @@ impl BillingEventRepository for PgBillingEventRepo {
             )
             .bind(tenant_id)
             .bind(resource_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(row)
         })
     }
@@ -148,6 +157,7 @@ impl BillingEventRepository for PgBillingEventRepo {
         days: i32,
     ) -> BoxFuture<'_, AppResult<Vec<(String, f64)>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let rows = sqlx::query_as::<_, (String, f64)>(
                 r#"
                 SELECT
@@ -162,15 +172,17 @@ impl BillingEventRepository for PgBillingEventRepo {
             )
             .bind(tenant_id)
             .bind(days)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(rows)
         })
     }
 
     fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let row = sqlx::query_as::<_, (f64, i64, i64)>(
                 r#"
                 SELECT
@@ -182,9 +194,10 @@ impl BillingEventRepository for PgBillingEventRepo {
                 "#,
             )
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(row)
         })
     }
@@ -195,6 +208,7 @@ impl BillingEventRepository for PgBillingEventRepo {
         days: i32,
     ) -> BoxFuture<'_, AppResult<Vec<InferenceUsageDay>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let rows = sqlx::query_as::<_, InferenceUsageDay>(
                 r#"
                 SELECT
@@ -213,9 +227,10 @@ impl BillingEventRepository for PgBillingEventRepo {
             )
             .bind(tenant_id)
             .bind(days)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(rows)
         })
     }

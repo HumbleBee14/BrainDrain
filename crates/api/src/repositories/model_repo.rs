@@ -1,4 +1,5 @@
 use platform_db::models::Model;
+use platform_db::tenant::begin_tenant_tx;
 use platform_shared::enums::DeploymentStatus;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -9,14 +10,21 @@ use crate::repositories::traits::{BoxFuture, ModelRepository};
 /// PostgreSQL implementation of the model repository.
 ///
 /// Models are created by the Python training worker.
-/// All queries require `tenant_id` — multi-tenancy enforced at this layer.
+///
+/// Tenant-scoped queries run on the RLS pool (`db`) inside a tenant-scoped
+/// transaction. The global adapter-capacity accounting (`count_active_by_base_model`,
+/// `claim_deployment_slot`) and the stale-deployment reaper deliberately span
+/// tenants, so they run on the owner pool (`db_admin`); RLS on the RLS pool
+/// would otherwise clamp their cross-tenant counts to a single tenant and break
+/// the global `--max-loras` cap.
 pub struct PgModelRepo {
     db: PgPool,
+    db_admin: PgPool,
 }
 
 impl PgModelRepo {
-    pub fn new(db: PgPool) -> Self {
-        Self { db }
+    pub fn new(db: PgPool, db_admin: PgPool) -> Self {
+        Self { db, db_admin }
     }
 }
 
@@ -27,12 +35,14 @@ impl ModelRepository for PgModelRepo {
         model_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Model>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let model =
                 sqlx::query_as::<_, Model>("SELECT * FROM models WHERE id = $1 AND tenant_id = $2")
                     .bind(model_id)
                     .bind(tenant_id)
-                    .fetch_optional(&self.db)
+                    .fetch_optional(&mut *tx)
                     .await?;
+            tx.commit().await?;
 
             Ok(model)
         })
@@ -46,6 +56,7 @@ impl ModelRepository for PgModelRepo {
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let models = sqlx::query_as::<_, Model>(
                 r#"
                 SELECT * FROM models
@@ -58,8 +69,9 @@ impl ModelRepository for PgModelRepo {
             .bind(tenant_id)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(models)
         })
@@ -67,13 +79,15 @@ impl ModelRepository for PgModelRepo {
 
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM models WHERE project_id = $1 AND tenant_id = $2",
             )
             .bind(project_id)
             .bind(tenant_id)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(count)
         })
@@ -86,19 +100,22 @@ impl ModelRepository for PgModelRepo {
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM models WHERE project_id = $1 AND tenant_id = $2 AND deployment_status = $3",
             )
             .bind(project_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(count)
         })
     }
 
+    /// Global count across ALL tenants for the base-model adapter cap — owner pool.
     fn count_active_by_base_model(&self, base_model: &str) -> BoxFuture<'_, AppResult<i64>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
@@ -106,12 +123,16 @@ impl ModelRepository for PgModelRepo {
                 "SELECT COUNT(*) FROM models WHERE base_model = $1 AND deployment_status = 'active'",
             )
             .bind(&base_model)
-            .fetch_one(&self.db)
+            .fetch_one(&self.db_admin)
             .await?;
             Ok(count)
         })
     }
 
+    /// Claims a deployment slot under the GLOBAL `--max-loras` cap. Runs on the
+    /// owner pool: the COUNT subquery must see active/deploying models across all
+    /// tenants (RLS would clamp it to one tenant and over-admit). Tenant scoping
+    /// of the claimed row is preserved by `WHERE ... tenant_id = $2`.
     fn claim_deployment_slot(
         &self,
         tenant_id: Uuid,
@@ -126,7 +147,7 @@ impl ModelRepository for PgModelRepo {
             // Under READ COMMITTED, two concurrent UPDATEs can evaluate the
             // COUNT(*) subquery from separate snapshots and both succeed.
             // pg_advisory_xact_lock is released automatically at transaction end.
-            let mut tx = self.db.begin().await?;
+            let mut tx = self.db_admin.begin().await?;
 
             // Hash the base_model string to a stable i64 for the advisory lock key
             let lock_key = base_model
@@ -163,6 +184,7 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
+    /// Cross-tenant sweep of stale deploying models — owner pool.
     fn reap_stale_deployments(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let result = sqlx::query(
@@ -174,7 +196,7 @@ impl ModelRepository for PgModelRepo {
                 "#,
             )
             .bind(stale_minutes as f64)
-            .execute(&self.db)
+            .execute(&self.db_admin)
             .await?;
 
             let reaped = result.rows_affected() as i64;
@@ -192,6 +214,7 @@ impl ModelRepository for PgModelRepo {
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<Option<Model>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let model = sqlx::query_as::<_, Model>(
                 r#"
                 UPDATE models
@@ -203,8 +226,9 @@ impl ModelRepository for PgModelRepo {
             .bind(model_id)
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(model)
         })
@@ -217,6 +241,7 @@ impl ModelRepository for PgModelRepo {
         scores: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<bool>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
                 UPDATE models
@@ -227,8 +252,9 @@ impl ModelRepository for PgModelRepo {
             .bind(model_id)
             .bind(tenant_id)
             .bind(scores)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(result.rows_affected() > 0)
         })
@@ -236,11 +262,13 @@ impl ModelRepository for PgModelRepo {
 
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM models WHERE tenant_id = $1")
                     .bind(tenant_id)
-                    .fetch_one(&self.db)
+                    .fetch_one(&mut *tx)
                     .await?;
+            tx.commit().await?;
 
             Ok(count)
         })
@@ -252,13 +280,15 @@ impl ModelRepository for PgModelRepo {
         status: DeploymentStatus,
     ) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let count = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM models WHERE tenant_id = $1 AND deployment_status = $2",
             )
             .bind(tenant_id)
             .bind(status.to_string())
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(count)
         })
@@ -272,6 +302,7 @@ impl ModelRepository for PgModelRepo {
     ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let models = sqlx::query_as::<_, Model>(
                 r#"
                 SELECT * FROM models
@@ -283,8 +314,9 @@ impl ModelRepository for PgModelRepo {
             .bind(project_id)
             .bind(tenant_id)
             .bind(&base_model)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(models)
         })
@@ -298,6 +330,7 @@ impl ModelRepository for PgModelRepo {
     ) -> BoxFuture<'_, AppResult<i32>> {
         let base_model = base_model.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let max_version = sqlx::query_scalar::<_, Option<i32>>(
                 r#"
                 SELECT MAX(version) FROM models
@@ -307,8 +340,9 @@ impl ModelRepository for PgModelRepo {
             .bind(project_id)
             .bind(tenant_id)
             .bind(&base_model)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
+            tx.commit().await?;
 
             Ok(max_version.unwrap_or(0))
         })
@@ -321,7 +355,7 @@ impl ModelRepository for PgModelRepo {
         target_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<Model>>> {
         Box::pin(async move {
-            let mut tx = self.db.begin().await?;
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
 
             // Undeploy current
             sqlx::query(

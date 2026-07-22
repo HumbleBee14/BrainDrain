@@ -210,6 +210,10 @@ services:
       # PgBouncer runs in transaction mode — compatible with SET LOCAL,
       # advisory locks within transactions, and per-tx tenant context.
       DATABASE_URL: postgres://platform:${DB_PASSWORD}@pgbouncer:6432/platform
+      # Tenant traffic runs as the least-privilege app_rls role (subject to RLS).
+      # Provision this role with a strong password before running migrations
+      # (see docs/DEVELOPMENT.md) and set APP_RLS_PASSWORD.
+      DATABASE_RLS_URL: postgres://app_rls:${APP_RLS_PASSWORD:?Set APP_RLS_PASSWORD in .env}@pgbouncer:6432/platform
       DATABASE_MAX_CONNECTIONS: ${DATABASE_MAX_CONNECTIONS:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379
       S3_ENDPOINT: http://minio:9000
@@ -232,6 +236,8 @@ services:
       STRIPE_PRICE_GROWTH: ${STRIPE_PRICE_GROWTH:-}
       STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
+      PLATFORM_ADMIN_USER_IDS: ${PLATFORM_ADMIN_USER_IDS:-}
+      PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://localhost:4317}
       FEATURE_FLAGS_PROVIDER: ${FEATURE_FLAGS_PROVIDER:-static}

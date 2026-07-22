@@ -54,7 +54,13 @@ pub struct AppState {
 
 struct AppStateInner {
     pub config: Config,
+    /// Owner/admin pool — migrations, partition DDL, cross-tenant maintenance.
     pub db: PgPool,
+    /// Least-privilege pool subject to RLS — carries tenant request traffic.
+    /// Cloned into the tenant-scoped repositories at construction; retained here
+    /// for the `db_rls()` accessor used by isolation tests and admin tooling.
+    #[allow(dead_code)]
+    pub db_rls: PgPool,
     pub redis: redis::aio::ConnectionManager,
     pub storage: S3Storage,
     pub orchestrator: Option<Arc<dyn WorkflowOrchestrator>>,
@@ -97,12 +103,56 @@ impl AppState {
     /// Initializes all connections: database pool, Redis, S3 client.
     /// Fails fast if any connection cannot be established.
     pub async fn new(config: Config) -> anyhow::Result<Self> {
-        // Database
+        // Owner/admin connection: runs migrations, partition DDL, admin endpoints,
+        // and cross-tenant maintenance. Bypasses RLS (it owns the tables).
         let db = platform_db::create_pool(&config.database_url, config.database_max_connections)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to PostgreSQL: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to connect to PostgreSQL (owner): {e}"))?;
 
-        tracing::info!("Connected to PostgreSQL");
+        tracing::info!("Connected to PostgreSQL (owner role)");
+
+        // Migrations run on the owner connection and MUST happen before the RLS
+        // pool is created: migration 017 creates the `app_rls` role the RLS pool
+        // connects as. Production provisions the role + runs migrations out of
+        // band (`make migrate`), so auto-migration stays gated to dev/staging.
+        if config.is_dev() || config.environment == "staging" {
+            tracing::info!("Running database migrations (non-production)...");
+            platform_db::run_migrations(&db)
+                .await
+                .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+            tracing::info!("Migrations complete");
+        } else {
+            tracing::info!("Production mode — skipping auto-migration (use `make migrate`)");
+        }
+
+        // RLS connection: least-privilege `app_rls` role that carries all tenant
+        // request traffic and is subject to Row-Level Security. Falls back to the
+        // owner connection (with a loud warning) when DATABASE_RLS_URL is unset,
+        // in which case isolation relies on `WHERE tenant_id` alone.
+        let db_rls = match config.database_rls_url.as_deref().filter(|s| !s.is_empty()) {
+            Some(rls_url) => {
+                let pool = platform_db::create_pool(rls_url, config.database_max_connections)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to connect to PostgreSQL (app_rls): {e}")
+                    })?;
+                // Refuse to start if this role is exempt from RLS — otherwise
+                // tenant traffic would silently run without isolation.
+                platform_db::assert_rls_enforced(&pool)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                tracing::info!("Connected to PostgreSQL (app_rls role) — RLS second layer active");
+                pool
+            }
+            None => {
+                tracing::warn!(
+                    "DATABASE_RLS_URL not set — tenant queries run on the owner connection and \
+                     the RLS second layer is INACTIVE (isolation relies on WHERE tenant_id only). \
+                     Set DATABASE_RLS_URL to the app_rls role for defense in depth."
+                );
+                db.clone()
+            }
+        };
 
         // Redis
         let redis_client = redis::Client::open(config.redis_url.as_str())
@@ -170,31 +220,44 @@ impl AppState {
 
         tracing::info!("Auth provider chain initialized");
 
-        // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone)
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db.clone()));
-        let document_repo: Arc<dyn DocumentRepository> = Arc::new(PgDocumentRepo::new(db.clone()));
-        let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db.clone()));
+        // Repository trait objects (PgPool is Arc<PoolInner>, cheap to clone).
+        //
+        // Tenant-scoped repos take the RLS pool (`db_rls`): their queries run
+        // inside a `begin_tenant_tx` transaction so RLS filters by tenant.
+        // Repos with legitimately cross-tenant methods (api_key auth-by-hash,
+        // invitation accept, the global adapter-cap / reaper on models, the
+        // notification delivery worker) also take the owner pool (`db`) for
+        // those specific methods. Repos over tables without RLS (tenant_repo,
+        // inference_instance_repo) use the RLS pool too — app_rls is granted on
+        // those tables and there is no RLS to satisfy.
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db_rls.clone()));
+        let document_repo: Arc<dyn DocumentRepository> =
+            Arc::new(PgDocumentRepo::new(db_rls.clone()));
+        let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db_rls.clone()));
         let data_guide_repo: Arc<dyn DataGuideRepository> =
-            Arc::new(PgDataGuideRepo::new(db.clone()));
+            Arc::new(PgDataGuideRepo::new(db_rls.clone()));
         let training_job_repo: Arc<dyn TrainingJobRepository> =
-            Arc::new(PgTrainingJobRepo::new(db.clone()));
-        let model_repo: Arc<dyn ModelRepository> = Arc::new(PgModelRepo::new(db.clone()));
+            Arc::new(PgTrainingJobRepo::new(db_rls.clone()));
+        let model_repo: Arc<dyn ModelRepository> =
+            Arc::new(PgModelRepo::new(db_rls.clone(), db.clone()));
         let evaluation_repo: Arc<dyn EvaluationRepository> =
-            Arc::new(PgEvaluationRepo::new(db.clone()));
-        let export_repo: Arc<dyn ExportRepository> = Arc::new(PgExportRepo::new(db.clone()));
+            Arc::new(PgEvaluationRepo::new(db_rls.clone()));
+        let export_repo: Arc<dyn ExportRepository> = Arc::new(PgExportRepo::new(db_rls.clone()));
         let inference_instance_repo: Arc<dyn InferenceInstanceRepository> =
-            Arc::new(PgInferenceInstanceRepo::new(db.clone()));
-        let api_key_repo: Arc<dyn ApiKeyRepository> = Arc::new(PgApiKeyRepo::new(db.clone()));
+            Arc::new(PgInferenceInstanceRepo::new(db_rls.clone()));
+        let api_key_repo: Arc<dyn ApiKeyRepository> =
+            Arc::new(PgApiKeyRepo::new(db_rls.clone(), db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
-            Arc::new(PgBillingEventRepo::new(db.clone()));
-        let audit_log_repo: Arc<dyn AuditLogRepository> = Arc::new(PgAuditLogRepo::new(db.clone()));
+            Arc::new(PgBillingEventRepo::new(db_rls.clone()));
+        let audit_log_repo: Arc<dyn AuditLogRepository> =
+            Arc::new(PgAuditLogRepo::new(db_rls.clone()));
         let team_member_repo: Arc<dyn TeamMemberRepository> =
-            Arc::new(PgTeamMemberRepo::new(db.clone()));
+            Arc::new(PgTeamMemberRepo::new(db_rls.clone()));
         let invitation_repo: Arc<dyn InvitationRepository> =
-            Arc::new(PgInvitationRepo::new(db.clone()));
+            Arc::new(PgInvitationRepo::new(db_rls.clone(), db.clone()));
         let notification_repo: Arc<dyn NotificationRepository> =
-            Arc::new(PgNotificationRepo::new(db.clone()));
-        let tenant_repo: Arc<dyn TenantRepository> = Arc::new(PgTenantRepo::new(db.clone()));
+            Arc::new(PgNotificationRepo::new(db_rls.clone(), db.clone()));
+        let tenant_repo: Arc<dyn TenantRepository> = Arc::new(PgTenantRepo::new(db_rls.clone()));
 
         // Billing provider: Stripe when configured, no-op for dev
         let billing_provider: Arc<dyn BillingProvider> =
@@ -305,6 +368,7 @@ impl AppState {
             inner: Arc::new(AppStateInner {
                 config,
                 db,
+                db_rls,
                 redis,
                 storage,
                 orchestrator,
@@ -345,6 +409,13 @@ impl AppState {
 
     pub fn db(&self) -> &PgPool {
         &self.inner.db
+    }
+
+    /// The RLS-enforced pool (least-privilege `app_rls` role). Used by
+    /// tenant-scoped repositories and by isolation tests.
+    #[allow(dead_code)] // Public accessor for isolation tests / future admin tooling.
+    pub fn db_rls(&self) -> &PgPool {
+        &self.inner.db_rls
     }
 
     pub fn redis(&self) -> redis::aio::ConnectionManager {

@@ -1,4 +1,5 @@
 use platform_db::models::ModelExport;
+use platform_db::tenant::begin_tenant_tx;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -26,6 +27,7 @@ impl ExportRepository for PgExportRepo {
         let format = format.to_string();
         let quant_type = quant_type.to_string();
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let export = sqlx::query_as::<_, ModelExport>(
                 r#"
                 INSERT INTO model_exports (tenant_id, model_id, format, quant_type)
@@ -37,9 +39,10 @@ impl ExportRepository for PgExportRepo {
             .bind(model_id)
             .bind(&format)
             .bind(&quant_type)
-            .fetch_one(&self.db)
+            .fetch_one(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(export)
         })
     }
@@ -50,14 +53,16 @@ impl ExportRepository for PgExportRepo {
         export_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<ModelExport>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let export = sqlx::query_as::<_, ModelExport>(
                 "SELECT * FROM model_exports WHERE tenant_id = $1 AND id = $2",
             )
             .bind(tenant_id)
             .bind(export_id)
-            .fetch_optional(&self.db)
+            .fetch_optional(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(export)
         })
     }
@@ -68,6 +73,7 @@ impl ExportRepository for PgExportRepo {
         model_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Vec<ModelExport>>> {
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let exports = sqlx::query_as::<_, ModelExport>(
                 r#"
                 SELECT * FROM model_exports
@@ -77,9 +83,10 @@ impl ExportRepository for PgExportRepo {
             )
             .bind(tenant_id)
             .bind(model_id)
-            .fetch_all(&self.db)
+            .fetch_all(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(exports)
         })
     }
@@ -97,6 +104,7 @@ impl ExportRepository for PgExportRepo {
         let storage_path = storage_path.map(|s| s.to_string());
         let error = error.map(|s| s.to_string());
         Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
                 UPDATE model_exports
@@ -114,9 +122,10 @@ impl ExportRepository for PgExportRepo {
             .bind(&storage_path)
             .bind(file_size_bytes)
             .bind(&error)
-            .execute(&self.db)
+            .execute(&mut *tx)
             .await?;
 
+            tx.commit().await?;
             Ok(result.rows_affected() > 0)
         })
     }
