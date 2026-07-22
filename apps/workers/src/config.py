@@ -43,6 +43,12 @@ class WorkerSettings(BaseSettings):
     # GPU provider: "local" (default, worker's own GPU) | "modal" (serverless)
     gpu_provider: str = "local"
 
+    # Cloud GPU (Modal serverless) — used when gpu_provider="modal"
+    modal_app_name: str = "platform-training"
+    modal_function_name: str = "train"
+    modal_secret_name: str = "platform-training-secrets"
+    modal_poll_interval_secs: int = 15
+
     # Backend selection — swap any processing layer without code changes
     pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
     language_detector_backend: str = "langdetect"  # "langdetect" | "null"

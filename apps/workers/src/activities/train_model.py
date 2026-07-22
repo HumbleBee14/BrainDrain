@@ -42,6 +42,7 @@ from src.activities.training_engine import (
 from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
 from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
+from src.tenant_config import TenantLlmConfig
 
 logger = logging.getLogger("platform.training")
 
@@ -68,6 +69,18 @@ class StartTrainingActivity:
                 job_id,
             )
 
+            from dataclasses import asdict
+
+            from src.tenant_config import get_tenant_llm_config
+
+            llm_config = await get_tenant_llm_config(
+                db=self.infra.db,
+                tenant_id=input.tenant_id,
+                default_api_base_url=self.infra.settings.llm_api_base_url,
+                default_api_key=self.infra.settings.llm_api_key,
+                default_model=self.infra.settings.llm_model,
+            )
+
             if self.gpu_provider is not None:
                 result_dict = await self.gpu_provider.run_training(
                     tenant_id=input.tenant_id,
@@ -78,6 +91,7 @@ class StartTrainingActivity:
                     mode=input.mode,
                     hyperparams=input.hyperparams,
                     gpu_class=input.gpu_class,
+                    llm_config=asdict(llm_config),
                 )
                 result = StartTrainingOutput(
                     adapter_path=result_dict["adapter_path"],
@@ -520,36 +534,40 @@ def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
     logger.info("Downloaded adapter from %s to %s", s3_prefix, local_dir)
 
 
-async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
-    """Load model via engine, dispatch to strategy, upload adapter."""
-    engine = get_engine(infra.settings)
+async def run_training_core(
+    input: StartTrainingInput,
+    *,
+    s3,
+    s3_bucket: str,
+    settings,
+    llm_config: TenantLlmConfig,
+) -> StartTrainingOutput:
+    """Pure-compute training core — needs only S3 + a resolved llm_config.
+
+    No Postgres, no Redis. Runs identically in-process (LocalGpuProvider) or
+    inside a remote Modal GPU container.
+    """
+    engine = get_engine(settings)
     hp = input.hyperparams
     job_id = input.training_job_id
 
-    # Ensure MetricsCollector is initialized before any training callbacks use it
-    _get_metrics_collector(infra.settings)
+    _get_metrics_collector(settings)
 
     with tempfile.TemporaryDirectory(prefix=f"train-{job_id[:8]}-") as tmpdir:
         tmpdir_path = Path(tmpdir)
-
-        # Download dataset from S3
         dataset_local = tmpdir_path / "dataset.jsonl"
-        _download_dataset(input.dataset_path, dataset_local, infra.s3, infra.s3_bucket)
+        _download_dataset(input.dataset_path, dataset_local, s3, s3_bucket)
 
         dataset = _load_chatml_dataset(dataset_local)
         logger.info("Loaded dataset: %d examples", len(dataset))
 
-        # Load model via engine protocol
         load_in_4bit = input.method == "qlora"
         max_seq_length = hp.get("max_seq_length", 2048)
-
         model, tokenizer = engine.load_model(
             model_name=input.base_model,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
         )
-
-        # Attach LoRA adapters via engine protocol
         target_modules = hp.get(
             "target_modules",
             ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -562,18 +580,6 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             target_modules=target_modules,
         )
 
-        # Resolve per-tenant LLM config for judge (DPO/GRPO need an LLM judge)
-        from src.tenant_config import get_tenant_llm_config
-
-        llm_config = await get_tenant_llm_config(
-            db=infra.db,
-            tenant_id=input.tenant_id,
-            default_api_base_url=infra.settings.llm_api_base_url,
-            default_api_key=infra.settings.llm_api_key,
-            default_model=infra.settings.llm_model,
-        )
-
-        # Dispatch to registered strategy
         strategy = get_strategy(input.mode)
         metrics = strategy.execute(
             model=model,
@@ -584,34 +590,52 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
             max_seq_length=max_seq_length,
             tenant_id=input.tenant_id,
             dataset_path=input.dataset_path,
-            s3=infra.s3,
-            bucket=infra.s3_bucket,
+            s3=s3,
+            bucket=s3_bucket,
             llm_config=llm_config,
         )
 
-        # Calculate actual cost from runtime
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
         total_runtime = sum(
             v
             for k, v in metrics.items()
             if k.endswith("train_runtime") and isinstance(v, (int, float))
         )
-        runtime_hours = total_runtime / 3600.0
-        metrics["estimated_cost"] = round(runtime_hours * gpu_rate, 2)
+        metrics["estimated_cost"] = round((total_runtime / 3600.0) * gpu_rate, 2)
 
-        # Save adapter via engine protocol
         adapter_dir = tmpdir_path / "adapter"
         engine.save_adapter(model, tokenizer, adapter_dir)
-
-        # Upload adapter to S3
         adapter_s3_path = s3_paths.adapter_training_prefix(input.tenant_id, job_id)
-        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path, infra.s3, infra.s3_bucket)
+        adapter_size = _upload_adapter(adapter_dir, adapter_s3_path, s3, s3_bucket)
 
         return StartTrainingOutput(
             adapter_path=adapter_s3_path,
             adapter_size_bytes=adapter_size,
             metrics=metrics,
         )
+
+
+async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> StartTrainingOutput:
+    """DB-coupled wrapper: resolve tenant llm_config, then delegate to the core.
+
+    Retained for in-process callers (iterative rounds) that pass an infra container.
+    """
+    from src.tenant_config import get_tenant_llm_config
+
+    llm_config = await get_tenant_llm_config(
+        db=infra.db,
+        tenant_id=input.tenant_id,
+        default_api_base_url=infra.settings.llm_api_base_url,
+        default_api_key=infra.settings.llm_api_key,
+        default_model=infra.settings.llm_model,
+    )
+    return await run_training_core(
+        input,
+        s3=infra.s3,
+        s3_bucket=infra.s3_bucket,
+        settings=infra.settings,
+        llm_config=llm_config,
+    )
 
 
 # -- Training Strategies --

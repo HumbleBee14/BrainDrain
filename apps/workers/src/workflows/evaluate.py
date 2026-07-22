@@ -45,6 +45,7 @@ class EvaluateWorkflow:
                 judge_model=judge_model,
                 judge_api_base=judge_api_base,
             ),
+            task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.eval_activity(),
             heartbeat_timeout=timeouts.eval_heartbeat(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),

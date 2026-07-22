@@ -19,6 +19,19 @@ GPU_DEFAULT_HOURLY_RATE: float = 0.8
 
 # ── END AUTO-GENERATED ──
 
+# Maps the platform's gpu_class values to current Modal GPU type strings
+# (Modal 1.0+ uses string specifiers; the old modal.gpu.* object API is deprecated).
+MODAL_GPU_MAP: dict[str, str] = {
+    "A10G": "A10",
+    "A10": "A10",
+    "A100": "A100",
+    "A100-80GB": "A100-80GB",
+    "H100": "H100",
+    "L4": "L4",
+    "T4": "T4",
+}
+MODAL_DEFAULT_GPU: str = "A10"
+
 
 # ── AUTO-GENERATED FROM crates/shared/src/enums.rs ──
 # DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py

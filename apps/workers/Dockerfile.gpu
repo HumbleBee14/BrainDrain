@@ -1,0 +1,17 @@
+# Local-GPU worker image (APP_GPU_PROVIDER=local, attached CUDA GPU).
+# The default Dockerfile is a slim cloud dispatcher; this variant carries the
+# full ML/CUDA stack so training can run in-process on the worker's own GPU.
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3-pip curl && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+
+WORKDIR /app
+COPY pyproject.toml ./
+RUN uv sync --no-dev --extra ml --extra gpu-cloud
+
+COPY src/ src/
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-m", "src.worker"]

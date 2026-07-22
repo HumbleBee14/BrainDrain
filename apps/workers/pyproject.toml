@@ -15,7 +15,9 @@ dependencies = [
     "langdetect>=1.0.9",
     # Infrastructure clients
     "asyncpg>=0.29.0",
-    "boto3>=1.35.0",
+    # >=1.36 required: S3_COMPAT_CONFIG uses request/response_checksum_* Config
+    # knobs (added in botocore 1.36) so AWS/MinIO/R2 all work — see s3_client.py.
+    "boto3>=1.36.0",
     "redis>=5.0.0",
     # LLM API (OpenAI-compatible)
     "httpx>=0.27.0",
@@ -47,7 +49,9 @@ ml = [
     "pynvml>=12.0.0",
 ]
 gpu-cloud = [
-    "modal>=0.73.0",
+    # >=1.4.3: Function.with_options(gpu=...) for per-call GPU override
+    # (used in ModalGpuProvider); it did not exist on modal.Function before then.
+    "modal>=1.4.3",
 ]
 # Alternative PDF backend (richer structure extraction, larger install)
 pdf-ml = [
