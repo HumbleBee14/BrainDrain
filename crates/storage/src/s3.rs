@@ -40,9 +40,23 @@ impl S3Storage {
         );
 
         let mut s3_config_builder = aws_sdk_s3::Config::builder()
+            // Required by aws-sdk-s3 1.x when building a Config directly (without
+            // aws-config's loader): the client panics at construction otherwise.
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
             .credentials_provider(credentials)
             .region(Region::new(config.region))
-            .force_path_style(config.force_path_style);
+            .force_path_style(config.force_path_style)
+            // Only add checksums when the operation requires them. aws-sdk-s3 (like
+            // botocore >=1.36) defaults to "when_supported", which attaches a CRC32
+            // checksum to every PutObject — non-AWS S3 stores (Cloudflare R2, some
+            // MinIO versions) reject that on plain uploads. "when_required" restores
+            // the widely-compatible behavior; real AWS S3 still fully supports it.
+            .request_checksum_calculation(
+                aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired,
+            )
+            .response_checksum_validation(
+                aws_sdk_s3::config::ResponseChecksumValidation::WhenRequired,
+            );
 
         if let Some(endpoint) = config.endpoint {
             s3_config_builder = s3_config_builder.endpoint_url(endpoint);

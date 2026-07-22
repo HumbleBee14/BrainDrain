@@ -63,13 +63,16 @@ async def train(payload: dict) -> dict:
 
     os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
 
-    # The remote container cannot reach the compose-network Redis instance
-    # (redis://localhost:6379 is unreachable from Modal), so force the
-    # log-only metrics sink instead of the "redis" default. This must be set
-    # BEFORE build_settings() reads WorkerSettings from the environment.
-    # Progress still surfaces via activity.heartbeat(), just without live
-    # Redis stream metrics. Do not change the local default (config.py).
-    os.environ["APP_METRICS_BACKEND"] = "log"
+    # Metrics sink for the remote container. A compose-internal Redis
+    # (redis://localhost:6379) is unreachable from Modal, so DEFAULT to the
+    # log-only sink — but let the secret override it: set APP_METRICS_BACKEND=redis
+    # AND a PUBLIC APP_REDIS_URL (e.g. an Upstash rediss:// URL that Modal can
+    # reach) in the Modal secret to stream live per-step metrics instead. Using
+    # setdefault (not hard assignment) preserves that override while keeping the
+    # safe default when no reachable Redis is configured. Must run BEFORE
+    # build_settings() reads WorkerSettings from the environment. Do not change
+    # the local default in config.py.
+    os.environ.setdefault("APP_METRICS_BACKEND", "log")
 
     from src.activities.stubs import StartTrainingInput
     from src.activities.train_model import run_training_core

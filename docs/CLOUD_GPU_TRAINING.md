@@ -44,12 +44,15 @@ Temporal worker (CPU host, ml-pipeline-gpu queue)
 
 The Modal container never talks to Postgres — it only reaches S3 (to move
 the dataset and adapter) and the tenant's judge LLM endpoint (for DPO/GRPO
-reward scoring). It also never talks to Redis: the remote entrypoint forces
-`APP_METRICS_BACKEND=log` before loading settings, so training metrics are
-written to the container's log output (visible via Modal logs / Temporal
-heartbeat detail) instead of streamed live to Redis — there is no real-time
-metrics dashboard for Modal-run jobs, only coarse progress via the activity
-heartbeat. All state changes (job status, model row, billing ledger) are
+reward scoring). By default it also doesn't touch Redis: the remote entrypoint
+`setdefault`s `APP_METRICS_BACKEND=log` before loading settings, so training
+metrics go to the container's log output (visible via Modal logs / Temporal
+heartbeat detail) and progress reaches the worker as coarse activity
+heartbeats. If you want live per-step metrics, set `APP_METRICS_BACKEND=redis`
+plus a **publicly reachable** `APP_REDIS_URL` (e.g. an Upstash `rediss://` URL —
+Modal cannot reach a compose-internal `redis://localhost:6379`) in the Modal
+secret; the remote then streams to that Redis instead. All state changes
+(job status, model row, billing ledger) are
 written by the worker process after the remote call returns, in one Postgres
 transaction (see `crates/db` invariant: DB writes for training completion
 are transactional with the billing side effect).
@@ -323,14 +326,14 @@ Required keys:
   `WorkerSettings()` simply fails to construct in the container. A
   placeholder like `postgresql://unused:unused@unused:5432/unused` is
   sufficient and intentional — do not point this at a real database.
-- `APP_METRICS_BACKEND=log` — not required in the secret itself.
-  `modal_app.py`'s `train()` sets `os.environ["APP_METRICS_BACKEND"] = "log"`
-  unconditionally before calling `build_settings()`, so the remote container
-  always uses the log-only metrics sink regardless of what (if anything) the
-  secret provides for this key. Documented here so the behavior isn't a
-  surprise: even if you set `APP_METRICS_BACKEND=redis` in the secret, the
-  remote path ignores it and logs instead — this is intentional (Redis is
-  unreachable from Modal; see §2).
+- `APP_METRICS_BACKEND` — optional. `modal_app.py`'s `train()` does
+  `os.environ.setdefault("APP_METRICS_BACKEND", "log")` before
+  `build_settings()`, so the remote container defaults to the log-only sink.
+  To stream live per-step metrics instead, set `APP_METRICS_BACKEND=redis`
+  **and** a publicly reachable `APP_REDIS_URL` (an Upstash `rediss://` URL, or
+  any Redis Modal's network can reach — never a compose-internal
+  `redis://localhost:6379`) in the secret. Leaving it unset keeps the safe log
+  default.
 
 Create the secret with the Modal CLI (values below are placeholders — do not
 paste real credentials into shell history or CI logs):
@@ -387,12 +390,14 @@ endpoint with `APP_S3_REGION=auto`. Buckets created with an `eu`/`fedramp`
 jurisdiction use the matching `https://<ACCOUNT_ID>.<jurisdiction>.r2.cloudflarestorage.com`
 endpoint.
 
-> **Scope note:** this shared factory covers the **Python worker** paths
-> (training data + adapters, the cloud-GPU flow). The Rust control plane's
-> object-storage client (`crates/storage`, used for user document uploads)
-> is a separate SDK and is **not** yet given the same R2/MinIO checksum
-> treatment — a full "bring your own storage" story for the upload path is a
-> follow-up.
+> **Note:** the Rust control plane's object-storage client
+> (`crates/storage/src/s3.rs`, used for user document uploads) gets the
+> equivalent treatment for the same reason — it already forces path-style for
+> custom endpoints and now sets `request_checksum_calculation` /
+> `response_checksum_validation` to `WhenRequired` on the `aws_sdk_s3::Config`
+> builder (aws-sdk-s3 has the same default-checksum behavior as botocore
+> ≥1.36). So both planes — worker training I/O and control-plane uploads —
+> work against AWS S3, MinIO, and R2 by config alone.
 
 ## 8. Deploy
 
