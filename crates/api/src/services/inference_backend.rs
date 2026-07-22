@@ -12,9 +12,14 @@
 //! # Supported backends
 //! | Backend | Type string | Dynamic LoRA? | Adapter selection |
 //! |---------|-------------|---------------|-------------------|
-//! | vLLM    | `vllm`      | Yes (REST)    | `model` field in request body |
+//! | vLLM    | `vllm`      | Yes (S3 resolver, lazy) | `model` field = S3 key prefix |
 //! | TGI     | `tgi`       | No (startup)  | `parameters.adapter_id` field |
-//! | SGLang  | `sglang`    | Yes (REST)    | `model` field in request body |
+//! | SGLang  | `sglang`    | Yes (REST, local path)  | `model` field in request body |
+//!
+//! vLLM fetches adapters from object storage via the `s3_lora_resolver` plugin
+//! (see `infra/serving/`); the control plane never needs the adapter on its own
+//! or the GPU box's filesystem. SGLang's dynamic `/load_lora` still expects a
+//! path reachable by the SGLang process.
 
 use std::sync::Arc;
 
@@ -83,10 +88,18 @@ pub trait InferenceBackend: Send + Sync {
 
 /// vLLM backend — the reference serving engine.
 ///
-/// Supports dynamic LoRA loading via REST:
-/// - Load: `POST /v1/load_lora_adapter`
-/// - Unload: `POST /v1/unload_lora_adapter`
-/// - Inference: adapter selected via `model` field in request body
+/// Adapters live in object storage (S3/MinIO/R2) under their `adapter_path`
+/// key prefix. Our vLLM image (`infra/serving/`) runs the `s3_lora_resolver`
+/// plugin with `VLLM_ALLOW_RUNTIME_LORA_UPDATING=true`, so vLLM fetches an
+/// adapter from the bucket the first time its name appears in the `model`
+/// field of a request. The adapter is therefore addressed by its S3 key
+/// prefix — no shared filesystem between the control plane and the GPU box.
+///
+/// - Load: a **warmup** inference (`model = <adapter_ref>`) forces the
+///   resolver to fetch + load the adapter now, so deploy fails loudly if it
+///   can't be loaded instead of failing on the first user request.
+/// - Unload: `POST /v1/unload_lora_adapter` (best-effort).
+/// - Inference: adapter selected via `model` field in request body.
 pub struct VllmBackend {
     base_url: String,
     http_client: reqwest::Client,
@@ -121,20 +134,28 @@ impl InferenceBackend for VllmBackend {
         &self.circuit_breaker
     }
 
-    async fn load_adapter(&self, model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
-        let adapter_ref = format!("adapter-{model_id}");
-        let url = format!("{}/v1/load_lora_adapter", self.base_url);
-        let body = serde_json::json!({
-            "lora_name": adapter_ref,
-            "lora_path": adapter_path,
-        });
+    async fn load_adapter(&self, _model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
+        // The adapter is addressed by its S3 key prefix; the resolver plugin
+        // fetches it from the bucket on first use. A one-token warmup request
+        // forces that fetch + load now so deploy surfaces resolve/load errors
+        // eagerly rather than on the first real inference call.
+        let adapter_ref = adapter_path.trim_end_matches('/').to_string();
+        let url = self.chat_completions_url();
+        let warmup = self.build_inference_body(
+            &adapter_ref,
+            &serde_json::json!([{"role": "user", "content": "ping"}]),
+            0.0,
+            1,
+            1.0,
+            false,
+        );
         let http = self.http_client.clone();
 
         let resp = self
             .circuit_breaker
             .execute(|| async {
                 http.post(&url)
-                    .json(&body)
+                    .json(&warmup)
                     .send()
                     .await
                     .map_err(|e| AppError::Internal(anyhow::anyhow!("vLLM unreachable: {e}")))
@@ -145,13 +166,13 @@ impl InferenceBackend for VllmBackend {
             let status = resp.status();
             let body_text = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(anyhow::anyhow!(
-                "vLLM adapter load failed ({status}): {body_text}"
+                "vLLM adapter warmup/load failed ({status}): {body_text}"
             )));
         }
 
         Ok(AdapterHandle {
             adapter_ref,
-            metadata: serde_json::json!({"backend": "vllm"}),
+            metadata: serde_json::json!({"backend": "vllm", "loaded_via": "s3_resolver_warmup"}),
         })
     }
 
@@ -474,10 +495,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vllm_adapter_ref_format() {
-        let id = Uuid::nil();
-        let expected = format!("adapter-{id}");
-        assert!(expected.starts_with("adapter-"));
+    fn vllm_adapter_ref_is_s3_key_prefix() {
+        // The adapter is addressed by its S3 key prefix (trailing slash
+        // trimmed) so the resolver can locate it in the bucket.
+        let adapter_path = "adapters/tenant-1/model-9/";
+        let adapter_ref = adapter_path.trim_end_matches('/').to_string();
+        assert_eq!(adapter_ref, "adapters/tenant-1/model-9");
     }
 
     #[test]

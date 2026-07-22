@@ -1,0 +1,17 @@
+[project]
+name = "vllm-s3-lora-resolver"
+version = "0.1.0"
+description = "S3/R2/MinIO-backed LoRA resolver plugin for vLLM runtime adapter loading"
+requires-python = ">=3.10"
+dependencies = ["boto3>=1.34"]
+
+[project.entry-points."vllm.general_plugins"]
+# vLLM loads this at startup when VLLM_PLUGINS includes "s3_lora_resolver".
+s3_lora_resolver = "s3_lora_resolver:register_s3_resolver"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["s3_lora_resolver"]
