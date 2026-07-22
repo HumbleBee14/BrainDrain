@@ -546,9 +546,26 @@ Steps:
   (A10) — fine for the two 4-bit models it loads; the automatic
   post-training eval in `FullPipelineWorkflow` forwards the training
   `gpu_class`.
+- **Holdout eval correctness (fixed while offloading).** Two pre-existing
+  bugs in `_evaluate_on_holdout` / the holdout adapter load surfaced only when
+  the path was actually exercised on Modal: (1) the iteration's saved adapter
+  is now loaded with `PeftModel.from_pretrained` (the old
+  `attach_adapter()` + `load_adapter("default")` created a fresh random
+  adapter and then failed to load real weights into the same name — a
+  state_dict mismatch); (2) Unsloth's trainer init requires a `train_dataset`
+  even for an eval-only run (`fix_zero_training_loss` calls `len()` on it), so
+  the eval-only `SFTTrainer` is given the val set as its (never-trained)
+  `train_dataset`. Before these fixes the holdout eval always raised and
+  `TrainIterativeWorkflow`'s tolerate-and-proxy fallback silently compared
+  *train* loss for early stopping; it now produces a real held-out
+  `eval_loss`.
 - **Only S3 (and the judge LLM endpoint) must be cloud-reachable.** No other
-  service needs to be exposed to the public internet for the `TrainWorkflow`
-  cloud-GPU path to work.
+  service needs to be exposed to the public internet for the cloud-GPU path
+  to work. Live per-step metrics streaming to Upstash (`APP_METRICS_BACKEND=redis`
+  + a `rediss://` `APP_REDIS_URL` in the Modal secret) is verified end-to-end:
+  a remote `evaluate_holdout` on Modal streamed `eval_begin`/`eval_end` events
+  to an Upstash stream (`training:metrics:<job_id>`) read back over the public
+  endpoint.
 - **A tenant-supplied custom LLM key is not read from the Modal secret.**
   `StartTrainingActivity` resolves `TenantLlmConfig` from Postgres (per
   tenant) *before* building the spawn payload, then serializes it

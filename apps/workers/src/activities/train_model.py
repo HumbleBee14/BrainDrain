@@ -613,7 +613,12 @@ async def run_evaluate_holdout_core(
             },
         )
 
-        # Load model + adapter from this iteration's checkpoint
+        # Load base model, then load THIS iteration's trained adapter from its
+        # checkpoint. Use PeftModel.from_pretrained (same as run_evaluation_core)
+        # so the saved adapter's own config + weights are restored exactly. The
+        # earlier attach_adapter()+load_adapter("default") approach created a
+        # fresh random adapter named "default" and then tried to load saved
+        # weights into that same name, which fails with a state_dict mismatch.
         max_seq_length = hp.get("max_seq_length", 2048)
         load_in_4bit = input.method == "qlora"
         model, tokenizer = engine.load_model(
@@ -622,23 +627,13 @@ async def run_evaluate_holdout_core(
             load_in_4bit=load_in_4bit,
         )
 
-        target_modules = hp.get(
-            "target_modules",
-            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        )
-        model = engine.attach_adapter(
-            model,
-            r=hp.get("r", 16),
-            lora_alpha=hp.get("lora_alpha", 16),
-            lora_dropout=hp.get("lora_dropout", 0),
-            target_modules=target_modules,
-        )
-
-        # Load the adapter weights from this iteration
         adapter_dir = tmpdir_path / "adapter"
         adapter_dir.mkdir(parents=True)
         _download_adapter(input.adapter_path, adapter_dir, s3, s3_bucket)
-        model.load_adapter(str(adapter_dir), adapter_name="default")
+
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(model, str(adapter_dir))
 
         try:
             activity.heartbeat(f"eval_iter_{iteration}_running")
@@ -959,9 +954,14 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
         report_to="none",
     )
 
+    # train_dataset is required even for an eval-only run: Unsloth's trainer
+    # init calls fix_zero_training_loss(), which does len(train_dataset) and
+    # raises TypeError on None. We only ever call .evaluate() (never .train()),
+    # so reusing val_dataset as the train_dataset is inert — no training happens.
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
+        train_dataset=val_dataset,
         eval_dataset=val_dataset,
         args=eval_args,
     )

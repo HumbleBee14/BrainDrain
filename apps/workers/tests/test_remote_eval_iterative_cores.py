@@ -120,18 +120,14 @@ async def test_sft_round_core_runs_without_db(monkeypatch):
 @pytest.mark.asyncio
 async def test_holdout_core_runs_without_db(monkeypatch):
     """Drive run_evaluate_holdout_core with heavy pieces stubbed; assert no DB needed."""
-    import src.activities.train_model as tm
+    import sys
+    import types
 
-    class _ModelWithAdapter:
-        def load_adapter(self, *a, **k):
-            return None
+    import src.activities.train_model as tm
 
     class _Engine(_FakeEngine):
         def load_model(self, **k):
-            return (_ModelWithAdapter(), "tok")
-
-        def attach_adapter(self, model, **k):
-            return model
+            return ("base_model", "tok")
 
     monkeypatch.setattr(tm, "get_engine", lambda s: _Engine())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
@@ -140,6 +136,12 @@ async def test_holdout_core_runs_without_db(monkeypatch):
     monkeypatch.setattr(tm, "_get_metrics_collector", lambda s: None)
     monkeypatch.setattr(tm, "_stream_metric", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_evaluate_on_holdout", lambda *a, **k: 0.5)
+    # The core loads the saved adapter via `from peft import PeftModel;
+    # PeftModel.from_pretrained(...)` (peft is an ML-only dep, absent in dev),
+    # so inject a fake peft module that returns the base model unchanged.
+    fake_peft = types.ModuleType("peft")
+    fake_peft.PeftModel = types.SimpleNamespace(from_pretrained=lambda m, p, **k: m)
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
     inp = EvaluateHoldoutInput(
         tenant_id="tenant-1",
