@@ -88,6 +88,10 @@ export type { RateSamplesRequest } from "./RateSamplesRequest";
 export type { UpdateGuidanceRequest } from "./UpdateGuidanceRequest";
 export type { GenerateDatasetRequest } from "./GenerateDatasetRequest";
 
+// Model catalog
+export type { CatalogModel } from "./CatalogModel";
+export type { CatalogResponse } from "./CatalogResponse";
+
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {
   data: T[];
