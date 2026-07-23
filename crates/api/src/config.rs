@@ -150,6 +150,12 @@ pub struct Config {
     #[serde(default = "default_parsing_stuck_timeout_secs")]
     pub parsing_stuck_timeout_secs: i64,
 
+    /// Idle serving instances with no inference traffic for this long are scaled
+    /// to zero (their models undeployed and the instance retired). `0` disables
+    /// idle reaping — the default, since instances are operator-registered.
+    #[serde(default = "default_inference_instance_idle_timeout_secs")]
+    pub inference_instance_idle_timeout_secs: i64,
+
     // ── Circuit Breaker (Inference Backend) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -462,6 +468,9 @@ fn default_training_stuck_timeout_secs() -> i64 {
 }
 fn default_parsing_stuck_timeout_secs() -> i64 {
     1_800
+}
+fn default_inference_instance_idle_timeout_secs() -> i64 {
+    0
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

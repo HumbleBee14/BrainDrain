@@ -1,13 +1,19 @@
-//! Stuck-job reaper.
+//! Background reapers for abandoned/idle resources.
 //!
 //! A worker crash/OOM (or a terminated workflow whose cleanup never ran) can
 //! leave a training job pinned in `training`/`provisioning` forever — GPU time
-//! accrues but is never billed — or a document pinned in `parsing`. This
-//! background pass finds those rows and forces a terminal state.
+//! accrues but is never billed — or a document pinned in `parsing`. Idle serving
+//! instances similarly keep an external GPU box running with no traffic. These
+//! background passes find those rows and force a terminal/scaled-down state.
 //!
 //! Runs on the owner pool (RLS-exempt) so it sees every tenant's rows, and
 //! bills reaped training jobs for elapsed GPU time in the same transaction as
 //! the status change (durable, consistent with the worker's own billing).
+//!
+//! Idle-instance reaping scales the control-plane state to zero (undeploy the
+//! instance's models, retire the instance). Tearing down the underlying GPU box
+//! remains the operator's/provider's responsibility — instances are registered
+//! externally, so the reaper cannot recreate one it destroys.
 
 use std::collections::HashMap;
 
@@ -164,6 +170,81 @@ fn gpu_class(job: &StuckJob) -> String {
     job.gpu_class.as_deref().unwrap_or("").to_lowercase()
 }
 
+/// Whether idle-instance reaping is enabled (a positive timeout).
+fn idle_reaping_enabled(idle_after_secs: i64) -> bool {
+    idle_after_secs > 0
+}
+
+/// Scale idle serving instances to zero. An instance is idle when none of its
+/// deployed models has served inference (via any API key) within the timeout —
+/// falling back to the instance's creation time when it has never been used.
+/// Such an instance has its models undeployed and is retired, freeing the
+/// externally-managed GPU box for teardown. Disabled when `idle_after_secs <= 0`.
+/// Returns the number of instances retired.
+pub async fn reap_idle_instances(db: &PgPool, idle_after_secs: i64) -> Result<usize, sqlx::Error> {
+    if !idle_reaping_enabled(idle_after_secs) {
+        return Ok(0);
+    }
+
+    let idle_instances: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT i.id, i.name \
+         FROM inference_instances i \
+         WHERE i.lifecycle_state = 'ready' \
+           AND COALESCE( \
+                 (SELECT MAX(k.last_used_at) \
+                    FROM models m \
+                    JOIN api_keys k ON k.model_id = m.id \
+                   WHERE m.inference_instance_id = i.id \
+                     AND m.deployment_status IN ('active', 'deploying')), \
+                 i.created_at \
+               ) < NOW() - make_interval(secs => $1)",
+    )
+    .bind(idle_after_secs as f64)
+    .fetch_all(db)
+    .await?;
+
+    let mut retired = 0;
+    for (instance_id, name) in idle_instances {
+        if retire_idle_instance(db, instance_id).await? {
+            retired += 1;
+            tracing::warn!(instance_id = %instance_id, name = %name, "Scaled idle serving instance to zero");
+        }
+    }
+    Ok(retired)
+}
+
+/// Undeploy an instance's models and retire it, transactionally. Returns whether
+/// the instance was retired (false if it already left the `ready` state).
+async fn retire_idle_instance(db: &PgPool, instance_id: Uuid) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    let retired = sqlx::query(
+        "UPDATE inference_instances \
+         SET lifecycle_state = 'retired', active_adapter_count = 0, updated_at = NOW() \
+         WHERE id = $1 AND lifecycle_state = 'ready'",
+    )
+    .bind(instance_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if retired.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    sqlx::query(
+        "UPDATE models \
+         SET deployment_status = 'inactive', inference_instance_id = NULL, updated_at = NOW() \
+         WHERE inference_instance_id = $1 AND deployment_status IN ('active', 'deploying')",
+    )
+    .bind(instance_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Fail documents stuck in `parsing` past the threshold. Returns the count.
 pub async fn reap_stuck_parsing_documents(
     db: &PgPool,
@@ -186,7 +267,15 @@ pub async fn reap_stuck_parsing_documents(
 
 #[cfg(test)]
 mod tests {
-    use super::status_indicates_running;
+    use super::{idle_reaping_enabled, status_indicates_running};
+
+    #[test]
+    fn idle_reaping_disabled_by_default() {
+        assert!(!idle_reaping_enabled(0));
+        assert!(!idle_reaping_enabled(-1));
+        assert!(idle_reaping_enabled(1));
+        assert!(idle_reaping_enabled(1800));
+    }
 
     #[test]
     fn running_statuses_detected() {
