@@ -75,6 +75,11 @@ class WorkerSettings(BaseSettings):
 
     # Data Studio synthetic data-generation
     faithfulness_gate_enabled: bool = True
+    # Sampling temperatures. Generation is deliberately creative; the
+    # faithfulness judge is scored near-deterministically so the same
+    # (pair, source) inputs yield a stable verdict instead of drifting.
+    generation_temperature: float = 0.7
+    judge_temperature: float = 0.0
 
     # Logging
     log_level: str = "INFO"
