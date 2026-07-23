@@ -5,7 +5,7 @@
  */
 export type OllamaExportResponse = { 
 /**
- * Suggested Ollama model name (e.g. `braindrain-1a2b3c4d-q5_k_m`).
+ * Suggested Ollama model name (e.g. `finetuned-1a2b3c4d-q5_k_m`).
  */
 model_name: string, 
 /**

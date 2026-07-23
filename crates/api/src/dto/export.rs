@@ -61,7 +61,7 @@ pub struct ExportDownloadResponse {
 #[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
 pub struct OllamaExportResponse {
-    /// Suggested Ollama model name (e.g. `braindrain-1a2b3c4d-q5_k_m`).
+    /// Suggested Ollama model name (e.g. `finetuned-1a2b3c4d-q5_k_m`).
     pub model_name: String,
     /// Filename the user should save the downloaded GGUF as.
     pub filename: String,

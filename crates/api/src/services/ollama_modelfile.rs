@@ -33,11 +33,11 @@ fn stop_tokens(base_model: &str) -> &'static [&'static str] {
     }
 }
 
-/// A suggested Ollama model name for an export, e.g. `braindrain-1a2b3c4d-q5-k-m`.
+/// A suggested Ollama model name for an export, e.g. `finetuned-1a2b3c4d-q5-k-m`.
 /// Ollama names allow `[a-z0-9._-]`; anything else is folded to `-`.
 pub fn model_name(model_id: &str, quant_type: &str) -> String {
     let short = model_id.chars().take(8).collect::<String>();
-    let raw = format!("braindrain-{short}-{quant_type}");
+    let raw = format!("finetuned-{short}-{quant_type}");
     raw.to_lowercase()
         .chars()
         .map(|c| {
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn model_name_is_sanitized_and_lowercased() {
         let name = model_name("1A2B3C4D-e5f6-7890-abcd-ef0123456789", "Q5_K_M");
-        assert_eq!(name, "braindrain-1a2b3c4d-q5_k_m");
+        assert_eq!(name, "finetuned-1a2b3c4d-q5_k_m");
         // No uppercase, no illegal chars.
         assert!(
             name.chars()
@@ -156,16 +156,16 @@ mod tests {
 
     #[test]
     fn instructions_reference_the_name_and_file() {
-        let steps = build_instructions("braindrain-abc-q5-k-m", "model-abc-Q5_K_M.gguf");
+        let steps = build_instructions("finetuned-abc-q5-k-m", "model-abc-Q5_K_M.gguf");
         assert!(
             steps
                 .iter()
-                .any(|s| s.contains("ollama create braindrain-abc-q5-k-m -f Modelfile"))
+                .any(|s| s.contains("ollama create finetuned-abc-q5-k-m -f Modelfile"))
         );
         assert!(
             steps
                 .iter()
-                .any(|s| s.contains("ollama run braindrain-abc-q5-k-m"))
+                .any(|s| s.contains("ollama run finetuned-abc-q5-k-m"))
         );
         assert!(steps.iter().any(|s| s.contains("model-abc-Q5_K_M.gguf")));
     }
