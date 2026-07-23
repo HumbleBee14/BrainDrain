@@ -2,8 +2,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use chrono::{Datelike, TimeZone, Utc};
+
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::TenantRepository;
+use crate::repositories::traits::{BillingEventRepository, TenantRepository};
 
 /// Resource limits for each subscription plan.
 ///
@@ -17,6 +19,8 @@ pub struct PlanLimits {
     pub max_team_members: i64,
     pub max_training_pairs: i64,
     pub max_storage_gb: i64,
+    /// Monthly spend ceiling in USD. `None` means uncapped (enterprise/pro).
+    pub max_monthly_spend_usd: Option<f64>,
 }
 
 impl PlanLimits {
@@ -28,6 +32,7 @@ impl PlanLimits {
                 max_team_members: 10,
                 max_training_pairs: 50_000,
                 max_storage_gb: 50,
+                max_monthly_spend_usd: Some(1_000.0),
             },
             "pro" => PlanLimits {
                 max_projects: 100,
@@ -35,6 +40,7 @@ impl PlanLimits {
                 max_team_members: 50,
                 max_training_pairs: 500_000,
                 max_storage_gb: 500,
+                max_monthly_spend_usd: None,
             },
             // starter/free — default tier
             _ => {
@@ -47,6 +53,7 @@ impl PlanLimits {
                     max_team_members: 1,
                     max_training_pairs: 1_000,
                     max_storage_gb: 5,
+                    max_monthly_spend_usd: Some(50.0),
                 }
             }
         }
@@ -63,6 +70,23 @@ impl PlanLimits {
     pub fn training_pairs_exhausted(&self, current_pairs: i64) -> bool {
         current_pairs >= self.max_training_pairs
     }
+
+    /// Whether month-to-date spend has reached the plan's monthly ceiling.
+    /// Uncapped plans (`None`) never exhaust.
+    pub fn spend_exhausted(&self, month_to_date_usd: f64) -> bool {
+        match self.max_monthly_spend_usd {
+            Some(cap) => month_to_date_usd >= cap,
+            None => false,
+        }
+    }
+}
+
+/// Start of the current UTC calendar month.
+fn current_month_start() -> chrono::DateTime<Utc> {
+    let now = Utc::now();
+    Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
+        .single()
+        .unwrap_or(now)
 }
 
 pub struct PlanService;
@@ -171,6 +195,30 @@ impl PlanService {
         }
         Ok(())
     }
+
+    /// Reject a billable operation once the tenant's month-to-date spend has
+    /// reached the plan's monthly ceiling. Uncapped plans skip the spend query.
+    pub async fn check_spend_cap(
+        tenant_repo: &dyn TenantRepository,
+        billing_repo: &dyn BillingEventRepository,
+        tenant_id: Uuid,
+    ) -> AppResult<()> {
+        let limits = Self::get_limits(tenant_repo, tenant_id).await?;
+        let Some(cap) = limits.max_monthly_spend_usd else {
+            return Ok(());
+        };
+        let spent = billing_repo
+            .sum_cost_since(tenant_id, current_month_start())
+            .await?;
+        if limits.spend_exhausted(spent) {
+            return Err(AppError::Forbidden {
+                message: format!(
+                    "Monthly spend limit reached (${spent:.2} of ${cap:.2}). Upgrade your plan to continue."
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 const BYTES_PER_GB: i64 = 1024 * 1024 * 1024;
@@ -205,5 +253,21 @@ mod tests {
         assert!(!free.training_pairs_exhausted(free.max_training_pairs - 1));
         assert!(free.training_pairs_exhausted(free.max_training_pairs));
         assert!(free.training_pairs_exhausted(free.max_training_pairs + 1));
+    }
+
+    #[test]
+    fn spend_cap_applies_to_capped_plans() {
+        let free = PlanLimits::for_plan("free");
+        let cap = free.max_monthly_spend_usd.unwrap();
+        assert!(!free.spend_exhausted(cap - 0.01));
+        assert!(free.spend_exhausted(cap));
+        assert!(free.spend_exhausted(cap + 100.0));
+    }
+
+    #[test]
+    fn spend_cap_never_exhausts_uncapped_plan() {
+        let pro = PlanLimits::for_plan("pro");
+        assert!(pro.max_monthly_spend_usd.is_none());
+        assert!(!pro.spend_exhausted(1_000_000.0));
     }
 }

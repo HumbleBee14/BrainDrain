@@ -6,4 +6,8 @@
  * Computed from the plan name string. The `plan_limits` JSONB column
  * in the database is reserved for potential future per-tenant overrides.
  */
-export type PlanLimits = { max_projects: number, max_models: number, max_team_members: number, max_training_pairs: number, max_storage_gb: number, };
+export type PlanLimits = { max_projects: number, max_models: number, max_team_members: number, max_training_pairs: number, max_storage_gb: number, 
+/**
+ * Monthly spend ceiling in USD. `None` means uncapped (enterprise/pro).
+ */
+max_monthly_spend_usd: number | null, };
