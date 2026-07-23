@@ -5,6 +5,8 @@ Default suites (registered via @register_suite):
   2. General Capability:     196-question benchmark, forgetting detection
   3. A/B Comparison:         Blind pairwise comparison vs base model
   4. Safety Check:           Refusal rate on adversarial prompts
+  5. Document Knowledge:     FT-vs-base knowledge lift on the golden holdout
+                             (chunks the model never trained on)
 
 Scores and a detailed report are saved to DB and attached to the model record.
 Uses the unified LLMJudge protocol from llm_judge.py.
@@ -67,8 +69,13 @@ class EvaluationSuite(Protocol):
         tokenizer_base: Any,
         judge: LLMJudge,
         val_dataset: list[dict] | None,
+        golden_dataset: list[dict] | None = None,
     ) -> tuple[dict, dict]:
-        """Run the suite. Returns (scores_dict, report_dict)."""
+        """Run the suite. Returns (scores_dict, report_dict).
+
+        `golden_dataset` holds pairs generated from document chunks the model
+        never trained on (the golden holdout); most suites ignore it.
+        """
         ...
 
 
@@ -292,6 +299,20 @@ async def run_evaluation_core(
         except Exception as e:
             logger.warning("No validation split found: %s", e)
 
+        # Download the golden eval set — pairs generated from document chunks
+        # the model never trained on (written by build_dataset alongside the
+        # train/val files). Older datasets have none; the suite reports None
+        # and is excluded from the overall score.
+        golden_dataset = None
+        try:
+            golden_s3_path = input.dataset_path.replace(".jsonl", "_golden.jsonl")
+            golden_local = tmpdir_path / "golden.jsonl"
+            _download_from_s3(golden_s3_path, golden_local, s3, s3_bucket)
+            golden_dataset = _load_jsonl(golden_local)
+            logger.info("Loaded %d golden samples", len(golden_dataset))
+        except Exception as e:
+            logger.info("No golden eval set found: %s", e)
+
         # Run all registered suites
         suites = get_registered_suites()
         scores = {}
@@ -300,7 +321,13 @@ async def run_evaluation_core(
         for suite in suites:
             activity.heartbeat(f"suite_{suite.name}")
             suite_scores, suite_report = suite.run(
-                model_ft, tokenizer, model_base, tokenizer_base, judge, val_dataset
+                model_ft,
+                tokenizer,
+                model_base,
+                tokenizer_base,
+                judge,
+                val_dataset,
+                golden_dataset=golden_dataset,
             )
             scores[suite.name] = suite_scores
             report[suite.name] = suite_report
@@ -323,7 +350,7 @@ class DomainSuite:
     name = "domain"
     weight = 0.30
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
+    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
         if not val_dataset:
             # No validation data — report no domain result (mean=None) so the
             # overall score excludes this suite and renormalizes, rather than
@@ -397,7 +424,7 @@ class GeneralCapabilitySuite:
     name = "general"
     weight = 0.25
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
+    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
         benchmark = _load_benchmark("general_benchmark.json")
 
         ft_correct = {"reasoning": 0, "math": 0, "coding": 0, "general_knowledge": 0}
@@ -477,7 +504,7 @@ class ABComparisonSuite:
     name = "ab_comparison"
     weight = 0.25
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
+    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
         if not val_dataset:
             # No validation data — report no win rate (None) so the overall score
             # excludes this suite instead of counting a fabricated 50%.
@@ -569,7 +596,7 @@ class SafetySuite:
     name = "safety"
     weight = 0.20
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
+    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
         prompts = _load_benchmark("safety_prompts.json")
 
         ft_refused = 0
@@ -618,6 +645,97 @@ class SafetySuite:
                 "total": total,
             },
             {"details": details},
+        )
+
+
+# -- Suite 5: Document Knowledge (golden holdout) --
+
+
+@register_suite
+class DocumentKnowledgeSuite:
+    """Measure document knowledge on the golden holdout.
+
+    The golden set is generated from document chunks the model NEVER trained
+    on, so this suite measures whether fine-tuning actually taught the model
+    the documents' content — not memorization of training pairs. Both the
+    fine-tuned and base model answer every golden question; the difference of
+    their judged means is the *knowledge lift*: how much document knowledge
+    fine-tuning added over what the base model already knew.
+    """
+
+    name = "doc_knowledge"
+    weight = 0.30
+
+    MAX_SAMPLES = 30
+
+    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+        if not golden_dataset:
+            # No golden set (dataset predates the holdout, or generation was
+            # disabled) — report None so the overall score excludes this suite.
+            return (
+                {"mean": None, "base_mean": None, "knowledge_lift": None},
+                {"note": "No golden eval set available", "samples": []},
+            )
+
+        ft_means = []
+        base_means = []
+        samples = []
+
+        for item in golden_dataset[: self.MAX_SAMPLES]:
+            messages = item.get("messages", [])
+            if len(messages) < 2:
+                continue
+
+            prompt_msgs = messages[:-1]
+            expected = messages[-1].get("content", "")
+
+            ft_prompt = _format_prompt(tok_ft, prompt_msgs)
+            ft_answer = _generate(model_ft, tok_ft, ft_prompt)
+            base_prompt = _format_prompt(tok_base, prompt_msgs)
+            base_answer = _generate(model_base, tok_base, base_prompt)
+
+            ft_rubric = judge.score_domain(ft_prompt, ft_answer, expected)
+            base_rubric = judge.score_domain(base_prompt, base_answer, expected)
+
+            ft_vals = [ft_rubric.get(k) for k in ("accuracy", "completeness", "faithfulness")]
+            base_vals = [base_rubric.get(k) for k in ("accuracy", "completeness", "faithfulness")]
+            # Lift is only meaningful when BOTH sides scored on the same sample;
+            # skip the sample entirely otherwise rather than skewing one side.
+            if any(v is None for v in ft_vals) or any(v is None for v in base_vals):
+                continue
+
+            ft_means.append(sum(ft_vals) / 3)
+            base_means.append(sum(base_vals) / 3)
+
+            samples.append(
+                {
+                    "prompt": ft_prompt[:200],
+                    "expected": expected[:200],
+                    "ft_answer": ft_answer[:200],
+                    "base_answer": base_answer[:200],
+                    "ft_scores": ft_rubric,
+                    "base_scores": base_rubric,
+                }
+            )
+
+        if not ft_means:
+            # Nothing could be scored — exclude the suite instead of reporting
+            # a fabricated zero.
+            return (
+                {"mean": None, "base_mean": None, "knowledge_lift": None},
+                {"note": "No golden sample could be scored", "samples": []},
+            )
+
+        ft_mean = round(_mean(ft_means), 2)
+        base_mean = round(_mean(base_means), 2)
+        return (
+            {
+                "mean": ft_mean,
+                "base_mean": base_mean,
+                "knowledge_lift": round(ft_mean - base_mean, 2),
+                "num_samples": len(ft_means),
+            },
+            {"num_samples": len(samples), "samples": samples[:10]},
         )
 
 
@@ -785,6 +903,9 @@ def _suite_pct(name: str, scores: dict) -> float | None:
     if name == "safety":
         refusal_rate = data.get("refusal_rate")
         return None if refusal_rate is None else refusal_rate * 100
+    if name == "doc_knowledge":
+        mean = data.get("mean")
+        return None if mean is None else mean / 5 * 100
     return None
 
 
@@ -834,6 +955,15 @@ def _generate_recommendations(scores: dict) -> list[str]:
         recs.append(
             "Accuracy is lower than completeness. The model may be generating "
             "plausible but incorrect answers. Add more factual training data."
+        )
+
+    doc = scores.get("doc_knowledge", {})
+    doc_lift = doc.get("knowledge_lift")
+    if doc_lift is not None and doc_lift <= 0:
+        recs.append(
+            "Fine-tuning added no measurable document knowledge over the base model "
+            "(zero or negative knowledge lift on held-out document content). Consider "
+            "more training epochs, more pairs per chunk, or higher-quality source documents."
         )
 
     general = scores.get("general", {})

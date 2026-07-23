@@ -119,6 +119,8 @@ pub struct EvaluationScores {
     #[serde(default)]
     pub safety: Option<SafetyScores>,
     #[serde(default)]
+    pub doc_knowledge: Option<DocKnowledgeScores>,
+    #[serde(default)]
     pub overall: Option<f64>,
 }
 
@@ -128,7 +130,27 @@ pub struct DomainScores {
     pub accuracy: f64,
     pub completeness: f64,
     pub faithfulness: f64,
-    pub mean: f64,
+    // None when the suite produced no usable score (no val data / judge could
+    // not score any sample) — the suite is then excluded from the overall.
+    // A bare f64 here would fail deserialization on that null and silently
+    // wipe ALL suites' scores (the caller parses with `.ok()`).
+    pub mean: Option<f64>,
+}
+
+/// Document-knowledge scores from the golden holdout: pairs generated from
+/// document chunks the model never trained on. `knowledge_lift` is the
+/// judged-mean difference (fine-tuned − base) on that held-out content.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct DocKnowledgeScores {
+    #[serde(default)]
+    pub mean: Option<f64>,
+    #[serde(default)]
+    pub base_mean: Option<f64>,
+    #[serde(default)]
+    pub knowledge_lift: Option<f64>,
+    #[serde(default)]
+    pub num_samples: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
@@ -146,7 +168,8 @@ pub struct GeneralScores {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
 pub struct ABComparisonScores {
-    pub win_rate: f64,
+    // None when the suite was skipped (no val data) — see DomainScores::mean.
+    pub win_rate: Option<f64>,
     pub confidence_low: f64,
     pub confidence_high: f64,
     #[serde(default)]
@@ -258,16 +281,40 @@ mod tests {
                 accuracy: 4.2,
                 completeness: 3.8,
                 faithfulness: 4.5,
-                mean: 4.17,
+                mean: Some(4.17),
             }),
             general: None,
             ab_comparison: None,
             safety: None,
+            doc_knowledge: Some(DocKnowledgeScores {
+                mean: Some(4.5),
+                base_mean: Some(2.1),
+                knowledge_lift: Some(2.4),
+                num_samples: Some(24),
+            }),
             overall: Some(78.5),
         };
         let json = serde_json::to_string(&scores).unwrap();
         let parsed: EvaluationScores = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.overall, Some(78.5));
+        assert_eq!(parsed.doc_knowledge.unwrap().knowledge_lift, Some(2.4));
+    }
+
+    #[test]
+    fn eval_scores_tolerate_null_suite_metrics() {
+        // The workers emit `mean: null` / `win_rate: null` when a suite is
+        // skipped (excluded + renormalized). Deserialization must survive the
+        // nulls — a bare f64 would fail and (via the caller's `.ok()`) silently
+        // wipe every suite's scores from the API response.
+        let json = r#"{
+            "domain": {"accuracy": 0.0, "completeness": 0.0, "faithfulness": 0.0, "mean": null},
+            "ab_comparison": {"win_rate": null, "confidence_low": 0.0, "confidence_high": 1.0},
+            "overall": 72.0
+        }"#;
+        let parsed: EvaluationScores = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.domain.unwrap().mean, None);
+        assert_eq!(parsed.ab_comparison.unwrap().win_rate, None);
+        assert_eq!(parsed.overall, Some(72.0));
     }
 
     #[test]
