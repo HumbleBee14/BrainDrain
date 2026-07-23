@@ -6,6 +6,12 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::app_state::AppState;
+use platform_storage::ObjectStorage;
+
+/// Key HEAD-probed to confirm object storage is reachable. It need not exist —
+/// a "not found" still proves the bucket is answering; only a transport/auth
+/// failure marks storage unready.
+const STORAGE_PROBE_KEY: &str = "__readiness_probe__";
 
 /// Health check routes — no auth required.
 pub fn router() -> Router<AppState> {
@@ -25,6 +31,7 @@ pub struct ReadyResponse {
     status: &'static str,
     database: bool,
     redis: bool,
+    storage: bool,
 }
 
 /// Basic liveness check — always returns OK if the process is running.
@@ -54,24 +61,27 @@ pub async fn health() -> Json<HealthResponse> {
     )
 )]
 pub async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, StatusCode> {
-    let db_ok = sqlx::query("SELECT 1").execute(state.db()).await.is_ok();
-
-    let redis_ok = redis::cmd("PING")
-        .query_async::<String>(&mut state.redis())
-        .await
-        .is_ok();
-
-    let response = ReadyResponse {
-        status: if db_ok && redis_ok {
-            "ready"
-        } else {
-            "degraded"
+    // Probe the three backing services concurrently — they are independent.
+    let (db_ok, redis_ok, storage_ok) = tokio::join!(
+        async { sqlx::query("SELECT 1").execute(state.db()).await.is_ok() },
+        async {
+            redis::cmd("PING")
+                .query_async::<String>(&mut state.redis())
+                .await
+                .is_ok()
         },
+        async { state.storage().exists(STORAGE_PROBE_KEY).await.is_ok() },
+    );
+
+    let all_ok = db_ok && redis_ok && storage_ok;
+    let response = ReadyResponse {
+        status: if all_ok { "ready" } else { "degraded" },
         database: db_ok,
         redis: redis_ok,
+        storage: storage_ok,
     };
 
-    if db_ok && redis_ok {
+    if all_ok {
         Ok(Json(response))
     } else {
         // Return 503 but still include the body
