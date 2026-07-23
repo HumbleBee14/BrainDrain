@@ -156,6 +156,13 @@ pub struct Config {
     #[serde(default = "default_inference_instance_idle_timeout_secs")]
     pub inference_instance_idle_timeout_secs: i64,
 
+    /// A `failed` document's uploaded source object is deleted from object
+    /// storage once the row has been failed this long, reclaiming storage that
+    /// would otherwise leak (parsing never consumes a failed source again).
+    /// `0` disables the sweep.
+    #[serde(default = "default_orphaned_document_sweep_secs")]
+    pub orphaned_document_sweep_secs: i64,
+
     // ── Circuit Breaker (Inference Backend) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -471,6 +478,9 @@ fn default_parsing_stuck_timeout_secs() -> i64 {
 }
 fn default_inference_instance_idle_timeout_secs() -> i64 {
     0
+}
+fn default_orphaned_document_sweep_secs() -> i64 {
+    604_800
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

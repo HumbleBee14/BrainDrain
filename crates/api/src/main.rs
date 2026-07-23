@@ -139,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         let training_stuck = config.training_stuck_timeout_secs;
         let parsing_stuck = config.parsing_stuck_timeout_secs;
         let idle_instance_timeout = config.inference_instance_idle_timeout_secs;
+        let orphan_sweep_secs = config.orphaned_document_sweep_secs;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -165,6 +166,13 @@ async fn main() -> anyhow::Result<()> {
                         ).await {
                             Ok(n) if n > 0 => tracing::warn!(count = n, "Scaled idle serving instances to zero"),
                             Err(e) => tracing::warn!(error = %e, "Idle-instance reaper failed"),
+                            _ => {}
+                        }
+                        match services::reaper::sweep_orphaned_document_objects(
+                            reaper_state.db(), reaper_state.storage(), orphan_sweep_secs,
+                        ).await {
+                            Ok(n) if n > 0 => tracing::info!(count = n, "Reclaimed orphaned document objects"),
+                            Err(e) => tracing::warn!(error = %e, "Orphaned-object sweep failed"),
                             _ => {}
                         }
                     }
