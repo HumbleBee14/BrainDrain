@@ -121,8 +121,11 @@ impl ModelService {
         }
 
         // Deploy the target for real; skip if it is already the active version.
+        // Rollbacks bypass the eval gate: the target is a version that was
+        // previously deployed (already vetted), and gating it could strand
+        // production on a broken current version by refusing the restore.
         if target.deployment_status != DeploymentStatus::Active.to_string() {
-            DeploymentService::deploy(state, tenant_id, target.id).await?;
+            DeploymentService::deploy_bypassing_gate(state, tenant_id, target.id).await?;
         }
 
         let updated = repo

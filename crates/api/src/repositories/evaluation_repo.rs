@@ -106,6 +106,31 @@ impl EvaluationRepository for PgEvaluationRepo {
         })
     }
 
+    fn latest_completed_scores(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<serde_json::Value>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let scores = sqlx::query_scalar::<_, serde_json::Value>(
+                r#"
+                SELECT scores FROM evaluations
+                WHERE model_id = $1 AND tenant_id = $2 AND status = 'completed'
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(model_id)
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(scores)
+        })
+    }
+
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;

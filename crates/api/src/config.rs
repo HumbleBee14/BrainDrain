@@ -134,6 +134,19 @@ pub struct Config {
     #[serde(default = "default_deploy_stale_minutes")]
     pub deploy_stale_minutes: i64,
 
+    /// Eval gate: block a normal deploy unless the model's latest completed
+    /// evaluation shows an A/B win rate against the base model at least this
+    /// high (`0.0`–`1.0`). Unset disables this rule. Rollbacks to a previously
+    /// deployed version bypass the gate.
+    #[serde(default)]
+    pub deploy_min_ab_win_rate: Option<f64>,
+
+    /// Eval gate: block a normal deploy when the model's general-benchmark
+    /// regression against the base model exceeds this many percentage points
+    /// (e.g. `10.0`). Unset disables this rule. Rollbacks bypass the gate.
+    #[serde(default)]
+    pub deploy_max_benchmark_regression: Option<f64>,
+
     /// Inference instance health probe interval in seconds.
     #[serde(default = "default_inference_instance_health_poll_interval_secs")]
     pub inference_instance_health_poll_interval_secs: u64,

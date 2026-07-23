@@ -516,6 +516,15 @@ pub trait EvaluationRepository: Send + Sync {
 
     fn count_by_model(&self, tenant_id: Uuid, model_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
+    /// Scores JSON of the model's most recent *completed* evaluation, or `None`
+    /// when the model has no completed evaluation. Used by the deployment eval
+    /// gate to read a model's quality evidence at deploy time.
+    fn latest_completed_scores(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<serde_json::Value>>>;
+
     fn count_by_project(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn count_by_project_status(
