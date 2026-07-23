@@ -322,6 +322,18 @@ pub enum SampleRating {
     NeedsWork,
 }
 
+/// End-user / reviewer feedback on a captured production inference response.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum FeedbackRating {
+    Positive,
+    Negative,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

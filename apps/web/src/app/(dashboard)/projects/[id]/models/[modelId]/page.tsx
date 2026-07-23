@@ -634,6 +634,26 @@ export default function ModelDetailPage() {
         )}
       </div>
 
+      {/* Production feedback section */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+            Production Feedback
+          </h2>
+          <Link
+            href={`/projects/${params.id}/models/${params.modelId}/feedback`}
+            className="text-sm text-blue-400 hover:text-blue-300 transition"
+          >
+            Review Samples &rarr;
+          </Link>
+        </div>
+        <p className="text-sm text-zinc-400 dark:text-zinc-600">
+          {model.capture_traffic
+            ? "Traffic capture is on — inference requests are being recorded for review."
+            : "Capture live inference traffic and rate responses to improve the next training run."}
+        </p>
+      </div>
+
       {/* GGUF Export section */}
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">GGUF Export</h2>

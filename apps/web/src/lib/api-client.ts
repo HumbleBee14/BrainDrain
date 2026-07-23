@@ -34,6 +34,8 @@ import type {
   RateSamplesRequest,
   UpdateGuidanceRequest,
   CatalogResponse,
+  InferenceSampleResponse,
+  FeedbackRating,
 } from "./generated";
 
 // ── Re-export generated types with frontend-friendly aliases ──
@@ -99,6 +101,10 @@ export type {
   InferenceInstanceHealthStatus,
   InferenceInstanceLifecycleState,
 } from "./generated";
+
+// Feedback / data flywheel types
+export type { InferenceSampleResponse as InferenceSample } from "./generated";
+export type { FeedbackRating, SampleMessage } from "./generated";
 
 // Data guide types (Data Studio guided synthetic data generation)
 export type { DataGuideResponse as DataGuide } from "./generated";
@@ -692,6 +698,39 @@ export const api = {
         token,
         method: "POST",
         body: JSON.stringify({ target_version_id: targetVersionId }),
+      }),
+  },
+
+  feedback: {
+    listSamples: (
+      token: string,
+      modelId: string,
+      offset = 0,
+      limit = 20,
+      rating?: FeedbackRating | "unrated",
+    ) =>
+      request<PaginatedResponse<InferenceSampleResponse>>(
+        `/api/v1/models/${modelId}/samples?offset=${offset}&limit=${limit}${rating ? `&rating=${rating}` : ""}`,
+        { token },
+      ),
+
+    rateSample: (
+      token: string,
+      sampleId: string,
+      rating: FeedbackRating,
+      comment?: string,
+    ) =>
+      request<void>(`/api/v1/samples/${sampleId}/feedback`, {
+        token,
+        method: "POST",
+        body: JSON.stringify({ rating, comment }),
+      }),
+
+    setCapture: (token: string, modelId: string, enabled: boolean) =>
+      request<void>(`/api/v1/models/${modelId}/capture`, {
+        token,
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
       }),
   },
 

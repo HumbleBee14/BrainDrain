@@ -123,6 +123,21 @@ pub struct Model {
     pub deployment_config: serde_json::Value,
     pub eval_scores: serde_json::Value,
     pub version: i32,
+    pub capture_traffic: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct InferenceSample {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub model_id: Uuid,
+    pub api_key_id: Option<Uuid>,
+    pub messages: serde_json::Value,
+    pub response: String,
+    pub rating: Option<String>,
+    pub rating_comment: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

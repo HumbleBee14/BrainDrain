@@ -10,6 +10,7 @@ pub mod deployments;
 pub mod documents;
 pub mod evaluations;
 pub mod exports;
+pub mod feedback;
 pub mod health;
 pub mod inference;
 pub mod notifications;
@@ -52,8 +53,9 @@ pub fn router(state: AppState) -> Router<AppState> {
                 )),
         )
         .merge(health::router())
-        // Inference routes at /v1/ (OpenAI-compatible, API key auth)
+        // Inference + feedback routes at /v1/ (OpenAI-compatible, API key auth)
         .merge(inference::router())
+        .merge(feedback::api_router())
         // Stripe webhooks — NOT behind Clerk auth, mounted at /api/webhooks/stripe
         .merge(stripe_webhooks::router())
 }
@@ -71,6 +73,7 @@ fn v1_router() -> Router<AppState> {
         .merge(catalog::router())
         .merge(evaluations::router())
         .merge(exports::router())
+        .merge(feedback::router())
         .merge(api_keys::router())
         .merge(deployments::router())
         .merge(billing::router())
@@ -189,6 +192,11 @@ fn v1_router() -> Router<AppState> {
         tenant_settings::delete_llm_settings,
         // Inference
         inference::chat_completions,
+        // Feedback (data flywheel)
+        feedback::list_samples,
+        feedback::set_capture,
+        feedback::submit_feedback,
+        feedback::submit_api_feedback,
         // Webhooks
         stripe_webhooks::handle_stripe_webhook,
     ),
@@ -281,6 +289,12 @@ fn v1_router() -> Router<AppState> {
         inference::ChatCompletionResponse,
         inference::ChatChoice,
         inference::ChatUsage,
+        // Feedback (data flywheel)
+        crate::dto::feedback::SampleMessage,
+        crate::dto::feedback::InferenceSampleResponse,
+        crate::dto::feedback::SubmitFeedbackRequest,
+        crate::dto::feedback::ApiFeedbackRequest,
+        crate::dto::feedback::SetCaptureRequest,
         // Stripe
         crate::dto::stripe::CreateCheckoutRequest,
         crate::dto::stripe::CheckoutSessionResponse,
@@ -309,6 +323,7 @@ fn v1_router() -> Router<AppState> {
         platform_shared::enums::TaskType,
         platform_shared::enums::DataGuideStatus,
         platform_shared::enums::SampleRating,
+        platform_shared::enums::FeedbackRating,
         platform_shared::enums::Plan,
         platform_shared::enums::BillingOperation,
         platform_shared::enums::GpuClass,
@@ -350,6 +365,7 @@ fn v1_router() -> Router<AppState> {
         (name = "Audit Logs", description = "Audit log entries"),
         (name = "Settings", description = "Per-tenant configuration (LLM providers, etc.)"),
         (name = "Inference", description = "OpenAI-compatible chat completions API"),
+        (name = "Feedback", description = "Captured inference traffic and response feedback"),
         (name = "Webhooks", description = "Stripe webhook handler"),
     ),
     modifiers(&SecurityAddon),
@@ -405,6 +421,7 @@ mod tests {
             .nest("/api/v1", v1_router())
             .merge(health::router())
             .merge(inference::router())
+            .merge(feedback::api_router())
             .merge(stripe_webhooks::router());
     }
 }

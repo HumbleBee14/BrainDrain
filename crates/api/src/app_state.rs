@@ -15,6 +15,7 @@ use crate::repositories::document_repo::PgDocumentRepo;
 use crate::repositories::evaluation_repo::PgEvaluationRepo;
 use crate::repositories::export_repo::PgExportRepo;
 use crate::repositories::inference_instance_repo::PgInferenceInstanceRepo;
+use crate::repositories::inference_sample_repo::PgInferenceSampleRepo;
 use crate::repositories::invitation_repo::PgInvitationRepo;
 use crate::repositories::model_repo::PgModelRepo;
 use crate::repositories::notification_repo::PgNotificationRepo;
@@ -25,8 +26,9 @@ use crate::repositories::training_job_repo::PgTrainingJobRepo;
 use crate::repositories::traits::{
     ApiKeyRepository, AuditLogRepository, BillingEventRepository, DataGuideRepository,
     DatasetRepository, DocumentRepository, EvaluationRepository, ExportRepository,
-    InferenceInstanceRepository, InvitationRepository, ModelRepository, NotificationRepository,
-    ProjectRepository, TeamMemberRepository, TenantRepository, TrainingJobRepository,
+    InferenceInstanceRepository, InferenceSampleRepository, InvitationRepository, ModelRepository,
+    NotificationRepository, ProjectRepository, TeamMemberRepository, TenantRepository,
+    TrainingJobRepository,
 };
 use crate::services::billing_batcher::BillingBatcher;
 use crate::services::billing_outbox::BillingOutboxRelay;
@@ -79,6 +81,7 @@ struct AppStateInner {
     pub evaluation_repo: Arc<dyn EvaluationRepository>,
     pub export_repo: Arc<dyn ExportRepository>,
     pub inference_instance_repo: Arc<dyn InferenceInstanceRepository>,
+    pub inference_sample_repo: Arc<dyn InferenceSampleRepository>,
     pub api_key_repo: Arc<dyn ApiKeyRepository>,
     pub billing_event_repo: Arc<dyn BillingEventRepository>,
     pub audit_log_repo: Arc<dyn AuditLogRepository>,
@@ -266,6 +269,8 @@ impl AppState {
         let export_repo: Arc<dyn ExportRepository> = Arc::new(PgExportRepo::new(db_rls.clone()));
         let inference_instance_repo: Arc<dyn InferenceInstanceRepository> =
             Arc::new(PgInferenceInstanceRepo::new(db_rls.clone()));
+        let inference_sample_repo: Arc<dyn InferenceSampleRepository> =
+            Arc::new(PgInferenceSampleRepo::new(db_rls.clone()));
         let api_key_repo: Arc<dyn ApiKeyRepository> =
             Arc::new(PgApiKeyRepo::new(db_rls.clone(), db.clone()));
         let billing_event_repo: Arc<dyn BillingEventRepository> =
@@ -439,6 +444,7 @@ impl AppState {
                 evaluation_repo,
                 export_repo,
                 inference_instance_repo,
+                inference_sample_repo,
                 api_key_repo,
                 billing_event_repo,
                 audit_log_repo,
@@ -532,6 +538,14 @@ impl AppState {
 
     pub fn inference_instance_repo(&self) -> &dyn InferenceInstanceRepository {
         &*self.inner.inference_instance_repo
+    }
+
+    pub fn inference_sample_repo(&self) -> &dyn InferenceSampleRepository {
+        &*self.inner.inference_sample_repo
+    }
+
+    pub fn inference_sample_repo_arc(&self) -> Arc<dyn InferenceSampleRepository> {
+        self.inner.inference_sample_repo.clone()
     }
 
     pub fn api_key_repo(&self) -> &dyn ApiKeyRepository {

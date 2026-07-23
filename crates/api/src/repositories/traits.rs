@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::{
     ApiKey, AuditLog, BillingEvent, DataGuide, Dataset, Document, Evaluation, InferenceInstance,
-    Invitation, Model, ModelExport, NotificationDelivery, NotificationPreference, Project,
-    TeamMember, Tenant, TrainingJob,
+    InferenceSample, Invitation, Model, ModelExport, NotificationDelivery, NotificationPreference,
+    Project, TeamMember, Tenant, TrainingJob,
 };
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus,
@@ -455,6 +455,65 @@ pub trait ModelRepository: Send + Sync {
         project_id: Uuid,
         base_model: &str,
     ) -> BoxFuture<'_, AppResult<i32>>;
+
+    /// Toggle production traffic capture (data flywheel) for a model.
+    fn set_capture_traffic(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        enabled: bool,
+    ) -> BoxFuture<'_, AppResult<bool>>;
+}
+
+/// Contract for captured inference traffic (data flywheel).
+pub trait InferenceSampleRepository: Send + Sync {
+    /// Insert a captured request/response pair. The caller supplies the id so
+    /// it can be returned to the API client (as `x-sample-id`) before the
+    /// write completes.
+    #[allow(clippy::too_many_arguments)]
+    fn insert(
+        &self,
+        tenant_id: Uuid,
+        sample_id: Uuid,
+        model_id: Uuid,
+        api_key_id: Option<Uuid>,
+        messages: serde_json::Value,
+        response: &str,
+    ) -> BoxFuture<'_, AppResult<()>>;
+
+    fn get_by_id(
+        &self,
+        tenant_id: Uuid,
+        sample_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<InferenceSample>>>;
+
+    /// List samples for a model, newest first. `rating` filters to one rating
+    /// value; `unrated_only` filters to samples with no rating yet.
+    fn list_by_model(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        rating: Option<String>,
+        unrated_only: bool,
+        offset: i64,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<InferenceSample>>>;
+
+    fn count_by_model(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        rating: Option<String>,
+        unrated_only: bool,
+    ) -> BoxFuture<'_, AppResult<i64>>;
+
+    fn set_rating(
+        &self,
+        tenant_id: Uuid,
+        sample_id: Uuid,
+        rating: &str,
+        comment: Option<String>,
+    ) -> BoxFuture<'_, AppResult<bool>>;
 }
 
 /// Contract for global inference instance control-plane operations.

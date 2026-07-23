@@ -347,4 +347,30 @@ impl ModelRepository for PgModelRepo {
             Ok(max_version.unwrap_or(0))
         })
     }
+
+    fn set_capture_traffic(
+        &self,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        enabled: bool,
+    ) -> BoxFuture<'_, AppResult<bool>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let result = sqlx::query(
+                r#"
+                UPDATE models
+                SET capture_traffic = $3, updated_at = NOW()
+                WHERE id = $1 AND tenant_id = $2
+                "#,
+            )
+            .bind(model_id)
+            .bind(tenant_id)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(result.rows_affected() > 0)
+        })
+    }
 }
