@@ -251,6 +251,53 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         })
     }
 
+    fn finalize_cancelled(
+        &self,
+        tenant_id: Uuid,
+        job_id: Uuid,
+        actual_cost: f64,
+        gpu_seconds: i32,
+        metadata: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+
+            let job = sqlx::query_as::<_, TrainingJob>(
+                r#"
+                UPDATE training_jobs
+                SET status = 'cancelled', actual_cost = $3, completed_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND status IN ('training', 'provisioning')
+                RETURNING *
+                "#,
+            )
+            .bind(job_id)
+            .bind(tenant_id)
+            .bind(actual_cost)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            // Only bill when the state transition actually happened (idempotent
+            // against repeated cancels).
+            if job.is_some() {
+                crate::services::billing_outbox::enqueue_in_tx(
+                    &mut tx,
+                    tenant_id,
+                    "training",
+                    Some(job_id),
+                    0,
+                    0,
+                    gpu_seconds,
+                    actual_cost,
+                    metadata,
+                )
+                .await?;
+            }
+
+            tx.commit().await?;
+            Ok(job)
+        })
+    }
+
     fn set_cost_approval(
         &self,
         tenant_id: Uuid,

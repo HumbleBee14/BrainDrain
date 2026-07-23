@@ -174,6 +174,24 @@ export default function TrainingJobDetailPage() {
               Live
             </span>
           )}
+          {isActiveTraining && (
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  confirm(
+                    "Stop this training job? You'll be billed for the GPU time used so far.",
+                  )
+                ) {
+                  cancelJob.mutate(params.jobId);
+                }
+              }}
+              disabled={cancelJob.isPending}
+              className="ml-auto shrink-0 rounded-md border border-red-300 dark:border-red-800 px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition disabled:opacity-50"
+            >
+              {cancelJob.isPending ? "Stopping..." : "Stop training"}
+            </button>
+          )}
         </div>
         <p className="text-zinc-500 mt-1">
           {job.method.toUpperCase()} &middot; {job.mode} mode

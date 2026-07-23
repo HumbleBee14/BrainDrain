@@ -8,7 +8,7 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{DatasetRepository, TenantRepository, TrainingJobRepository};
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
-use platform_shared::enums::{DatasetStatus, TrainingMethod, TrainingMode};
+use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
 
 /// Business logic for training job operations.
 pub struct TrainingJobService;
@@ -351,24 +351,139 @@ impl TrainingJobService {
     }
 
     /// Cancel a training job.
+    /// Cancel a training job. Pending/cost_approval jobs are simply marked
+    /// cancelled. A RUNNING job's workflow is terminated (stopping GPU burn)
+    /// and the tenant is charged for the GPU time already used, transactionally.
     pub async fn cancel(
         repo: &dyn TrainingJobRepository,
+        tenant_repo: &dyn TenantRepository,
+        orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         job_id: Uuid,
     ) -> AppResult<TrainingJobResponse> {
         let job = repo
-            .cancel(tenant_id, job_id)
+            .get_by_id(tenant_id, job_id)
             .await?
-            .ok_or(AppError::BadRequest {
-            message:
-                "Cannot cancel: job not found or not in a cancellable state (pending/cost_approval)"
-                    .to_string(),
-        })?;
+            .ok_or(AppError::NotFound {
+                message: "Training job not found".to_string(),
+            })?;
 
-        tracing::info!(training_job_id = %job_id, "Training job cancelled");
+        let status: TrainingJobStatus = job.status.parse().unwrap_or(TrainingJobStatus::Pending);
 
-        Ok(job.into())
+        match status {
+            TrainingJobStatus::Pending | TrainingJobStatus::CostApproval => {
+                let cancelled =
+                    repo.cancel(tenant_id, job_id)
+                        .await?
+                        .ok_or(AppError::BadRequest {
+                            message: "Job is no longer in a cancellable state".to_string(),
+                        })?;
+
+                // A workflow is normally not running yet at these states, but if
+                // one was started, stop it best-effort.
+                if let (Some(orch), Some(wf)) =
+                    (orchestrator, cancelled.temporal_workflow_id.as_deref())
+                {
+                    let _ = orch.terminate_workflow(wf, "Cancelled by user").await;
+                }
+
+                tracing::info!(training_job_id = %job_id, "Training job cancelled");
+                Ok(cancelled.into())
+            }
+            TrainingJobStatus::Provisioning | TrainingJobStatus::Training => {
+                let orch = orchestrator.ok_or(AppError::BadRequest {
+                    message: "Cannot cancel a running job (orchestrator not configured)"
+                        .to_string(),
+                })?;
+                let workflow_id =
+                    job.temporal_workflow_id
+                        .as_deref()
+                        .ok_or(AppError::BadRequest {
+                            message: "Running job has no workflow to terminate".to_string(),
+                        })?;
+
+                // Terminate first so the GPU stops before we commit terminal
+                // state — if this fails we leave the job running rather than
+                // marking it cancelled while it burns GPU.
+                orch.terminate_workflow(workflow_id, "Cancelled by user")
+                    .await
+                    .map_err(|e| {
+                        AppError::Internal(anyhow::anyhow!("Failed to terminate workflow: {e}"))
+                    })?;
+
+                let (gpu_seconds, actual_cost) =
+                    Self::cancel_billing(tenant_repo, tenant_id, &job).await?;
+
+                let metadata = serde_json::json!({
+                    "status": "cancelled",
+                    "mode": job.mode,
+                    "method": job.method,
+                    "base_model": job.base_model,
+                    "gpu_class": job.gpu_class,
+                });
+
+                let cancelled = repo
+                    .finalize_cancelled(tenant_id, job_id, actual_cost, gpu_seconds, metadata)
+                    .await?
+                    .ok_or(AppError::BadRequest {
+                        message: "Job is no longer running".to_string(),
+                    })?;
+
+                tracing::info!(
+                    training_job_id = %job_id,
+                    gpu_seconds,
+                    actual_cost,
+                    "Running training job terminated and billed"
+                );
+                Ok(cancelled.into())
+            }
+            TrainingJobStatus::Completed
+            | TrainingJobStatus::Failed
+            | TrainingJobStatus::Cancelled => Err(AppError::BadRequest {
+                message: "Job is already in a terminal state".to_string(),
+            }),
+        }
     }
+
+    /// GPU seconds and cost to bill for a cancelled run. Runs shorter than the
+    /// minimum billable window are voided, matching the worker's failed-job rule.
+    async fn cancel_billing(
+        tenant_repo: &dyn TenantRepository,
+        tenant_id: Uuid,
+        job: &platform_db::models::TrainingJob,
+    ) -> AppResult<(i32, f64)> {
+        let Some(started) = job.started_at else {
+            return Ok((0, 0.0));
+        };
+        let elapsed = (chrono::Utc::now() - started).num_seconds().max(0);
+
+        if elapsed < MIN_BILLABLE_SECONDS {
+            return Ok((elapsed as i32, 0.0));
+        }
+
+        let gpu_rates = TenantSettingsService::get_admin_config(tenant_repo, tenant_id)
+            .await?
+            .gpu_rates;
+        let gpu_class = job.gpu_class.as_deref().unwrap_or("").to_lowercase();
+        let rate = resolve_gpu_rate(&gpu_rates, &gpu_class);
+
+        Ok(billable_gpu_cost(elapsed, rate))
+    }
+}
+
+/// Minimum billable GPU seconds — a cancel within this window is not charged,
+/// matching the worker's void threshold for short-lived runs.
+const MIN_BILLABLE_SECONDS: i64 = 300;
+
+/// GPU seconds and dollar cost for a run of `elapsed_seconds` at `rate` $/hr.
+/// Runs shorter than the minimum billable window are voided.
+fn billable_gpu_cost(elapsed_seconds: i64, rate: f64) -> (i32, f64) {
+    let seconds = elapsed_seconds.max(0);
+    if seconds < MIN_BILLABLE_SECONDS {
+        return (seconds as i32, 0.0);
+    }
+    let cost = ((seconds as f64 / 3600.0) * rate * 100.0).round() / 100.0;
+    (seconds as i32, cost)
 }
 
 /// Merge user-provided hyperparams with smart defaults.
@@ -483,6 +598,43 @@ mod tests {
     use crate::dto::training_job::CreateTrainingJobRequest;
     use platform_shared::enums::{TrainingMethod, TrainingMode};
     use std::str::FromStr;
+
+    // ── billable_gpu_cost ──
+
+    #[test]
+    fn short_runs_are_voided() {
+        // Under the 5-minute minimum → no charge, but seconds are still recorded.
+        let (secs, cost) = billable_gpu_cost(120, 2.40);
+        assert_eq!(secs, 120);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn negative_elapsed_is_clamped() {
+        let (secs, cost) = billable_gpu_cost(-50, 2.40);
+        assert_eq!(secs, 0);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn billable_run_charges_prorated_rate() {
+        // 1 hour at $2.40/hr = $2.40
+        let (secs, cost) = billable_gpu_cost(3600, 2.40);
+        assert_eq!(secs, 3600);
+        assert_eq!(cost, 2.40);
+
+        // 30 min at $3.00/hr = $1.50, rounded to cents.
+        let (_, half) = billable_gpu_cost(1800, 3.00);
+        assert_eq!(half, 1.50);
+    }
+
+    #[test]
+    fn exactly_min_billable_is_charged() {
+        let (secs, cost) = billable_gpu_cost(MIN_BILLABLE_SECONDS, 3.60);
+        assert_eq!(secs, MIN_BILLABLE_SECONDS as i32);
+        // 300s at $3.60/hr = $0.30
+        assert_eq!(cost, 0.30);
+    }
 
     // ── merge_hyperparams ──
 
