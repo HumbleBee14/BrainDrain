@@ -2,7 +2,9 @@
 //!
 //! A worker crash/OOM (or a terminated workflow whose cleanup never ran) can
 //! leave a training job pinned in `training`/`provisioning` forever — GPU time
-//! accrues but is never billed — or a document pinned in `parsing`. Idle serving
+//! accrues but is never billed — or a document pinned in `parsing`. A deploy
+//! request that dies mid-flight likewise leaves a model pinned in `deploying`,
+//! holding an inference-instance slot and blocking redeploys. Idle serving
 //! instances similarly keep an external GPU box running with no traffic. These
 //! background passes find those rows and force a terminal/scaled-down state.
 //!
@@ -329,9 +331,116 @@ pub async fn reap_stuck_parsing_documents(
     Ok(result.rows_affected())
 }
 
+/// Whether stuck-deploy reaping is enabled (a positive timeout).
+fn deploy_reaping_enabled(stuck_after_secs: i64) -> bool {
+    stuck_after_secs > 0
+}
+
+/// A candidate deployment pinned in `deploying`.
+#[derive(sqlx::FromRow)]
+struct StuckDeployment {
+    id: Uuid,
+    tenant_id: Uuid,
+    inference_instance_id: Option<Uuid>,
+}
+
+/// Reap models pinned in `deploying` past the threshold. Returns the count.
+///
+/// A model enters `deploying` at the start of a deploy and flips to `active`
+/// only once its adapter is loaded on the serving engine. Deploys are
+/// synchronous (there is no background workflow to consult, unlike training —
+/// so elapsed time is the sole abandonment signal); a model still `deploying`
+/// well past the threshold means the deploy request died mid-flight. Such a
+/// model is reset to the terminal `undeployed` state and any inference-instance
+/// slot it claimed is released, reclaiming the pinned capacity and unblocking
+/// redeploys. Disabled when `stuck_after_secs <= 0`.
+pub async fn reap_stuck_deploying_models(
+    db: &PgPool,
+    stuck_after_secs: i64,
+) -> Result<usize, sqlx::Error> {
+    if !deploy_reaping_enabled(stuck_after_secs) {
+        return Ok(0);
+    }
+
+    let candidates = sqlx::query_as::<_, StuckDeployment>(
+        "SELECT id, tenant_id, inference_instance_id \
+         FROM models \
+         WHERE deployment_status = 'deploying' \
+           AND updated_at < NOW() - make_interval(secs => $1)",
+    )
+    .bind(stuck_after_secs as f64)
+    .fetch_all(db)
+    .await?;
+
+    let mut reaped = 0;
+    for deployment in candidates {
+        if reap_one_deployment(db, &deployment).await? {
+            reaped += 1;
+        }
+    }
+    Ok(reaped)
+}
+
+/// Reset one stuck deployment to `undeployed` and release its instance slot,
+/// transactionally. Returns whether a row was reaped (false if it already left
+/// the `deploying` state).
+async fn reap_one_deployment(
+    db: &PgPool,
+    deployment: &StuckDeployment,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = db.begin().await?;
+
+    let updated = sqlx::query(
+        "UPDATE models \
+         SET deployment_status = 'undeployed', \
+             inference_instance_id = NULL, \
+             deployment_config = jsonb_build_object( \
+                 'reaped', true, \
+                 'error', 'Deploy did not complete; deployment reaped'), \
+             updated_at = NOW() \
+         WHERE id = $1 AND deployment_status = 'deploying'",
+    )
+    .bind(deployment.id)
+    .execute(&mut *tx)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    // Release the multi-instance slot the stuck deploy claimed. Single-instance
+    // deploys carry no `inference_instance_id` — their global adapter cap counts
+    // `deploying`/`active` models, so flipping to `undeployed` above already
+    // frees that capacity.
+    if let Some(instance_id) = deployment.inference_instance_id {
+        sqlx::query(
+            "UPDATE inference_instances \
+             SET active_adapter_count = GREATEST(active_adapter_count - 1, 0), \
+                 updated_at = NOW() \
+             WHERE id = $1",
+        )
+        .bind(instance_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    tracing::warn!(
+        model_id = %deployment.id,
+        tenant_id = %deployment.tenant_id,
+        instance_id = ?deployment.inference_instance_id,
+        "Reaped stuck deploying model"
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{idle_reaping_enabled, orphan_sweep_enabled, status_indicates_running};
+    use super::{
+        deploy_reaping_enabled, idle_reaping_enabled, orphan_sweep_enabled,
+        status_indicates_running,
+    };
 
     #[test]
     fn idle_reaping_disabled_by_default() {
@@ -339,6 +448,14 @@ mod tests {
         assert!(!idle_reaping_enabled(-1));
         assert!(idle_reaping_enabled(1));
         assert!(idle_reaping_enabled(1800));
+    }
+
+    #[test]
+    fn deploy_reaping_disabled_on_non_positive_timeout() {
+        assert!(!deploy_reaping_enabled(0));
+        assert!(!deploy_reaping_enabled(-1));
+        assert!(deploy_reaping_enabled(1));
+        assert!(deploy_reaping_enabled(600));
     }
 
     #[test]

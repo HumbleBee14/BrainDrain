@@ -440,14 +440,6 @@ pub trait ModelRepository: Send + Sync {
         project_id: Uuid,
         base_model: &str,
     ) -> BoxFuture<'_, AppResult<i32>>;
-
-    /// Atomic rollback: undeploy current model and deploy target in a single transaction.
-    fn rollback_deployment(
-        &self,
-        tenant_id: Uuid,
-        current_id: Uuid,
-        target_id: Uuid,
-    ) -> BoxFuture<'_, AppResult<Option<Model>>>;
 }
 
 /// Contract for global inference instance control-plane operations.

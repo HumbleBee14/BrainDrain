@@ -150,6 +150,13 @@ pub struct Config {
     #[serde(default = "default_parsing_stuck_timeout_secs")]
     pub parsing_stuck_timeout_secs: i64,
 
+    /// A model pinned in `deploying` this long is treated as an abandoned deploy
+    /// (the synchronous deploy request died mid-flight): it is reset to a
+    /// terminal `undeployed` state and any inference-instance slot it claimed is
+    /// released, freeing capacity and unblocking redeploys. `0` disables it.
+    #[serde(default = "default_deploying_stuck_timeout_secs")]
+    pub deploying_stuck_timeout_secs: i64,
+
     /// Idle serving instances with no inference traffic for this long are scaled
     /// to zero (their models undeployed and the instance retired). `0` disables
     /// idle reaping — the default, since instances are operator-registered.
@@ -475,6 +482,9 @@ fn default_training_stuck_timeout_secs() -> i64 {
 }
 fn default_parsing_stuck_timeout_secs() -> i64 {
     1_800
+}
+fn default_deploying_stuck_timeout_secs() -> i64 {
+    600
 }
 fn default_inference_instance_idle_timeout_secs() -> i64 {
     0
