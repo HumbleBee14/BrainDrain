@@ -27,12 +27,42 @@ class BuildDatasetInput:
     dataset_id: str
     pairs_storage_path: str
     system_prompt: str = ""
+    # Raw golden pairs (from held-out chunks) to format into the companion
+    # `<dataset>_golden.jsonl` eval set. Empty = no golden set.
+    golden_storage_path: str = ""
 
 
 @dataclass
 class BuildDatasetOutput:
     pair_count: int
     storage_path: str
+    golden_pair_count: int = 0
+
+
+def _to_chat_records(pairs: list[dict], system_prompt: str) -> list[dict]:
+    """Format raw instruction/response pairs into chat-format records."""
+    records = []
+    for pair in pairs:
+        instruction = pair.get("instruction", "").strip()
+        response_text = pair.get("response", "").strip()
+        if not instruction or not response_text:
+            continue
+
+        records.append(
+            {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": instruction},
+                    {"role": "assistant", "content": response_text},
+                ],
+                "metadata": {
+                    "doc_id": pair.get("doc_id"),
+                    "chunk_id": pair.get("chunk_id"),
+                    "task_type": pair.get("task_type"),
+                },
+            }
+        )
+    return records
 
 
 class BuildDatasetActivity:
@@ -68,28 +98,9 @@ class BuildDatasetActivity:
         if not filtered:
             return BuildDatasetOutput(pair_count=0, storage_path="")
 
-        # Format into ChatML
+        # Format into chat records
         system_prompt = input.system_prompt or "You are a helpful assistant."
-        chat_records = []
-        for pair in filtered:
-            instruction = pair.get("instruction", "").strip()
-            response_text = pair.get("response", "").strip()
-            if not instruction or not response_text:
-                continue
-
-            record = {
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": instruction},
-                    {"role": "assistant", "content": response_text},
-                ],
-                "metadata": {
-                    "doc_id": pair.get("doc_id"),
-                    "chunk_id": pair.get("chunk_id"),
-                    "task_type": pair.get("task_type"),
-                },
-            }
-            chat_records.append(record)
+        chat_records = _to_chat_records(filtered, system_prompt)
 
         if not chat_records:
             return BuildDatasetOutput(pair_count=0, storage_path="")
@@ -122,6 +133,28 @@ class BuildDatasetActivity:
                 ContentType="application/jsonl",
             )
 
+        # Golden eval set — pairs generated from chunks the model never trains
+        # on, so downstream evaluation measures document knowledge rather than
+        # memorization. Written by path convention next to train/val so the
+        # evaluation activity can discover it without any schema change.
+        golden_records: list[dict] = []
+        if input.golden_storage_path:
+            golden_resp = s3.get_object(Bucket=bucket, Key=input.golden_storage_path)
+            golden_raw = golden_resp["Body"].read().decode("utf-8")
+            golden_pairs = [
+                json.loads(line) for line in golden_raw.strip().split("\n") if line.strip()
+            ]
+            golden_records = _to_chat_records(golden_pairs, system_prompt)
+            if golden_records:
+                golden_key = dataset_key.replace(".jsonl", "_golden.jsonl")
+                golden_lines = [json.dumps(r, ensure_ascii=False) for r in golden_records]
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=golden_key,
+                    Body="\n".join(golden_lines).encode("utf-8"),
+                    ContentType="application/jsonl",
+                )
+
         # Create/update dataset record in DB
         await db.execute(
             """
@@ -144,6 +177,7 @@ class BuildDatasetActivity:
                     "total_pairs": len(chat_records),
                     "train_pairs": len(train_records),
                     "val_pairs": len(val_records),
+                    "golden_pairs": len(golden_records),
                     "filtered_out": len(pairs) - len(filtered),
                     "deduplicated": len(filtered) - len(chat_records),
                 }
@@ -151,11 +185,16 @@ class BuildDatasetActivity:
         )
 
         activity.logger.info(
-            "Built dataset %s: %d train / %d val pairs (filtered %d)",
+            "Built dataset %s: %d train / %d val / %d golden pairs (filtered %d)",
             input.dataset_id,
             len(train_records),
             len(val_records),
+            len(golden_records),
             len(pairs) - len(filtered),
         )
 
-        return BuildDatasetOutput(pair_count=len(chat_records), storage_path=dataset_key)
+        return BuildDatasetOutput(
+            pair_count=len(chat_records),
+            storage_path=dataset_key,
+            golden_pair_count=len(golden_records),
+        )
