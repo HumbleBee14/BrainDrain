@@ -21,6 +21,7 @@ import {
   useModelExports,
   useCreateExport,
   useExportDownload,
+  useOllamaRecipe,
 } from "@/hooks/use-exports";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 
@@ -109,6 +110,7 @@ export default function ModelDetailPage() {
   const { data: versions } = useModelVersions(params.modelId);
   const createExport = useCreateExport(params.modelId);
   const downloadExport = useExportDownload();
+  const ollamaRecipe = useOllamaRecipe();
   const deployModel = useDeployModel(params.modelId);
   const undeployModel = useUndeployModel(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
@@ -165,6 +167,8 @@ export default function ModelDetailPage() {
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [exportQuantType, setExportQuantType] = useState("Q5_K_M");
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [ollamaForExport, setOllamaForExport] = useState<string | null>(null);
+  const [copiedModelfile, setCopiedModelfile] = useState(false);
 
   const evaluations = evalsData?.data ?? [];
   const keys = apiKeys ?? [];
@@ -693,30 +697,91 @@ export default function ModelDetailPage() {
                 <div className="flex items-center gap-2">
                   <ExportStatusBadge status={exp.status} />
                   {exp.status === "completed" && (
-                    <button
-                      onClick={async () => {
-                        try {
+                    <>
+                      <button
+                        onClick={() => {
                           setDownloadError(null);
-                          const result = await downloadExport.mutateAsync(
-                            exp.id,
-                          );
-                          window.open(result.download_url, "_blank");
-                        } catch (e) {
-                          setDownloadError(
-                            e instanceof Error ? e.message : "Download failed",
-                          );
-                        }
-                      }}
-                      disabled={downloadExport.isPending}
-                      className="text-xs text-blue-400 hover:text-blue-300 transition"
-                    >
-                      Download
-                    </button>
+                          setCopiedModelfile(false);
+                          setOllamaForExport(exp.id);
+                          ollamaRecipe.mutate(exp.id);
+                        }}
+                        disabled={ollamaRecipe.isPending}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition"
+                      >
+                        Run locally
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            setDownloadError(null);
+                            const result = await downloadExport.mutateAsync(
+                              exp.id,
+                            );
+                            window.open(result.download_url, "_blank");
+                          } catch (e) {
+                            setDownloadError(
+                              e instanceof Error ? e.message : "Download failed",
+                            );
+                          }
+                        }}
+                        disabled={downloadExport.isPending}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition"
+                      >
+                        Download
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
             ))}
           </div>
+        )}
+
+        {/* Run-locally (Ollama) recipe panel */}
+        {ollamaForExport && ollamaRecipe.data && (
+          <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
+                Run locally with Ollama
+              </h3>
+              <button
+                onClick={() => setOllamaForExport(null)}
+                className="text-xs text-zinc-400 hover:text-zinc-300 transition"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                  Modelfile
+                </span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(ollamaRecipe.data!.modelfile);
+                    setCopiedModelfile(true);
+                    toast.success("Modelfile copied");
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 transition"
+                >
+                  {copiedModelfile ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <pre className="text-xs bg-zinc-100 dark:bg-zinc-900 rounded p-3 overflow-x-auto text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap">
+                {ollamaRecipe.data.modelfile}
+              </pre>
+            </div>
+            <ol className="list-decimal list-inside space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+              {ollamaRecipe.data.instructions.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+        {ollamaForExport && ollamaRecipe.isError && (
+          <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+            {ollamaRecipe.error.message}
+          </p>
         )}
       </div>
 

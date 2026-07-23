@@ -57,5 +57,22 @@ pub struct ExportDownloadResponse {
     pub filename: String,
 }
 
+/// One-click "run locally with Ollama" recipe for a completed GGUF export.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct OllamaExportResponse {
+    /// Suggested Ollama model name (e.g. `braindrain-1a2b3c4d-q5_k_m`).
+    pub model_name: String,
+    /// Filename the user should save the downloaded GGUF as.
+    pub filename: String,
+    /// Presigned URL to download the GGUF (time-limited).
+    pub download_url: String,
+    pub file_size_bytes: Option<i64>,
+    /// The Modelfile contents to save next to the GGUF.
+    pub modelfile: String,
+    /// Ordered copy-paste steps to build and run the model in Ollama.
+    pub instructions: Vec<String>,
+}
+
 /// Valid quantization types.
 pub const VALID_QUANT_TYPES: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"];

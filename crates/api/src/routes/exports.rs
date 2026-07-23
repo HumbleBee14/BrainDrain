@@ -12,7 +12,9 @@ use platform_shared::enums::TeamRole;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
-use crate::dto::export::{ExportDownloadResponse, ExportRequest, ExportResponse};
+use crate::dto::export::{
+    ExportDownloadResponse, ExportRequest, ExportResponse, OllamaExportResponse,
+};
 use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
@@ -27,6 +29,7 @@ pub fn router() -> Router<AppState> {
             post(create_export).get(list_exports),
         )
         .route("/exports/{export_id}/download", get(download_export))
+        .route("/exports/{export_id}/ollama", get(ollama_export_recipe))
         .route(
             "/models/{model_id}/exports/stream",
             get(stream_export_status),
@@ -136,6 +139,30 @@ pub async fn download_export(
         file_size_bytes,
         filename,
     }))
+}
+
+/// GET /api/v1/exports/:export_id/ollama
+#[utoipa::path(
+    get,
+    path = "/api/v1/exports/{export_id}/ollama",
+    tag = "Exports",
+    params(
+        ("export_id" = Uuid, Path, description = "Export ID")
+    ),
+    responses(
+        (status = 200, description = "Ollama run-locally recipe", body = OllamaExportResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn ollama_export_recipe(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(export_id): Path<Uuid>,
+) -> AppResult<Json<OllamaExportResponse>> {
+    let recipe = ExportService::ollama_recipe(&state, user.tenant_id, export_id).await?;
+    Ok(Json(recipe))
 }
 
 /// GET /api/v1/models/:model_id/exports/stream

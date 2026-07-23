@@ -19,6 +19,7 @@ pub mod inference_backend;
 pub mod inference_instance_service;
 pub mod model_service;
 pub mod notification_service;
+pub mod ollama_modelfile;
 pub mod pipeline_service;
 pub mod plan_service;
 pub mod project_service;

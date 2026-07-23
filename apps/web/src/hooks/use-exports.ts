@@ -6,6 +6,7 @@ import {
   api,
   type ExportResponse,
   type ExportDownloadResponse,
+  type OllamaExportResponse,
 } from "@/lib/api-client";
 import { useStatusStream } from "@/hooks/use-status-stream";
 
@@ -62,6 +63,18 @@ export function useExportDownload() {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       return api.exports.download(token, exportId);
+    },
+  });
+}
+
+export function useOllamaRecipe() {
+  const { getToken } = useAuth();
+
+  return useMutation<OllamaExportResponse, Error, string>({
+    mutationFn: async (exportId) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.exports.ollama(token, exportId);
     },
   });
 }
