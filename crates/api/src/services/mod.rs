@@ -18,6 +18,7 @@ pub mod feature_flags;
 pub mod idempotency;
 pub mod inference_backend;
 pub mod inference_instance_service;
+pub mod jsonl_import;
 pub mod model_service;
 pub mod notification_service;
 pub mod pipeline_service;
