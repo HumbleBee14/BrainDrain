@@ -15,6 +15,7 @@ use crate::error::{AppError, AppResult};
 use crate::services::billing_outbox;
 use crate::services::inference_backend::InferenceBackend;
 use crate::services::inference_instance_service::InferenceInstanceService;
+use crate::services::plan_service::PlanService;
 use crate::services::token_estimator;
 use std::sync::Arc;
 
@@ -158,6 +159,14 @@ pub async fn chat_completions(
             ),
         });
     }
+
+    // Reject before doing billable work once the tenant is over its monthly cap.
+    PlanService::check_spend_cap(
+        state.tenant_repo(),
+        state.billing_event_repo(),
+        api_key.tenant_id,
+    )
+    .await?;
 
     let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()
@@ -462,6 +471,14 @@ pub async fn batch_chat_completions(
             ),
         });
     }
+
+    // Reject before doing billable work once the tenant is over its monthly cap.
+    PlanService::check_spend_cap(
+        state.tenant_repo(),
+        state.billing_event_repo(),
+        api_key.tenant_id,
+    )
+    .await?;
 
     let adapter_name = model.deployment_config["adapter_ref"]
         .as_str()

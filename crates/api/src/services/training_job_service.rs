@@ -5,7 +5,10 @@ use crate::dto::training_job::{
     CostEstimateResponse, CreateTrainingJobRequest, TrainingJobResponse,
 };
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::{DatasetRepository, TenantRepository, TrainingJobRepository};
+use crate::repositories::traits::{
+    BillingEventRepository, DatasetRepository, TenantRepository, TrainingJobRepository,
+};
+use crate::services::plan_service::PlanService;
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -23,6 +26,7 @@ impl TrainingJobService {
         training_repo: &dyn TrainingJobRepository,
         dataset_repo: &dyn DatasetRepository,
         tenant_repo: &dyn TenantRepository,
+        billing_repo: &dyn BillingEventRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -35,6 +39,9 @@ impl TrainingJobService {
             message: "Training workflows are not available (orchestrator not configured)"
                 .to_string(),
         })?;
+
+        // Reject before provisioning GPU once the tenant is over its monthly cap.
+        PlanService::check_spend_cap(tenant_repo, billing_repo, tenant_id).await?;
 
         // Parse and validate dataset_id
         let dataset_id = req

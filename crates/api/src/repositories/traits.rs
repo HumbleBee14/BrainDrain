@@ -602,6 +602,13 @@ pub trait BillingEventRepository: Send + Sync {
     /// Aggregate total cost, tokens_in, and tokens_out for a tenant.
     fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>>;
 
+    /// Total committed cost for a tenant since a timestamp (spend-cap accounting).
+    fn sum_cost_since(
+        &self,
+        tenant_id: Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'_, AppResult<f64>>;
+
     /// Inference usage breakdown by day (last N days).
     fn inference_usage_by_day(
         &self,
