@@ -216,6 +216,7 @@ class GenerateDatasetWorkflow:
         guidance: str,
         facets: list[dict] | None,
         document_ids: list[str],
+        system_prompt: str = "",
     ) -> BuildDatasetOutput:
         try:
             chunk_result = await workflow.execute_activity(
@@ -261,6 +262,7 @@ class GenerateDatasetWorkflow:
                             project_id=project_id,
                             dataset_id=dataset_id,
                             pairs_storage_path=pairs_result.storage_path,
+                            system_prompt=system_prompt,
                         ),
                         start_to_close_timeout=timeouts.build_dataset_activity(),
                         retry_policy=workflow.RetryPolicy(maximum_attempts=2),

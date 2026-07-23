@@ -197,6 +197,15 @@ pub trait DataGuideRepository: Send + Sync {
         project_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<DataGuide>>>;
 
+    /// The guide that produced a given dataset, if any. Used to recover a
+    /// model's system prompt at deploy time (model → training job → dataset →
+    /// guide). Returns None for datasets not built via a data guide.
+    fn get_by_dataset_id(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<DataGuide>>>;
+
     fn update_status(
         &self,
         tenant_id: Uuid,
@@ -219,11 +228,15 @@ pub trait DataGuideRepository: Send + Sync {
         preview_samples: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>>;
 
+    /// Updates guidance (and refinement history), and optionally the system
+    /// prompt. `system_prompt: None` leaves the stored value unchanged;
+    /// `Some("")` clears it.
     fn update_guidance(
         &self,
         tenant_id: Uuid,
         id: Uuid,
         guidance: &str,
+        system_prompt: Option<&str>,
         refinement_history: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>>;
 

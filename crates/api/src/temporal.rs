@@ -110,6 +110,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
+    #[allow(clippy::too_many_arguments)]
     fn start_generate_dataset(
         &self,
         tenant_id: Uuid,
@@ -117,6 +118,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         data_guide_id: Uuid,
         task_type: &str,
         guidance: &str,
+        system_prompt: &str,
         facets: serde_json::Value,
         document_ids: Vec<Uuid>,
         trace_ctx: TraceContext,
@@ -469,6 +471,7 @@ impl WorkflowOrchestrator for TemporalClient {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_generate_dataset(
         &self,
         tenant_id: Uuid,
@@ -476,17 +479,22 @@ impl WorkflowOrchestrator for TemporalClient {
         data_guide_id: Uuid,
         task_type: &str,
         guidance: &str,
+        system_prompt: &str,
         facets: serde_json::Value,
         document_ids: Vec<Uuid>,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let task_type = task_type.to_string();
         let guidance = guidance.to_string();
+        let system_prompt = system_prompt.to_string();
         let document_ids: Vec<String> = document_ids.iter().map(|id| id.to_string()).collect();
         Box::pin(async move {
             let workflow_id =
                 build_generate_dataset_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
 
+            // Positional args — order MUST match GenerateDatasetWorkflow.run.
+            // system_prompt is last so pre-existing in-flight workflows using
+            // the Python default stay compatible.
             self.start_workflow_on_queue(
                 "GenerateDatasetWorkflow",
                 &workflow_id,
@@ -498,6 +506,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     guidance,
                     facets,
                     document_ids,
+                    system_prompt,
                 ]),
                 None,
                 &trace_ctx,

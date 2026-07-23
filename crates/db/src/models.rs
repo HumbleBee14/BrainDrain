@@ -75,6 +75,7 @@ pub struct DataGuide {
     pub task_type: String,
     pub status: String,
     pub guidance: String,
+    pub system_prompt: String,
     pub facets: serde_json::Value,
     pub preview_samples: serde_json::Value,
     pub refinement_history: serde_json::Value,

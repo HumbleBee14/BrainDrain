@@ -7,4 +7,9 @@ import type { TaskType } from "./TaskType";
 /**
  * Data guide information returned by API.
  */
-export type DataGuideResponse = { id: string, project_id: string, task_type: TaskType, status: DataGuideStatus, guidance: string, facets: Array<Facet>, preview_samples: Array<PreviewSample>, dataset_id: string | null, created_at: string, updated_at: string, };
+export type DataGuideResponse = { id: string, project_id: string, task_type: TaskType, status: DataGuideStatus, guidance: string, 
+/**
+ * Optional system prompt baked into every training example and reused as
+ * the serving default. Empty means the neutral built-in default.
+ */
+system_prompt: string, facets: Array<Facet>, preview_samples: Array<PreviewSample>, dataset_id: string | null, created_at: string, updated_at: string, };

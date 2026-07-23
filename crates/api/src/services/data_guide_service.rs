@@ -393,10 +393,19 @@ impl DataGuideService {
         let history_json =
             serde_json::to_value(&history).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
 
-        repo.update_guidance(tenant_id, guide_id, &req.guidance, history_json)
-            .await?;
+        repo.update_guidance(
+            tenant_id,
+            guide_id,
+            &req.guidance,
+            req.system_prompt.as_deref(),
+            history_json,
+        )
+        .await?;
 
         guide.guidance = req.guidance;
+        if let Some(system_prompt) = req.system_prompt {
+            guide.system_prompt = system_prompt;
+        }
         Ok(guide.into())
     }
 
@@ -448,6 +457,7 @@ impl DataGuideService {
                 guide_id,
                 &guide.task_type,
                 &guide.guidance,
+                &guide.system_prompt,
                 guide.facets.clone(),
                 doc_ids,
                 trace_ctx,

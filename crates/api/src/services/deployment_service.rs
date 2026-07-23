@@ -42,10 +42,55 @@ impl DeploymentService {
             .feature_flags()
             .is_enabled(DEPLOYMENTS_MULTI_INSTANCE_ENABLED, &FlagContext::default());
 
+        // Recover the system prompt the model was trained under so it is served
+        // under the same one (train/serve consistency). Best-effort: models not
+        // built via a data guide simply have none.
+        let system_prompt = Self::resolve_guide_system_prompt(state, tenant_id, &model).await;
+
         if multi_instance_enabled {
-            Self::deploy_multi_instance(state, tenant_id, model_id, &model, &adapter_path).await
+            Self::deploy_multi_instance(
+                state,
+                tenant_id,
+                model_id,
+                &model,
+                &adapter_path,
+                &system_prompt,
+            )
+            .await
         } else {
-            Self::deploy_single_instance(state, tenant_id, model_id, &model, &adapter_path).await
+            Self::deploy_single_instance(
+                state,
+                tenant_id,
+                model_id,
+                &model,
+                &adapter_path,
+                &system_prompt,
+            )
+            .await
+        }
+    }
+
+    /// Best-effort lookup of the system prompt for a model via
+    /// model → training job → dataset → data guide. Returns "" on any miss.
+    async fn resolve_guide_system_prompt(
+        state: &AppState,
+        tenant_id: Uuid,
+        model: &Model,
+    ) -> String {
+        let Ok(Some(job)) = state
+            .training_job_repo()
+            .get_by_id(tenant_id, model.training_job_id)
+            .await
+        else {
+            return String::new();
+        };
+        match state
+            .data_guide_repo()
+            .get_by_dataset_id(tenant_id, job.dataset_id)
+            .await
+        {
+            Ok(Some(guide)) => guide.system_prompt,
+            _ => String::new(),
         }
     }
 
@@ -195,6 +240,7 @@ impl DeploymentService {
         model_id: Uuid,
         model: &Model,
         adapter_path: &str,
+        system_prompt: &str,
     ) -> AppResult<ModelResponse> {
         let _ = state
             .model_repo()
@@ -229,13 +275,14 @@ impl DeploymentService {
             }
         };
 
-        let deployment_config = serde_json::json!({
+        let mut deployment_config = serde_json::json!({
             "adapter_ref": handle.adapter_ref,
             "adapter_path": adapter_path,
             "base_model": model.base_model,
             "backend": backend.name(),
             "backend_meta": handle.metadata,
         });
+        Self::attach_system_prompt(&mut deployment_config, system_prompt);
 
         match Self::finalize_deploy(
             state.db(),
@@ -257,12 +304,22 @@ impl DeploymentService {
         }
     }
 
+    /// Store a non-empty system prompt in the deployment config so the inference
+    /// path can inject it as the default. Empty prompts add no key, keeping the
+    /// config identical to the prior behavior.
+    fn attach_system_prompt(config: &mut serde_json::Value, system_prompt: &str) {
+        if !system_prompt.is_empty() {
+            config["system_prompt"] = serde_json::Value::String(system_prompt.to_string());
+        }
+    }
+
     async fn deploy_multi_instance(
         state: &AppState,
         tenant_id: Uuid,
         model_id: Uuid,
         model: &Model,
         adapter_path: &str,
+        system_prompt: &str,
     ) -> AppResult<ModelResponse> {
         let instance = state
             .inference_instance_repo()
@@ -328,7 +385,7 @@ impl DeploymentService {
             }
         };
 
-        let deployment_config = serde_json::json!({
+        let mut deployment_config = serde_json::json!({
             "adapter_ref": handle.adapter_ref,
             "adapter_path": adapter_path,
             "base_model": model.base_model,
@@ -338,6 +395,7 @@ impl DeploymentService {
             "instance_url": instance.base_url,
             "backend_meta": handle.metadata,
         });
+        Self::attach_system_prompt(&mut deployment_config, system_prompt);
 
         match Self::finalize_deploy(
             state.db(),
@@ -523,6 +581,17 @@ mod tests {
 
         assert!(config["instance_id"].is_null());
         assert!(config["instance_url"].is_null());
+    }
+
+    #[test]
+    fn attach_system_prompt_adds_key_only_when_non_empty() {
+        let mut with_prompt = serde_json::json!({"backend": "vllm"});
+        DeploymentService::attach_system_prompt(&mut with_prompt, "You are a support agent.");
+        assert_eq!(with_prompt["system_prompt"], "You are a support agent.");
+
+        let mut without = serde_json::json!({"backend": "vllm"});
+        DeploymentService::attach_system_prompt(&mut without, "");
+        assert!(without["system_prompt"].is_null());
     }
 
     #[test]
