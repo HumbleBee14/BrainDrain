@@ -3,6 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import { useQuery } from "@tanstack/react-query";
 import { api, type InferenceUsageDay } from "@/lib/api-client";
+import { ErrorState } from "@/components/error-state";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -48,9 +49,12 @@ function BarChart({
 export default function UsagePage() {
   const { getToken } = useAuth();
 
-  const { data: inferenceUsage, isLoading: loadingInference } = useQuery<
-    InferenceUsageDay[]
-  >({
+  const {
+    data: inferenceUsage,
+    isLoading: loadingInference,
+    isError: errorInference,
+    refetch: refetchInference,
+  } = useQuery<InferenceUsageDay[]>({
     queryKey: ["inference-usage"],
     queryFn: async () => {
       const token = await getToken();
@@ -59,7 +63,13 @@ export default function UsagePage() {
     },
   });
 
-  const { data: dashUsage, isLoading: loadingDash } = useQuery({
+  const {
+    data: dashUsage,
+    isLoading: loadingDash,
+    isError: errorDash,
+    isFetching: fetchingDash,
+    refetch: refetchDash,
+  } = useQuery({
     queryKey: ["dashboard-usage"],
     queryFn: async () => {
       const token = await getToken();
@@ -69,6 +79,7 @@ export default function UsagePage() {
   });
 
   const isLoading = loadingInference || loadingDash;
+  const isError = errorInference || errorDash;
 
   // Compute totals from inference data
   const totalRequests =
@@ -84,7 +95,17 @@ export default function UsagePage() {
     <div>
       <h1 className="text-xl font-bold text-zinc-900 dark:text-white mb-6">Usage</h1>
 
-      {isLoading ? (
+      {isError ? (
+        <ErrorState
+          title="Couldn't load usage data"
+          message="We couldn't reach the usage service. Your data is safe — please try again."
+          onRetry={() => {
+            refetchInference();
+            refetchDash();
+          }}
+          isRetrying={loadingInference || fetchingDash}
+        />
+      ) : isLoading ? (
         <p className="text-zinc-500">Loading usage data...</p>
       ) : (
         <>
