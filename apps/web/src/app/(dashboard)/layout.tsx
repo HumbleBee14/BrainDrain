@@ -5,6 +5,7 @@ import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/notification-bell";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME || "Platform";
 
@@ -41,6 +42,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex items-center gap-3 pt-4 border-t border-zinc-200 dark:border-zinc-800">
         <UserButton afterSignOutUrl="/" />
         <ThemeToggle />
+        <NotificationBell direction="up" />
       </div>
     </>
   );
@@ -71,27 +73,30 @@ export default function DashboardLayout({
         <Link href="/dashboard" className="text-xl font-bold text-zinc-900 dark:text-white">
           {appName}
         </Link>
-        <button
-          type="button"
-          onClick={() => setMobileMenuOpen(true)}
-          className="p-2 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
-          aria-label="Open menu"
-        >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <div className="flex items-center gap-1">
+          <NotificationBell direction="down" />
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            className="p-2 rounded-md text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
+            aria-label="Open menu"
           >
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="12" x2="21" y2="12" />
-            <line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </button>
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Mobile sidebar overlay */}

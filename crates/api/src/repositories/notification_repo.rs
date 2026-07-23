@@ -249,6 +249,88 @@ impl NotificationRepository for PgNotificationRepo {
         })
     }
 
+    fn list_in_app(
+        &self,
+        tenant_id: Uuid,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let items = sqlx::query_as::<_, NotificationDelivery>(
+                r#"
+                SELECT * FROM notification_deliveries
+                WHERE tenant_id = $1 AND channel = 'in_app'
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?;
+            tx.commit().await?;
+
+            Ok(items)
+        })
+    }
+
+    fn count_unread_in_app(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let count = sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT COUNT(*) FROM notification_deliveries
+                WHERE tenant_id = $1 AND channel = 'in_app' AND read_at IS NULL
+                "#,
+            )
+            .bind(tenant_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+
+            Ok(count)
+        })
+    }
+
+    fn mark_in_app_read(&self, tenant_id: Uuid, id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let result = sqlx::query(
+                r#"
+                UPDATE notification_deliveries
+                SET read_at = NOW()
+                WHERE id = $1 AND tenant_id = $2 AND channel = 'in_app' AND read_at IS NULL
+                "#,
+            )
+            .bind(id)
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+
+            Ok(result.rows_affected() > 0)
+        })
+    }
+
+    fn mark_all_in_app_read(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<u64>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let result = sqlx::query(
+                r#"
+                UPDATE notification_deliveries
+                SET read_at = NOW()
+                WHERE tenant_id = $1 AND channel = 'in_app' AND read_at IS NULL
+                "#,
+            )
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+
+            Ok(result.rows_affected())
+        })
+    }
+
     /// Cross-tenant poll for the delivery worker — runs on the owner pool since
     /// it must see pending deliveries for every tenant.
     fn list_pending_deliveries(

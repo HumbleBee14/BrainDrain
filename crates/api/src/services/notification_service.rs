@@ -286,6 +286,45 @@ impl NotificationService {
         Ok(updated.into())
     }
 
+    /// List recent in-app notifications plus the unread count for the bell.
+    pub async fn list_in_app(
+        repo: &dyn NotificationRepository,
+        tenant_id: Uuid,
+        limit: i64,
+    ) -> AppResult<crate::dto::notification::InAppNotificationsResponse> {
+        let (items, unread_count) = tokio::try_join!(
+            repo.list_in_app(tenant_id, limit),
+            repo.count_unread_in_app(tenant_id),
+        )?;
+
+        Ok(crate::dto::notification::InAppNotificationsResponse {
+            items: items.into_iter().map(Into::into).collect(),
+            unread_count,
+        })
+    }
+
+    /// Mark a single in-app notification read.
+    pub async fn mark_in_app_read(
+        repo: &dyn NotificationRepository,
+        tenant_id: Uuid,
+        id: Uuid,
+    ) -> AppResult<()> {
+        if !repo.mark_in_app_read(tenant_id, id).await? {
+            return Err(AppError::NotFound {
+                message: "Notification not found".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Mark all in-app notifications read. Returns how many were updated.
+    pub async fn mark_all_in_app_read(
+        repo: &dyn NotificationRepository,
+        tenant_id: Uuid,
+    ) -> AppResult<u64> {
+        repo.mark_all_in_app_read(tenant_id).await
+    }
+
     /// List all notification preferences for a tenant.
     pub async fn list_preferences(
         repo: &dyn NotificationRepository,
