@@ -193,7 +193,14 @@ impl NotificationRepository for PgNotificationRepo {
                 r#"
                 UPDATE notification_deliveries
                 SET status = $3, last_error = $4, attempts = attempts + 1,
-                    sent_at = CASE WHEN $3 = 'sent' THEN NOW() ELSE sent_at END
+                    sent_at = CASE WHEN $3 = 'sent' THEN NOW() ELSE sent_at END,
+                    next_retry_at = CASE
+                        WHEN $3 = 'failed'
+                        THEN NOW() + make_interval(
+                            secs => LEAST(30 * POWER(2, attempts)::double precision, 3600)
+                        )
+                        ELSE NULL
+                    END
                 WHERE id = $1 AND tenant_id = $2
                 "#,
             )
@@ -331,27 +338,48 @@ impl NotificationRepository for PgNotificationRepo {
         })
     }
 
-    /// Cross-tenant poll for the delivery worker — runs on the owner pool since
-    /// it must see pending deliveries for every tenant.
-    fn list_pending_deliveries(
+    /// Cross-tenant claim for the delivery worker — runs on the owner pool since
+    /// it must see pending deliveries for every tenant. `FOR UPDATE SKIP LOCKED`
+    /// plus a lease on `next_retry_at` prevents concurrent workers from
+    /// double-sending the same delivery.
+    fn claim_pending_deliveries(
         &self,
         max_attempts: i32,
         limit: i64,
+        lease_secs: i64,
     ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>> {
         Box::pin(async move {
+            let mut tx = self.db_admin.begin().await?;
+
             let deliveries = sqlx::query_as::<_, NotificationDelivery>(
                 r#"
                 SELECT * FROM notification_deliveries
                 WHERE (status = 'pending' OR (status = 'failed' AND attempts < $1))
+                  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
                 ORDER BY created_at ASC
                 LIMIT $2
+                FOR UPDATE SKIP LOCKED
                 "#,
             )
             .bind(max_attempts)
             .bind(limit)
-            .fetch_all(&self.db_admin)
+            .fetch_all(&mut *tx)
             .await?;
 
+            if !deliveries.is_empty() {
+                let ids: Vec<Uuid> = deliveries.iter().map(|d| d.id).collect();
+                sqlx::query(
+                    "UPDATE notification_deliveries \
+                     SET next_retry_at = NOW() + make_interval(secs => $2) \
+                     WHERE id = ANY($1)",
+                )
+                .bind(&ids)
+                .bind(lease_secs as f64)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            tx.commit().await?;
             Ok(deliveries)
         })
     }

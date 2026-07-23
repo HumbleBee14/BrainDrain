@@ -255,6 +255,7 @@ pub struct NotificationDelivery {
     pub created_at: DateTime<Utc>,
     pub sent_at: Option<DateTime<Utc>>,
     pub read_at: Option<DateTime<Utc>>,
+    pub next_retry_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

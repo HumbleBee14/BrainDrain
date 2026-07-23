@@ -842,13 +842,17 @@ pub trait NotificationRepository: Send + Sync {
         preference_id: Uuid,
     ) -> BoxFuture<'_, AppResult<Option<NotificationPreference>>>;
 
-    /// Fetch deliveries eligible for processing by the background worker.
-    /// Returns pending deliveries and failed deliveries under the retry limit,
-    /// ordered oldest-first for fair scheduling.
-    fn list_pending_deliveries(
+    /// Atomically claim deliveries eligible for processing by the background
+    /// worker: pending or under-limit failed rows whose backoff has elapsed.
+    /// Uses `FOR UPDATE SKIP LOCKED` and leases each claimed row (pushes
+    /// `next_retry_at` out by `lease_secs`) so concurrent workers don't
+    /// double-send and a crashed worker's rows become eligible again after the
+    /// lease expires. Oldest-first.
+    fn claim_pending_deliveries(
         &self,
         max_attempts: i32,
         limit: i64,
+        lease_secs: i64,
     ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
 
     /// Recent in-app deliveries for the bell menu, newest first.
