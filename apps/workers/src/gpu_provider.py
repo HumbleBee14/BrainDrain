@@ -526,13 +526,30 @@ class ModalGpuProvider:
                 tenant_id,
             )
 
-        while True:
+        try:
+            while True:
+                try:
+                    result = await fc.get.aio(timeout=0)
+                    break
+                except TimeoutError:
+                    activity.heartbeat()
+                    await asyncio.sleep(settings.modal_poll_interval_secs)
+        except asyncio.CancelledError:
+            # Temporal delivered a graceful cancellation (the user cancelled the
+            # job, or a parent workflow was cancelled). Stop the in-flight Modal
+            # GPU call NOW so it stops billing immediately, instead of leaving it
+            # running until the periodic orphan sweep catches it minutes later.
+            # Best-effort: if the cancel cannot be sent, the orphan-sweep backstop
+            # (see cancel_orphaned_gpu_calls) still cancels it on its next cycle.
+            logger.info("Activity cancelled; cancelling in-flight Modal call %s", fc.object_id)
             try:
-                result = await fc.get.aio(timeout=0)
-                break
-            except TimeoutError:
-                activity.heartbeat()
-                await asyncio.sleep(settings.modal_poll_interval_secs)
+                await _cancel_function_call(fc)
+            except Exception:
+                logger.warning(
+                    "Failed to cancel Modal call on activity cancellation; orphan sweep will retry",
+                    exc_info=True,
+                )
+            raise
 
         if clear_after:
             await db.execute(
