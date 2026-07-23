@@ -134,6 +134,15 @@ impl AppState {
         // in which case isolation relies on `WHERE tenant_id` alone.
         let db_rls = match config.database_rls_url.as_deref().filter(|s| !s.is_empty()) {
             Some(rls_url) => {
+                // Migration 017 creates `app_rls` with a well-known development
+                // password when the role is absent. Refuse to carry production
+                // tenant traffic on that publicly-known credential.
+                if config.environment == "production" && rls_url.contains("app_rls_dev_password") {
+                    return Err(anyhow::anyhow!(
+                        "DATABASE_RLS_URL uses the built-in development password for the app_rls \
+                         role — provision a strong password before deploying to production"
+                    ));
+                }
                 let pool = platform_db::create_pool(rls_url, config.database_max_connections)
                     .await
                     .map_err(|e| {
