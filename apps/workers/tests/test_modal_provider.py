@@ -125,7 +125,7 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
         method="lora",
         mode="quick",
         hyperparams={},
-        gpu_class="A100-80GB",
+        gpu_class="a10080gb",
         llm_config={
             "api_base_url": "u",
             "api_key": "k",
@@ -165,7 +165,7 @@ async def test_recovers_without_respawn(monkeypatch):
         method="lora",
         mode="quick",
         hyperparams={},
-        gpu_class="A10G",
+        gpu_class="a10g",
         llm_config={
             "api_base_url": "u",
             "api_key": "k",
@@ -185,7 +185,11 @@ async def test_recovers_without_respawn(monkeypatch):
 async def test_resolve_gpu_uses_modal_gpu_map():
     prov_cls = __import__("src.gpu_provider", fromlist=["ModalGpuProvider"]).ModalGpuProvider
     prov = prov_cls.__new__(prov_cls)  # bypass __init__ (no modal install needed here)
-    assert prov._resolve_gpu("A100-80GB") == "A100-80GB"
-    assert prov._resolve_gpu("A10G") == "A10"
-    assert prov._resolve_gpu("unknown-class") == "A10"
-    assert prov._resolve_gpu(None) == "A10"
+    assert prov._resolve_gpu("a10080gb") == "A100-80GB"
+    assert prov._resolve_gpu("a10g") == "A10G"
+    assert prov._resolve_gpu("h100") == "H100"
+    # Canonical class is case-insensitive.
+    assert prov._resolve_gpu("A10G") == "A10G"
+    # Unknown/None fall back to the default-rate class.
+    assert prov._resolve_gpu("unknown-class") == "T4"
+    assert prov._resolve_gpu(None) == "T4"

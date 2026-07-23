@@ -338,7 +338,7 @@ class ModalGpuProvider:
     def _resolve_gpu(self, gpu_class: str | None) -> str:
         from src.constants import MODAL_DEFAULT_GPU, MODAL_GPU_MAP
 
-        return MODAL_GPU_MAP.get(gpu_class or "", MODAL_DEFAULT_GPU)
+        return MODAL_GPU_MAP.get((gpu_class or "").lower(), MODAL_DEFAULT_GPU)
 
     def _recoverable_call_id(self, stored: str | None, function_name: str) -> str | None:
         """Return the FunctionCall id to recover, or None to spawn fresh.

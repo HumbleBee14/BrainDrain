@@ -39,6 +39,7 @@ def test_modal_settings_env_override(monkeypatch):
 
 
 def test_gpu_map_has_known_classes():
-    assert MODAL_GPU_MAP["A100-80GB"] == "A100-80GB"
-    assert MODAL_GPU_MAP["A10G"] == "A10"
-    assert MODAL_DEFAULT_GPU == "A10"
+    assert MODAL_GPU_MAP["a10080gb"] == "A100-80GB"
+    assert MODAL_GPU_MAP["a10g"] == "A10G"
+    assert MODAL_GPU_MAP["h100"] == "H100"
+    assert MODAL_DEFAULT_GPU == "T4"
