@@ -190,6 +190,26 @@ pub struct Config {
     #[serde(default)]
     pub stripe_price_pro: Option<String>,
 
+    // ── Email (SMTP) ──
+    /// SMTP host of an existing email provider. Unset ⇒ email disabled (sends
+    /// fail visibly). Example hosts are in `.env.example`.
+    #[serde(default)]
+    pub smtp_host: Option<String>,
+
+    /// SMTP port. 465 uses implicit TLS; other ports use STARTTLS.
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+
+    #[serde(default)]
+    pub smtp_username: Option<String>,
+
+    #[serde(default)]
+    pub smtp_password: Option<String>,
+
+    /// From address, e.g. `Platform <noreply@yourdomain.com>`.
+    #[serde(default)]
+    pub email_from: Option<String>,
+
     // ── Internal Service Auth ──
     /// Shared secret for worker → API callbacks (e.g., deploy after training).
     /// Must match APP_PLATFORM_INTERNAL_TOKEN on the worker side.
@@ -423,4 +443,7 @@ fn default_inference_instance_reconcile_interval_secs() -> u64 {
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()
+}
+fn default_smtp_port() -> u16 {
+    587
 }

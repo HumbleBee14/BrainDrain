@@ -72,6 +72,9 @@ subtle = "2"
 # Async traits
 async-trait = "0.1"
 
+# Email (SMTP) — async + rustls to match the rest of the stack
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls", "hostname", "pool"] }
+
 # Utilities
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"

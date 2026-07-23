@@ -246,7 +246,9 @@ impl BillingProvider for NoOpBillingProvider {
         _success_url: &str,
         _cancel_url: &str,
     ) -> AppResult<String> {
-        Ok(String::new())
+        Err(AppError::BadRequest {
+            message: "Billing not configured".to_string(),
+        })
     }
 
     async fn create_portal_session(
@@ -254,7 +256,9 @@ impl BillingProvider for NoOpBillingProvider {
         _customer_id: &str,
         _return_url: &str,
     ) -> AppResult<String> {
-        Ok(String::new())
+        Err(AppError::BadRequest {
+            message: "Billing not configured".to_string(),
+        })
     }
 
     async fn get_subscription(&self, _subscription_id: &str) -> AppResult<SubscriptionInfo> {
@@ -267,5 +271,26 @@ impl BillingProvider for NoOpBillingProvider {
         Err(AppError::BadRequest {
             message: "Billing not configured".to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn noop_billing_never_fakes_success() {
+        let p = NoOpBillingProvider;
+        assert!(
+            p.create_checkout_session("cus", "growth", "s", "c")
+                .await
+                .is_err()
+        );
+        assert!(p.create_portal_session("cus", "r").await.is_err());
+        assert!(
+            p.create_customer(Uuid::nil(), "e@x.com", "n")
+                .await
+                .is_err()
+        );
     }
 }

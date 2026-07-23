@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::repositories::traits::NotificationRepository;
+use crate::services::email_provider::{EmailMessage, EmailProvider};
 
 /// Maximum delivery attempts before a delivery is considered permanently failed.
 const MAX_DELIVERY_ATTEMPTS: i32 = 5;
@@ -42,11 +43,18 @@ impl DeliveryWorker {
     pub fn new(
         repo: Arc<dyn NotificationRepository>,
         http_client: reqwest::Client,
+        email_provider: Arc<dyn EmailProvider>,
         poll_interval: Duration,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-        let task_handle = tokio::spawn(poll_loop(repo, http_client, poll_interval, shutdown_rx));
+        let task_handle = tokio::spawn(poll_loop(
+            repo,
+            http_client,
+            email_provider,
+            poll_interval,
+            shutdown_rx,
+        ));
 
         Self {
             shutdown: Mutex::new(Some(ShutdownHandle {
@@ -78,6 +86,7 @@ impl DeliveryWorker {
 async fn poll_loop(
     repo: Arc<dyn NotificationRepository>,
     http_client: reqwest::Client,
+    email_provider: Arc<dyn EmailProvider>,
     poll_interval: Duration,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -92,11 +101,11 @@ async fn poll_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                process_pending(&*repo, &http_client).await;
+                process_pending(&*repo, &http_client, &*email_provider).await;
             }
             _ = &mut shutdown_rx => {
                 // Process one final batch before exiting
-                process_pending(&*repo, &http_client).await;
+                process_pending(&*repo, &http_client, &*email_provider).await;
                 tracing::info!("Delivery worker shut down (explicit signal)");
                 return;
             }
@@ -105,7 +114,11 @@ async fn poll_loop(
 }
 
 /// Fetch and process a batch of pending deliveries.
-async fn process_pending(repo: &dyn NotificationRepository, http_client: &reqwest::Client) {
+async fn process_pending(
+    repo: &dyn NotificationRepository,
+    http_client: &reqwest::Client,
+    email_provider: &dyn EmailProvider,
+) {
     let deliveries = match repo
         .list_pending_deliveries(MAX_DELIVERY_ATTEMPTS, BATCH_SIZE)
         .await
@@ -161,11 +174,7 @@ async fn process_pending(repo: &dyn NotificationRepository, http_client: &reqwes
                 dispatch_webhook(repo, http_client, &delivery, &pref).await;
             }
             "email" => {
-                // Email delivery stub — skip silently until an email provider is wired in
-                tracing::debug!(
-                    delivery_id = %delivery.id,
-                    "Skipping email delivery — no provider configured"
-                );
+                dispatch_email(repo, email_provider, &delivery, &pref).await;
             }
             other => {
                 tracing::warn!(
@@ -269,6 +278,73 @@ async fn dispatch_webhook(
                 error = %e,
                 attempt = delivery.attempts + 1,
                 "Webhook delivery error"
+            );
+        }
+    }
+}
+
+/// Send one email delivery through the provider and record the outcome.
+async fn dispatch_email(
+    repo: &dyn NotificationRepository,
+    email_provider: &dyn EmailProvider,
+    delivery: &platform_db::models::NotificationDelivery,
+    pref: &platform_db::models::NotificationPreference,
+) {
+    let address = match pref.config.get("address").and_then(|v| v.as_str()) {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => {
+            let _ = repo
+                .update_delivery_status(
+                    delivery.tenant_id,
+                    delivery.id,
+                    "failed",
+                    Some("No email address configured"),
+                )
+                .await;
+            return;
+        }
+    };
+
+    let subject = delivery
+        .payload
+        .get("subject")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Notification: {}", delivery.event_type));
+
+    let body = delivery
+        .payload
+        .get("message")
+        .or_else(|| delivery.payload.get("body"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| serde_json::to_string_pretty(&delivery.payload).unwrap_or_default());
+
+    let result = email_provider
+        .send(EmailMessage {
+            to: address,
+            subject,
+            body,
+        })
+        .await;
+
+    match result {
+        Ok(()) => {
+            let _ = repo
+                .update_delivery_status(delivery.tenant_id, delivery.id, "sent", None)
+                .await;
+            tracing::debug!(delivery_id = %delivery.id, "Email delivered successfully");
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = repo
+                .update_delivery_status(delivery.tenant_id, delivery.id, "failed", Some(&msg))
+                .await;
+            tracing::debug!(
+                delivery_id = %delivery.id,
+                error = %msg,
+                attempt = delivery.attempts + 1,
+                "Email delivery failed"
             );
         }
     }
