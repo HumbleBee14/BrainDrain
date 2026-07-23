@@ -434,7 +434,7 @@ export default function ProjectDetailPage() {
                   : "Drag and drop files here or click to upload"}
               </p>
               <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                Supports PDF, DOCX, TXT, CSV, JSON, JSONL, MD (max 500 MB)
+                Supports PDF, DOCX, TXT, HTML, MD, CSV (max 500 MB)
               </p>
               <label className="mt-4 inline-block cursor-pointer rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 transition">
                 Choose Files
@@ -443,7 +443,7 @@ export default function ProjectDetailPage() {
                   type="file"
                   multiple
                   className="hidden"
-                  accept=".pdf,.docx,.txt,.csv,.json,.jsonl,.md,.html"
+                  accept=".pdf,.docx,.txt,.html,.htm,.md,.csv"
                   onChange={(e) => {
                     if (e.target.files) handleFiles(e.target.files);
                   }}

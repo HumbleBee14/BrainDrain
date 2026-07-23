@@ -18,6 +18,7 @@ from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
 from markdown import markdown
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 if TYPE_CHECKING:
     from src.config import WorkerSettings
@@ -355,6 +356,17 @@ class ParseDocumentActivity:
 
             # Detect language from combined text (backend selected from settings)
             full_text = " ".join(p["text"] for p in pages if p.get("text"))
+
+            # Empty extraction (scanned/image-only PDF, no OCR path) must fail
+            # loud — a silent "parsed" doc yields zero training data downstream.
+            if not full_text.strip():
+                raise ApplicationError(
+                    "No extractable text found. The file may be a scanned or "
+                    "image-only PDF (OCR is not supported) or otherwise contain "
+                    "no readable text. Try uploading a text-based document.",
+                    non_retryable=True,
+                )
+
             language = _detect_language(full_text, self.infra.settings)
 
             # Compute quality score
