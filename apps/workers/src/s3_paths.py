@@ -24,6 +24,17 @@ def pairs_path(tenant_id: str, project_id: str, batch_id: str) -> str:
     return f"pairs/{tenant_id}/{project_id}/{batch_id}.jsonl"
 
 
+def pairs_checkpoint_prefix(tenant_id: str, project_id: str, run_id: str) -> str:
+    """Prefix for per-chunk pair-generation checkpoints.
+
+    Keyed by a stable per-execution ``run_id`` (Temporal workflow-run + activity
+    id) so retries of the same activity resume from prior chunks, while distinct
+    executions never collide. Worker-internal; the Rust control plane never reads
+    these, so there is no counterpart in ``crates/shared/src/s3_paths.rs``.
+    """
+    return f"pair-checkpoints/{tenant_id}/{project_id}/{run_id}/"
+
+
 def adapter_prefix(tenant_id: str, model_id: str) -> str:
     return f"adapters/{tenant_id}/{model_id}/"
 

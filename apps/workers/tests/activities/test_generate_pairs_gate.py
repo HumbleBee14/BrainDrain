@@ -2,7 +2,11 @@ import httpx
 import pytest
 from temporalio.testing import ActivityEnvironment
 
-from src.activities.generate_pairs import apply_faithfulness_gate, generate_pairs_for_chunks
+from src.activities.generate_pairs import (
+    apply_faithfulness_gate,
+    generate_pairs_with_checkpoint,
+)
+from src.activities.pair_checkpoint import NullCheckpoint
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import FaithfulnessVerdict, GeneratedPair
 
@@ -76,20 +80,24 @@ async def test_transient_chunk_error_is_skipped_not_raised(error):
     generator = _FlakyOnFirstChunkGenerator(error)
 
     env = ActivityEnvironment()
-    generated, pair_meta, failed_chunks = await env.run(
-        generate_pairs_for_chunks,
+    records, dropped, failed_chunks = await env.run(
+        generate_pairs_with_checkpoint,
         chunks,
         [],
         generator,
+        None,
+        NullCheckpoint(),
         task_type="qna",
         guidance="",
         pairs_per_chunk=1,
+        faithfulness_enabled=False,
     )
 
     assert failed_chunks == 1
-    assert len(generated) == 1
-    assert generated[0].prompt == "q2"
-    assert pair_meta[id(generated[0])] == ("d2", "c2")
+    assert dropped == 0
+    assert len(records) == 1
+    assert records[0]["instruction"] == "q2"
+    assert (records[0]["doc_id"], records[0]["chunk_id"]) == ("d2", "c2")
 
 
 @pytest.mark.asyncio
@@ -104,13 +112,16 @@ async def test_all_chunks_transiently_failing_raises(error):
     env = ActivityEnvironment()
     with pytest.raises(RuntimeError, match="failed synthetic pair generation"):
         await env.run(
-            generate_pairs_for_chunks,
+            generate_pairs_with_checkpoint,
             chunks,
             [],
             generator,
+            None,
+            NullCheckpoint(),
             task_type="qna",
             guidance="",
             pairs_per_chunk=1,
+            faithfulness_enabled=False,
         )
 
 
@@ -123,11 +134,14 @@ async def test_value_error_from_generator_still_propagates():
     env = ActivityEnvironment()
     with pytest.raises(ValueError, match="not valid JSON"):
         await env.run(
-            generate_pairs_for_chunks,
+            generate_pairs_with_checkpoint,
             chunks,
             [],
             generator,
+            None,
+            NullCheckpoint(),
             task_type="qna",
             guidance="",
             pairs_per_chunk=1,
+            faithfulness_enabled=False,
         )
