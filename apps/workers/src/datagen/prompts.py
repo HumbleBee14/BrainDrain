@@ -26,7 +26,7 @@ def xml_escape(value: str) -> str:
 def wrap_guidance(base: str, guidance: str) -> str:
     """Wrap a base instruction with additional user guidance.
 
-    Mirrors Kiln's `wrap_task_with_guidance`: the base instruction stays the
+    The base instruction stays the
     primary instruction, and the guidance is appended as a clearly-delimited
     "Special Instructions" data block rather than being spliced into the
     base text.
@@ -52,9 +52,9 @@ class PromptLibrary:
     def facet_prompt(task_type: str, guidance: str) -> str:
         """Grounded facet-extraction prompt.
 
-        Unlike Kiln's `generate_topic_tree_prompt` (which lets the model
-        invent an arbitrary topic tree), facets here MUST be derived from the
-        actual document text provided in the user message — this is
+        Unlike free topic-tree brainstorming (which lets the model invent an
+        arbitrary topic tree), facets here MUST be derived from the actual
+        document text provided in the user message — this is
         document-grounded synthetic data generation, not free topic
         brainstorming.
         """
@@ -92,7 +92,7 @@ the JSON object.
     def qna_grounded_prompt(guidance: str) -> str:
         """Document-grounded Q&A generation prompt.
 
-        Adapted from Kiln's `generate_qna_generation_prompt`: answerable,
+        Grounding rules: answerable,
         objective, and strictly grounded in the provided document text.
         """
         base = """You are a **Q&A generation assistant**.
@@ -123,6 +123,47 @@ Return a single JSON object with this exact structure:
 ```
 Use valid JSON only — no extra commentary, explanations, or markdown outside
 the JSON object. Field names must be exactly "query" and "answer".
+"""
+        return wrap_guidance(base, guidance) if guidance else base
+
+    @staticmethod
+    def subtopic_prompt(task_type: str, guidance: str, num_subtopics: int) -> str:
+        """Grounded facet-subtopic expansion prompt.
+
+        Recursive subtopic expansion multiplies generation diversity: rotating
+        chunks across facet×subtopic angles instead of a small flat facet list
+        prevents samples from clustering on each facet's most obvious phrasing.
+        Like facet extraction — and unlike free topic-tree brainstorming —
+        subtopics MUST stay grounded in the document excerpt provided in the
+        user message.
+        """
+        base = f"""You are a **facet refinement assistant** for a synthetic data \
+generation pipeline.
+
+## Task Description
+The task we're generating data for is: **{xml_escape(task_type)}**.
+
+You will be given one **facet** (a theme present in a document) and an excerpt
+of the document text it came from. Your job is to break that facet into up to
+{num_subtopics} narrower **subtopics** — more specific angles within the facet
+that are actually present in the excerpt.
+
+### Important Guidelines
+- Every subtopic must be **grounded in the provided document excerpt** — do
+  not invent subtopics the text does not support.
+- Subtopics must be narrower than the facet, mutually distinct, and each
+  usable on its own to steer question generation.
+- Keep each subtopic label short (a few words), not a full sentence.
+- If the excerpt does not support {num_subtopics} distinct subtopics, return
+  fewer — never pad with invented ones.
+
+### Output Format
+Return a single JSON object with this exact structure:
+```json
+{{"subtopics": ["subtopic label 1", "subtopic label 2", ...]}}
+```
+Use valid JSON only — no extra commentary, explanations, or markdown outside
+the JSON object.
 """
         return wrap_guidance(base, guidance) if guidance else base
 

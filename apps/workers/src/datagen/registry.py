@@ -9,17 +9,30 @@ touching call sites.
 from src.config import WorkerSettings
 from src.datagen.impls import (
     LlmCall,
+    LlmFacetExpander,
     LlmFacetExtractor,
     LlmFaithfulnessScorer,
     LlmGuidanceRefiner,
     LlmPairGenerator,
 )
-from src.datagen.protocols import FacetExtractor, FaithfulnessScorer, GuidanceRefiner, PairGenerator
+from src.datagen.protocols import (
+    FacetExpander,
+    FacetExtractor,
+    FaithfulnessScorer,
+    GuidanceRefiner,
+    PairGenerator,
+)
 
 
 def get_facet_extractor(settings: WorkerSettings, llm_call: LlmCall) -> FacetExtractor:
     if settings.datagen_facet_backend == "llm":
         return LlmFacetExtractor(llm_call=llm_call)
+    raise ValueError(f"unknown datagen_facet_backend: {settings.datagen_facet_backend}")
+
+
+def get_facet_expander(settings: WorkerSettings, llm_call: LlmCall) -> FacetExpander:
+    if settings.datagen_facet_backend == "llm":
+        return LlmFacetExpander(llm_call=llm_call)
     raise ValueError(f"unknown datagen_facet_backend: {settings.datagen_facet_backend}")
 
 
