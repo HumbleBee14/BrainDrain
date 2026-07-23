@@ -933,6 +933,10 @@ def _train_sft(
     """Run SFT (Supervised Fine-Tuning) training."""
     from trl import SFTConfig, SFTTrainer
 
+    # Render messages -> text with the model's own chat template just before
+    # training, now that the tokenizer is available.
+    dataset = _render_sft_dataset(dataset, tokenizer)
+
     phase_prefix = f"{phase}_" if phase else ""
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase=phase or "sft")
@@ -1091,6 +1095,10 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_confi
 def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> float:
     """Run evaluation on a hold-out validation set and return eval_loss."""
     from trl import SFTConfig, SFTTrainer
+
+    # Render with the model's own chat template so holdout loss is measured on
+    # the same formatting used for training and serving.
+    val_dataset = _render_sft_dataset(val_dataset, tokenizer)
 
     eval_args = SFTConfig(
         output_dir="/tmp/eval-holdout",
@@ -1300,33 +1308,38 @@ def _download_dataset(s3_path: str, local_path: Path, s3, bucket: str):
 
 
 def _load_chatml_dataset(path: Path):
-    """Load a ChatML JSONL dataset into HuggingFace Dataset format."""
+    """Load a chat JSONL dataset as raw message lists into a HuggingFace Dataset.
+
+    Formatting is deliberately deferred until a tokenizer is available: each
+    consumer renders the messages with the model's own chat template (via
+    `chat_template.render_chat`) so training matches what the model is served,
+    instead of a hardcoded ChatML string that only matched Qwen.
+    """
     from datasets import Dataset
 
-    records = []
+    rows = []
     with open(path) as f:
         for line in f:
             line = line.strip()
             if line:
-                records.append(json.loads(line))
+                record = json.loads(line)
+                rows.append({"messages": record.get("messages", [])})
 
-    texts = []
-    for record in records:
-        messages = record.get("messages", [])
-        text = _format_chatml(messages)
-        texts.append({"text": text})
-
-    return Dataset.from_list(texts)
+    return Dataset.from_list(rows)
 
 
-def _format_chatml(messages: list[dict]) -> str:
-    """Format messages as ChatML text."""
-    parts = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-    return "\n".join(parts)
+def _render_sft_dataset(dataset, tokenizer):
+    """Render a messages-form dataset into `{"text": ...}` for SFT / eval.
+
+    Uses the model's own chat template so the full supervised example (prompt +
+    assistant turn + the template's EOS) matches serve-time formatting.
+    """
+    from src.activities.chat_template import render_chat
+
+    def _map(row):
+        return {"text": render_chat(tokenizer, row["messages"], add_generation_prompt=False)}
+
+    return dataset.map(_map, remove_columns=[c for c in dataset.column_names if c != "text"])
 
 
 def _normalize_text(s: str) -> str:
@@ -1356,6 +1369,7 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
     """
     from datasets import Dataset
 
+    from src.activities.chat_template import render_chat, split_prompt_and_response
     from src.backends.model_inference import get as get_inference
 
     judge = OpenAICompatibleJudge(
@@ -1375,20 +1389,21 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
     rejected_texts: list[str] = []
     dropped = 0
 
-    for text in dataset["text"]:
+    messages_list = dataset["messages"]
+    for messages in messages_list:
         if max_pairs is not None and len(chosen_texts) >= max_pairs:
             break
 
-        parts = text.split("<|im_start|>assistant\n")
-        if len(parts) <= 1:
+        # Recover the prompt turns and gold answer from the structured messages
+        # (never by string-splitting a formatted string — that only worked for
+        # ChatML and broke on every other model's template).
+        prompt_messages, gold = split_prompt_and_response(messages)
+        if prompt_messages is None:
             continue
 
-        prompt_part = "<|im_start|>assistant\n".join(parts[:-1])
-        gold = parts[-1].split("<|im_end|>")[0].strip()
-        if not gold:
-            continue
-
-        gen_prompt = prompt_part + "<|im_start|>assistant\n"
+        # Format the prompt with the model's own template so the sampled
+        # ("rejected") response is generated exactly as the model is served.
+        gen_prompt = render_chat(tokenizer, prompt_messages, add_generation_prompt=True)
         sampled = inference.generate(model, tokenizer, gen_prompt, max_new_tokens=max_new_tokens)
         sampled = sampled.strip()
 
@@ -1400,19 +1415,25 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
         # Judge filter: keep only when gold is at least as good as the sample
         # (winner "A"=gold or "tie"); drop when the sample is judged better ("B").
         if judge_filter:
-            winner = judge.compare_ab(prompt_part, gold, sampled)
+            winner = judge.compare_ab(gen_prompt, gold, sampled)
             if winner == "B":
                 dropped += 1
                 continue
 
-        chosen_texts.append(gen_prompt + gold + "<|im_end|>")
-        rejected_texts.append(gen_prompt + sampled + "<|im_end|>")
+        # chosen/rejected are the full templated conversations (prompt + turn),
+        # sharing the gen_prompt prefix so the only difference is the answer.
+        chosen_texts.append(
+            render_chat(tokenizer, [*prompt_messages, {"role": "assistant", "content": gold}])
+        )
+        rejected_texts.append(
+            render_chat(tokenizer, [*prompt_messages, {"role": "assistant", "content": sampled}])
+        )
 
     logger.info(
         "DPO on-policy pairs: kept=%d dropped=%d (of %d examples)",
         len(chosen_texts),
         dropped,
-        len(dataset["text"]),
+        len(messages_list),
     )
 
     if not chosen_texts:
@@ -1426,16 +1447,30 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
 
 
 def _create_grpo_prompts(dataset, tokenizer):
-    """Extract prompts from dataset for GRPO training."""
+    """Build GRPO generation prompts from the dataset's messages.
+
+    Each prompt is the conversation up to the assistant turn, formatted with the
+    model's own chat template (including any system turn and the generation
+    marker) — so the policy generates exactly as it will when served. The
+    previous version fed the bare, untemplated user text and dropped the system
+    prompt, so GRPO trained on inputs the deployed model never receives.
+    """
     from datasets import Dataset
 
+    from src.activities.chat_template import render_chat, split_prompt_and_response
+
     prompts = []
-    for text in dataset["text"]:
-        parts = text.split("<|im_start|>user\n")
-        for part in parts[1:]:
-            user_msg = part.split("<|im_end|>")[0].strip()
-            if user_msg:
-                prompts.append({"prompt": user_msg})
+    for messages in dataset["messages"]:
+        prompt_messages, _gold = split_prompt_and_response(messages)
+        # Fall back to the whole conversation when there is no trailing assistant
+        # turn (e.g. prompt-only GRPO datasets).
+        if prompt_messages is None:
+            prompt_messages = messages
+        if not prompt_messages:
+            continue
+        prompt_text = render_chat(tokenizer, prompt_messages, add_generation_prompt=True)
+        if prompt_text:
+            prompts.append({"prompt": prompt_text})
 
     return Dataset.from_list(prompts) if prompts else dataset
 

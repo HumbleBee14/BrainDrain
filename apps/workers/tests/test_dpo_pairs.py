@@ -37,6 +37,18 @@ class _LlmConfig:
     model = "m"
 
 
+class _Tok:
+    """Minimal tokenizer exposing apply_chat_template, as render_chat expects."""
+
+    chat_template = "present"
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+        parts = [f"{m['role']}: {m['content']}" for m in messages]
+        if add_generation_prompt:
+            parts.append("assistant:")
+        return "\n".join(parts)
+
+
 def _install_fakes(monkeypatch, tm, *, generate, compare_ab):
     """Fake the model-inference backend and the judge used inside _create_dpo_pairs."""
     fake_inf = types.SimpleNamespace(
@@ -54,12 +66,15 @@ def _install_fakes(monkeypatch, tm, *, generate, compare_ab):
     monkeypatch.setattr(tm, "OpenAICompatibleJudge", _Judge)
 
 
-def _dataset(texts):
-    return {"text": texts}
+def _dataset(examples):
+    return {"messages": examples}
 
 
 def _ex(prompt, response):
-    return f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{response}<|im_end|>"
+    return [
+        {"role": "user", "content": prompt},
+        {"role": "assistant", "content": response},
+    ]
 
 
 def test_rejected_is_on_policy_generation_not_truncation(monkeypatch, tm):
@@ -71,7 +86,7 @@ def test_rejected_is_on_policy_generation_not_truncation(monkeypatch, tm):
         compare_ab=lambda gold, sample: "A",
     )
     ds = _dataset([_ex("2+2?", "The answer is 4.")])
-    out = tm._create_dpo_pairs(object(), ds, object(), {}, _LlmConfig(), settings=None)
+    out = tm._create_dpo_pairs(object(), ds, _Tok(), {}, _LlmConfig(), settings=None)
 
     chosen = out.d["chosen"][0]
     rejected = out.d["rejected"][0]
@@ -91,7 +106,7 @@ def test_degenerate_identical_pair_dropped(monkeypatch, tm):
     )
     ds = _dataset([_ex("2+2?", "The answer is 4.")])
     with pytest.raises(ValueError, match="no usable preference pairs"):
-        tm._create_dpo_pairs(object(), ds, object(), {}, _LlmConfig(), settings=None)
+        tm._create_dpo_pairs(object(), ds, _Tok(), {}, _LlmConfig(), settings=None)
 
 
 def test_sample_judged_better_is_dropped(monkeypatch, tm):
@@ -104,7 +119,7 @@ def test_sample_judged_better_is_dropped(monkeypatch, tm):
     )
     ds = _dataset([_ex("q", "mediocre gold")])
     with pytest.raises(ValueError, match="no usable preference pairs"):
-        tm._create_dpo_pairs(object(), ds, object(), {}, _LlmConfig(), settings=None)
+        tm._create_dpo_pairs(object(), ds, _Tok(), {}, _LlmConfig(), settings=None)
 
 
 def test_max_dpo_pairs_caps_generation(monkeypatch, tm):
@@ -117,7 +132,7 @@ def test_max_dpo_pairs_caps_generation(monkeypatch, tm):
     _install_fakes(monkeypatch, tm, generate=gen, compare_ab=lambda gold, sample: "A")
     ds = _dataset([_ex(f"q{i}", f"gold {i}") for i in range(5)])
     out = tm._create_dpo_pairs(
-        object(), ds, object(), {"max_dpo_pairs": 2}, _LlmConfig(), settings=None
+        object(), ds, _Tok(), {"max_dpo_pairs": 2}, _LlmConfig(), settings=None
     )
     assert len(out.d["chosen"]) == 2
 
@@ -132,7 +147,7 @@ def test_judge_filter_disabled_keeps_all(monkeypatch, tm):
     _install_fakes(monkeypatch, tm, generate=lambda p: "diff answer", compare_ab=cmp)
     ds = _dataset([_ex("q", "gold answer")])
     out = tm._create_dpo_pairs(
-        object(), ds, object(), {"dpo_judge_filter": False}, _LlmConfig(), settings=None
+        object(), ds, _Tok(), {"dpo_judge_filter": False}, _LlmConfig(), settings=None
     )
     assert len(out.d["chosen"]) == 1
     assert calls["judge"] == 0  # judge not consulted when filter disabled

@@ -3,6 +3,7 @@
 from collections import namedtuple
 
 from src.activities.run_evaluation import (
+    _as_user_prompt,
     _check_answer,
     _classify_refusal,
     _compute_overall,
@@ -12,6 +13,22 @@ from src.activities.run_evaluation import (
     _suite_pct,
     _wilson_ci,
 )
+
+
+class _FakeTokenizer:
+    """Tokenizer whose template is deliberately NOT ChatML, so tests prove the
+    formatter uses the model's own template rather than a hardcoded string."""
+
+    def __init__(self):
+        self.calls = []
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
+        self.calls.append({"tokenize": tokenize, "add_generation_prompt": add_generation_prompt})
+        rendered = "".join(f"[{m['role']}]{m['content']}" for m in messages)
+        if add_generation_prompt:
+            rendered += "[assistant]"
+        return rendered
+
 
 _Suite = namedtuple("_Suite", ["name", "weight"])
 _ALL_SUITES = [
@@ -103,27 +120,35 @@ class TestWilsonCI:
 
 
 class TestFormatPrompt:
-    def test_single_user_message(self):
-        messages = [{"role": "user", "content": "Hello"}]
-        result = _format_prompt(messages)
-        assert "<|im_start|>user" in result
-        assert "Hello" in result
-        assert "<|im_start|>assistant" in result
+    def test_uses_tokenizer_template_not_hardcoded_chatml(self):
+        # The formatter must delegate to the model's own chat template, so a
+        # non-ChatML tokenizer produces non-ChatML output (no `<|im_start|>`).
+        tok = _FakeTokenizer()
+        result = _format_prompt(tok, [{"role": "user", "content": "Hello"}])
+        assert result == "[user]Hello[assistant]"
+        assert "<|im_start|>" not in result
+
+    def test_appends_generation_prompt(self):
+        tok = _FakeTokenizer()
+        _format_prompt(tok, [{"role": "user", "content": "Hi"}])
+        # A generation prompt must request the assistant marker, untokenized.
+        assert tok.calls[-1] == {"tokenize": False, "add_generation_prompt": True}
 
     def test_system_and_user_messages(self):
-        messages = [
-            {"role": "system", "content": "You are helpful."},
-            {"role": "user", "content": "Hi"},
-        ]
-        result = _format_prompt(messages)
-        assert "<|im_start|>system" in result
-        assert "You are helpful." in result
-        assert "<|im_start|>user" in result
-        assert result.endswith("<|im_start|>assistant\n")
+        tok = _FakeTokenizer()
+        result = _format_prompt(
+            tok,
+            [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hi"},
+            ],
+        )
+        assert result == "[system]You are helpful.[user]Hi[assistant]"
 
-    def test_empty_messages(self):
-        result = _format_prompt([])
-        assert "<|im_start|>assistant" in result
+    def test_as_user_prompt_wraps_bare_question(self):
+        tok = _FakeTokenizer()
+        result = _as_user_prompt(tok, "What is 2+2?")
+        assert result == "[user]What is 2+2?[assistant]"
 
 
 class TestCheckAnswer:
