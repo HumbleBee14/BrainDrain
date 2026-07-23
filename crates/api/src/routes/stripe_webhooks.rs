@@ -50,30 +50,37 @@ pub async fn handle_stripe_webhook(
     let event: serde_json::Value =
         serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Idempotency: deduplicate webhook deliveries using Redis SETNX with 24h TTL
-    let event_id = event["id"].as_str().unwrap_or("");
-    if !event_id.is_empty() {
-        let key = format!("stripe_event:{event_id}");
+    // Idempotency: deduplicate webhook deliveries using Redis SETNX with 24h TTL.
+    let event_id = event["id"].as_str().unwrap_or("").to_string();
+    let dedup_key = (!event_id.is_empty()).then(|| format!("stripe_event:{event_id}"));
+    if let Some(ref key) = dedup_key {
         let mut redis = state.redis();
-        let was_set: Option<String> = redis::cmd("SET")
-            .arg(&key)
+        let set_res: redis::RedisResult<Option<String>> = redis::cmd("SET")
+            .arg(key)
             .arg("1")
             .arg("NX")
             .arg("EX")
             .arg(86400)
             .query_async(&mut redis)
-            .await
-            .unwrap_or(None);
-
-        if was_set.is_none() {
-            tracing::debug!(event_id, "Duplicate Stripe event — skipping");
-            return Ok(StatusCode::OK);
+            .await;
+        match set_res {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                tracing::debug!(event_id, "Duplicate Stripe event — skipping");
+                return Ok(StatusCode::OK);
+            }
+            // Fail open: a Redis outage must not silently drop a billing event.
+            Err(e) => tracing::warn!(
+                error = %e,
+                event_id,
+                "Stripe idempotency check unavailable — processing without dedup"
+            ),
         }
     }
 
     let event_type = event["type"].as_str().unwrap_or("");
 
-    match event_type {
+    let result = match event_type {
         "checkout.session.completed" => handle_checkout_completed(&state, &event).await,
         "customer.subscription.updated" => handle_subscription_updated(&state, &event).await,
         "customer.subscription.deleted" => handle_subscription_deleted(&state, &event).await,
@@ -81,7 +88,18 @@ pub async fn handle_stripe_webhook(
             tracing::debug!(event_type, "Ignoring unhandled Stripe event");
             Ok(StatusCode::OK)
         }
+    };
+
+    // Release the idempotency key on failure so Stripe's retry can reprocess the
+    // event instead of it being permanently skipped for the TTL window.
+    if result.is_err()
+        && let Some(ref key) = dedup_key
+    {
+        let mut redis = state.redis();
+        let _: redis::RedisResult<i64> = redis::cmd("DEL").arg(key).query_async(&mut redis).await;
     }
+
+    result
 }
 
 /// Verify Stripe webhook signature using HMAC-SHA256.
