@@ -137,6 +137,19 @@ pub struct Config {
     #[serde(default = "default_inference_instance_reconcile_interval_secs")]
     pub inference_instance_reconcile_interval_secs: u64,
 
+    /// Stuck-job reaper: poll interval in seconds.
+    #[serde(default = "default_reaper_poll_interval_secs")]
+    pub reaper_poll_interval_secs: u64,
+
+    /// A training/provisioning job idle this long with no live workflow is
+    /// treated as abandoned (worker crash) and failed + billed for GPU used.
+    #[serde(default = "default_training_stuck_timeout_secs")]
+    pub training_stuck_timeout_secs: i64,
+
+    /// A document stuck in `parsing` this long is failed with an error message.
+    #[serde(default = "default_parsing_stuck_timeout_secs")]
+    pub parsing_stuck_timeout_secs: i64,
+
     // ── Circuit Breaker (Inference Backend) ──
     /// Number of consecutive failures before the circuit breaker trips.
     #[serde(default = "default_cb_failure_threshold")]
@@ -440,6 +453,15 @@ fn default_inference_instance_health_poll_interval_secs() -> u64 {
 }
 fn default_inference_instance_reconcile_interval_secs() -> u64 {
     60
+}
+fn default_reaper_poll_interval_secs() -> u64 {
+    300
+}
+fn default_training_stuck_timeout_secs() -> i64 {
+    3_600
+}
+fn default_parsing_stuck_timeout_secs() -> i64 {
+    1_800
 }
 fn default_temporal_task_queue() -> String {
     "ml-pipeline".to_string()

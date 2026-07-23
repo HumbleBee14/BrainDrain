@@ -131,6 +131,44 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Spawn background task: reap stuck training jobs + parsing documents.
+    let (reaper_shutdown_tx, mut reaper_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let reaper_state = state.clone();
+        let poll_secs = config.reaper_poll_interval_secs;
+        let training_stuck = config.training_stuck_timeout_secs;
+        let parsing_stuck = config.parsing_stuck_timeout_secs;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let orch = reaper_state.orchestrator();
+                        match services::reaper::reap_stuck_training_jobs(
+                            reaper_state.db(), orch, training_stuck,
+                        ).await {
+                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck training jobs"),
+                            Err(e) => tracing::warn!(error = %e, "Stuck-training reaper failed"),
+                            _ => {}
+                        }
+                        match services::reaper::reap_stuck_parsing_documents(
+                            reaper_state.db(), parsing_stuck,
+                        ).await {
+                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck parsing documents"),
+                            Err(e) => tracing::warn!(error = %e, "Stuck-parsing reaper failed"),
+                            _ => {}
+                        }
+                    }
+                    _ = &mut reaper_shutdown_rx => {
+                        tracing::info!("Stuck-job reaper shutting down");
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
     let default_flag_context = FlagContext::default();
     tracing::info!(
         billing_outbox = state
@@ -221,6 +259,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Shutting down background workers...");
     let _ = idempotency_shutdown_tx.send(());
     let _ = instance_control_shutdown_tx.send(());
+    let _ = reaper_shutdown_tx.send(());
 
     // Stop Unleash poller if running
     shutdown_state.shutdown_unleash_poller();
