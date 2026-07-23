@@ -566,7 +566,7 @@ pub async fn rollback_model(
                 message: "Invalid target_version_id".to_string(),
             })?;
 
-    let result = ModelService::rollback(state.model_repo(), user.tenant_id, id, target_id).await?;
+    let result = ModelService::rollback(&state, user.tenant_id, id, target_id).await?;
 
     AuditLogger::log(
         state.audit_log_repo(),

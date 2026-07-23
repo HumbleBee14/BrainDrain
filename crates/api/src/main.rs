@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         let poll_secs = config.reaper_poll_interval_secs;
         let training_stuck = config.training_stuck_timeout_secs;
         let parsing_stuck = config.parsing_stuck_timeout_secs;
+        let deploying_stuck = config.deploying_stuck_timeout_secs;
         let idle_instance_timeout = config.inference_instance_idle_timeout_secs;
         let orphan_sweep_secs = config.orphaned_document_sweep_secs;
         tokio::spawn(async move {
@@ -159,6 +160,13 @@ async fn main() -> anyhow::Result<()> {
                         ).await {
                             Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck parsing documents"),
                             Err(e) => tracing::warn!(error = %e, "Stuck-parsing reaper failed"),
+                            _ => {}
+                        }
+                        match services::reaper::reap_stuck_deploying_models(
+                            reaper_state.db(), deploying_stuck,
+                        ).await {
+                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck deploying models"),
+                            Err(e) => tracing::warn!(error = %e, "Stuck-deploy reaper failed"),
                             _ => {}
                         }
                         match services::reaper::reap_idle_instances(

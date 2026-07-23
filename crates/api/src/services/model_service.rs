@@ -1,9 +1,12 @@
+use platform_shared::enums::DeploymentStatus;
 use uuid::Uuid;
 
+use crate::app_state::AppState;
 use crate::dto::common::PaginatedResponse;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::ModelRepository;
+use crate::services::deployment_service::DeploymentService;
 
 /// Business logic for model operations.
 pub struct ModelService;
@@ -67,12 +70,22 @@ impl ModelService {
     }
 
     /// Rollback: deploy a previous version and undeploy the currently active one.
+    ///
+    /// This re-points the serving backend for real (unload the current adapter,
+    /// load the target's) via the same deploy/undeploy paths a normal deploy
+    /// uses — a bare status flip in the database would leave the inference
+    /// instance still serving the rolled-back-from model while the DB claimed
+    /// the target was active. Both steps are idempotent (undeploy is skipped
+    /// when the current version is already inactive, deploy when the target is
+    /// already active), so a retried rollback converges instead of erroring.
     pub async fn rollback(
-        repo: &dyn ModelRepository,
+        state: &AppState,
         tenant_id: Uuid,
         model_id: Uuid,
         target_version_id: Uuid,
     ) -> AppResult<ModelResponse> {
+        let repo = state.model_repo();
+
         let current = repo
             .get_by_id(tenant_id, model_id)
             .await?
@@ -101,12 +114,22 @@ impl ModelService {
             });
         }
 
-        // Atomic rollback: undeploy current + deploy target in a single transaction
+        // Free the current adapter first so its slot is available before the
+        // target claims one (keeps us under the per-base-model adapter cap).
+        if current.deployment_status == DeploymentStatus::Active.to_string() {
+            DeploymentService::undeploy(state, tenant_id, current.id).await?;
+        }
+
+        // Deploy the target for real; skip if it is already the active version.
+        if target.deployment_status != DeploymentStatus::Active.to_string() {
+            DeploymentService::deploy(state, tenant_id, target.id).await?;
+        }
+
         let updated = repo
-            .rollback_deployment(tenant_id, current.id, target.id)
+            .get_by_id(tenant_id, target.id)
             .await?
             .ok_or(AppError::NotFound {
-                message: "Failed to update target deployment status".to_string(),
+                message: "Target version not found after rollback".to_string(),
             })?;
 
         Ok(updated.into())
