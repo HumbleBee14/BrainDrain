@@ -462,7 +462,7 @@ Each line in the JSONL file:
 
 ### Stage 2: Generate Synthetic Pairs
 
-**File:** `apps/workers/src/activities/generate_pairs.py` (177 lines)
+**File:** `apps/workers/src/activities/generate_pairs.py` (~340 lines)
 
 **Activity name:** `"generate_synthetic_pairs"`
 
@@ -489,24 +489,43 @@ class GenerateSyntheticPairsOutput:
 
 #### LLM Communication Design
 
-**IMPORTANT:** The code is **provider-agnostic**. It uses raw HTTP calls (via `httpx`) to the OpenAI-compatible `/chat/completions` endpoint. There is no OpenAI SDK, no LangChain, no framework dependency.
+**IMPORTANT:** The code is **provider-agnostic**. It uses raw HTTP calls (via `httpx`)
+to the OpenAI-compatible `/chat/completions` endpoint. There is no OpenAI SDK, no
+LangChain, no framework dependency.
+
+The old inline `_call_llm()` helper that posted a fixed request body no longer
+exists. LLM transport is now behind a pluggable `LLMProvider` backend obtained
+with `get_llm_provider(settings.llm_provider_backend)` (see
+`src/backends/llm_provider.py`), and pair generation itself is delegated to a
+structured `PairGenerator` resolved from `src.datagen.registry.get_pair_generator(...)`.
+The activity wraps the provider call in the circuit breaker and hands it to the
+generator:
 
 ```python
-# From _call_llm() — the core LLM interaction:
+# From GeneratePairsActivity.run() — provider + structured generator:
 
-url = f"{settings.llm_api_base_url.rstrip('/')}/chat/completions"
+provider = get_llm_provider(settings.llm_provider_backend)
 
-resp = await http.post(
-    url,
-    headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-    json={
-        "model": settings.llm_model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": settings.llm_max_tokens,
-        "temperature": 0.7,
-    },
-)
+async def llm_call(prompt: str) -> str:
+    return await self.infra.circuit_breaker.call(
+        provider.generate,
+        http,
+        prompt,
+        model=llm_config.model,
+        api_base_url=llm_config.api_base_url,
+        api_key=llm_config.api_key,
+        max_tokens=llm_config.max_tokens,
+        temperature=temperature,   # generation_temperature (0.7) vs judge_temperature (0.0)
+    )
+
+pair_generator = get_pair_generator(settings, llm_call)
 ```
+
+Key differences from the older single-call design:
+- **Per-tenant config:** `llm_config` comes from `get_tenant_llm_config(...)` (DB lookup → env fallback), not directly from `settings`.
+- **Facet-diversity steering:** kept facets are distributed across chunks to diversify generated pairs.
+- **Faithfulness gate:** a `FaithfulnessScorer` (`get_faithfulness_scorer(...)`) can drop pairs whose response isn't grounded in the source chunk (enabled by `APP_FAITHFULNESS_GATE_ENABLED`, default on).
+- **Resumable checkpointing:** each chunk's finished pairs are persisted to S3 (`pair_checkpoint`) so a mid-run failure resumes instead of regenerating everything.
 
 **Any provider supporting `/chat/completions`** works by changing 3 environment variables:
 
@@ -633,7 +652,7 @@ For a typical document:
 
 ### Stage 3: Build Dataset
 
-**File:** `apps/workers/src/activities/build_dataset.py` (194 lines)
+**File:** `apps/workers/src/activities/build_dataset.py` (~160 lines)
 
 **Activity name:** `"build_dataset"`
 
@@ -663,17 +682,18 @@ class BuildDatasetOutput:
 ```
 1. DOWNLOAD raw pairs JSONL from S3
 
-2. QUALITY FILTERING: _filter_pairs(pairs)
-   Remove pairs where:
+2. QUALITY FILTERING: get_filter(settings.dataset_filter_backend).filter(pairs)
+   Default backend "heuristic" (HeuristicFilter) removes pairs where:
    → instruction is empty
    → response is empty
    → response < 20 characters (too short to be useful)
    → response > 5000 characters (too long, likely noise)
    → instruction < 10 characters (too vague)
 
-3. DEDUPLICATION: _deduplicate(filtered)
-   → Hash: MD5(instruction + "|" + response)
+3. DEDUPLICATION: get_deduplicator(settings.dedup_backend).deduplicate(filtered)
+   → Default backend "hash" (HashDeduplicator): MD5(instruction + "|" + response)
    → Keep first occurrence, remove exact duplicates
+   → Optional "near" backend removes token-Jaccard near-duplicates
 
 4. CHATML FORMATTING:
    For each pair, create:
@@ -718,17 +738,23 @@ class BuildDatasetOutput:
 
 #### Deduplication
 
+Filtering and deduplication are pluggable backends registered in
+`src/backends/dataset_filter.py`; `build_dataset` resolves them by name from
+`settings.dataset_filter_backend` / `settings.dedup_backend`. The default
+deduplicator is `HashDeduplicator` (exact MD5 match):
+
 ```python
-def _deduplicate(pairs):
-    seen = set()
-    unique = []
-    for pair in pairs:
-        content = pair["instruction"] + "|" + pair["response"]
-        h = hashlib.md5(content.encode()).hexdigest()
-        if h not in seen:
-            seen.add(h)
-            unique.append(pair)
-    return unique
+class HashDeduplicator:
+    def deduplicate(self, pairs):
+        seen = set()
+        unique = []
+        for pair in pairs:
+            content = pair.get("instruction", "") + "|" + pair.get("response", "")
+            h = hashlib.md5(content.encode()).hexdigest()
+            if h not in seen:
+                seen.add(h)
+                unique.append(pair)
+        return unique
 ```
 
 #### System Prompt (train/serve consistency)
@@ -750,7 +776,13 @@ served under the same system prompt it was trained on:
 This keeps the training chat template and the inference chat template aligned;
 a mismatch between them is a common silent cause of quality regression.
 
-This is **exact match** deduplication. Near-duplicate or semantically similar pairs are NOT caught (flagged as a future improvement — see IMPROVEMENTS.md).
+The default `"hash"` backend is **exact-match** deduplication. Near-duplicate
+detection has since shipped: an optional `"near"` deduplicator
+(`NearDuplicateDeduplicator` in `src/backends/dataset_filter.py`) removes
+reworded/paraphrased pairs using token-Jaccard similarity (default threshold
+0.85) over instruction+response. It is opt-in — enable it with
+`APP_DEDUP_BACKEND=near` (the default remains `hash`). Note this is a lexical
+(word-overlap) measure, not embedding-based semantic similarity.
 
 #### ChatML Output Format
 
@@ -868,6 +900,51 @@ Activity: build_dataset
 
 ---
 
+## Data Studio (Guided Synthetic Data Generation)
+
+The **Refine** pipeline above is the automatic path. **Data Studio** is an
+interactive alternative: a guided session that lets a user shape the synthetic
+dataset before committing to a full generation run. It is backed by the
+`data_guides` table (migration `014_data_guides.sql`; migration
+`021_data_guide_system_prompt.sql` later added the optional `system_prompt`
+column) and is tenant-isolated via RLS.
+
+### The session model
+
+A `data_guide` row tracks one guided session per project. Its key columns:
+`task_type`, `status`, `guidance` (free-form instructions), `facets` (proposed
+diversity dimensions, kept/discarded by the user), `preview_samples` (small
+trial batch the user rates), `refinement_history`, `config`, and `dataset_id`
+(the dataset produced by the final generation run). The typical loop is:
+create guide → generate facets → keep/discard facets → generate a preview →
+rate the preview samples → refine guidance → generate the full dataset.
+
+Worker-side generation uses the `APP_DATAGEN_*` backends (facet, pair, refiner,
+faithfulness — all default `llm`) and the faithfulness gate; the final
+`generate` step produces a dataset via the same `build_dataset` activity as the
+Refine pipeline.
+
+### Endpoints
+
+All routes are under `/api/v1`, use Clerk/JWT auth, and require the `Member`
+role for mutations. Long-running steps return `202 Accepted` and run on
+Temporal; the client polls the guide for status. Handlers live in
+`crates/api/src/routes/datagen.rs`.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/projects/{project_id}/data-guide` | Create (or fetch existing) the guide session for a project |
+| GET | `/projects/{project_id}/data-guide` | Get the current guide session for a project |
+| POST | `/data-guides/{id}/facets` | Start facet generation from parsed source documents (202) |
+| PUT | `/data-guides/{id}/facets` | Persist the user's kept/discarded facet selections |
+| POST | `/data-guides/{id}/preview` | Start preview-sample generation from the kept facets (202) |
+| POST | `/data-guides/{id}/rate` | Merge the user's ratings into the stored preview samples |
+| POST | `/data-guides/{id}/refine` | Regenerate guidance text from the rated preview samples (202) |
+| PUT | `/data-guides/{id}/guidance` | Overwrite the free-form guidance text |
+| POST | `/data-guides/{id}/generate` | Start full dataset generation from the finalized guidance + facets (202) |
+
+---
+
 ## Error Handling & Resilience
 
 | Component | Failure Mode | Handling |
@@ -918,15 +995,16 @@ All configurable via environment variables (`APP_` prefix):
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `apps/workers/src/workflows/ingest.py` | 66 | IngestWorkflow — document parsing orchestration |
-| `apps/workers/src/workflows/refine.py` | 88 | RefineWorkflow — chunk → generate → build pipeline |
-| `apps/workers/src/activities/parse_document.py` | 456 | Document parsing with 6 format parsers |
-| `apps/workers/src/activities/chunk_text.py` | 139 | Recursive text chunking with overlap |
-| `apps/workers/src/activities/generate_pairs.py` | 177 | LLM-powered synthetic pair generation |
-| `apps/workers/src/activities/build_dataset.py` | 194 | Quality filtering, dedup, ChatML formatting |
-| `apps/workers/src/s3_paths.py` | 48 | Tenant-scoped S3 path builders |
-| `apps/workers/src/infra.py` | 141 | Infrastructure container (S3, DB, Redis, circuit breaker) |
-| `apps/workers/src/config.py` | 93 | Worker configuration (env vars with `APP_` prefix) |
+| `apps/workers/src/workflows/ingest.py` | ~64 | IngestWorkflow — document parsing orchestration |
+| `apps/workers/src/workflows/refine.py` | ~89 | RefineWorkflow — chunk → generate → build pipeline |
+| `apps/workers/src/activities/parse_document.py` | ~472 | Document parsing with 6 format parsers |
+| `apps/workers/src/activities/chunk_text.py` | ~95 | Recursive text chunking with overlap |
+| `apps/workers/src/activities/generate_pairs.py` | ~340 | LLM-powered synthetic pair generation (provider abstraction, faithfulness gate, checkpointing) |
+| `apps/workers/src/activities/build_dataset.py` | ~160 | Pluggable quality filtering, dedup, ChatML formatting |
+| `apps/workers/src/backends/dataset_filter.py` | ~170 | Filter/dedup backends (heuristic filter, hash + near-dup deduplicators) |
+| `apps/workers/src/s3_paths.py` | ~58 | Tenant-scoped S3 path builders |
+| `apps/workers/src/infra.py` | ~134 | Infrastructure container (S3, DB, Redis, circuit breaker) |
+| `apps/workers/src/config.py` | ~152 | Worker configuration (env vars with `APP_` prefix) |
 
 ---
 

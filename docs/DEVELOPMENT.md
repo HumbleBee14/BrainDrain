@@ -204,8 +204,8 @@ Platform/
 │           │   ├── llm_judge.py         #   LLMJudge Protocol + OpenAICompatibleJudge impl
 │           │   ├── benchmark_source.py  #   BenchmarkSource Protocol + local file impl
 │           │   └── benchmarks/
-│           │       ├── general_benchmark.json   # 200 general capability questions
-│           │       └── safety_prompts.json      # 30 safety evaluation prompts
+│           │       ├── general_benchmark.json   # 196 general capability questions
+│           │       └── safety_prompts.json      # 65 safety evaluation prompts
 │           └── workflows/
 │               ├── ingest.py            #   Upload → Parse documents (implemented)
 │               ├── refine.py            #   Chunk → Generate → Build dataset (implemented)
@@ -558,9 +558,9 @@ Everything that supports the ML engineering work. "Product building" stuff that 
 | LLM Judge | `activities/llm_judge.py` | `LLMJudge` Protocol + `OpenAICompatibleJudge` (unified) |
 | Benchmark source | `activities/benchmark_source.py` | `BenchmarkSource` Protocol for loading test datasets |
 | Domain suite | Validates on held-out data | LLM judge scores accuracy, completeness, faithfulness |
-| General suite | Tests broad capabilities | 200 questions across reasoning, math, coding, knowledge |
+| General suite | Tests broad capabilities | 196 questions across reasoning, math, coding, knowledge |
 | A/B comparison | Base vs fine-tuned blind test | Win rate + 95% Wilson confidence interval |
-| Safety suite | Checks for regression | 30 prompts: harmful requests, jailbreaks, bias |
+| Safety suite | Checks for regression | 65 prompts: harmful requests, jailbreaks, bias |
 | EvaluateWorkflow | `workflows/evaluate.py` | GPU queue, 1hr timeout, judge config passthrough |
 | Rust API layer | Routes + service + repo + DTO | Evaluation CRUD, Temporal dispatch |
 | Frontend | Evaluation page | Score cards, charts, recommendations, run button |
@@ -707,7 +707,7 @@ Most Phase 6 items were completed as part of earlier phases. Remaining items are
 | Iterative training mode | Multi-round SFT with holdout eval + early stopping | **COMPLETE** | Done in Phase 2 (train_iterative.py) |
 | Webhook system | Stripe webhooks + custom notification webhooks | **COMPLETE** | Done in Phase 4 (stripe_webhooks.rs, notification_service.rs) |
 | Multi-model base support | Support Llama, Qwen, Mistral, DeepSeek | **PARTIAL** | Architecture supports any HuggingFace model; only Llama-3.1-8B validated |
-| Advanced evaluation | Custom benchmarks, pluggable suites | **COMPLETE** | Done in Phase 3 (BenchmarkSource protocol, 197-item benchmark, LLMJudge) |
+| Advanced evaluation | Custom benchmarks, pluggable suites | **COMPLETE** | Done in Phase 3 (BenchmarkSource protocol, 196-question general benchmark + 65 safety prompts, LLMJudge) |
 | Load testing | 50+ concurrent users, performance gates | **NOT DONE** | No automated test harness; gates defined in ARCHITECTURE.md only |
 | RunPod integration | Serverless GPU for cost optimization | **NOT DONE** | Documented as future; using Modal currently |
 | API documentation | OpenAPI spec, endpoint reference | **COMPLETE** | utoipa v5 + Swagger UI at `/docs`. 53 endpoints, 80+ schemas, 17 tags. All handlers annotated with `#[utoipa::path]`. |

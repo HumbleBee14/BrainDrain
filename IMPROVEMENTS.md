@@ -73,7 +73,7 @@ One corrupted PDF ruins a batch of 50 docs.
 implicit quantization format.
 
 **Implementation**:
-- Support `Q4_K_M`, `Q5_K_M`, `Q8_0`, `F16` quantization types
+- Support `Q4_K_M`, `Q5_K_M`, `Q6_K`, `Q8_0` quantization types (the four validated by the API; F16 is only the intermediate GGUF, not a selectable export type)
 - Quantization type configurable at export time (UI dropdown + API param)
 - File size estimate shown before export starts
 - Upload quantized GGUF to S3, update `model_exports` with file size + format

@@ -775,7 +775,7 @@ Automatically evaluate fine-tuned models against base models, detect regressions
 │  │     └─ Metrics: accuracy, completeness, faithfulness        │        │
 │  │                                                              │        │
 │  │  2. GENERAL CAPABILITY CHECK (forgetting detection)         │        │
-│  │     ├─ Mini-benchmark suite (~200 questions)                │        │
+│  │     ├─ Mini-benchmark suite (196 questions)                 │        │
 │  │     ├─ Covers: reasoning, math, coding, general knowledge  │        │
 │  │     ├─ Compare: base model vs fine-tuned                    │        │
 │  │     └─ Alert if general score drops >10%                    │        │
@@ -832,7 +832,7 @@ Automatically evaluate fine-tuned models against base models, detect regressions
 |--------|--------|
 | Full evaluation time | <30 minutes (7B model) |
 | Domain eval coverage | 100% of hold-out test set |
-| General capability tests | 200 questions minimum |
+| General capability tests | 196 questions (bundled general_benchmark.json) |
 | Judge agreement rate | >80% with human preference |
 | Report generation | <1 minute after eval completes |
 
