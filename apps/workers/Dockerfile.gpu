@@ -4,14 +4,30 @@
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3-pip curl && rm -rf /var/lib/apt/lists/*
+        python3.11 python3-pip curl git build-essential cmake libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir uv
+
+# llama.cpp: required by the GGUF export activity (convert_hf_to_gguf.py +
+# llama-quantize). export_gguf.py looks for them on PATH or under ~/llama.cpp,
+# so build the quantize binary into ~/llama.cpp/build/bin and keep the convert
+# script at ~/llama.cpp/convert_hf_to_gguf.py. Without this the export always
+# fails at runtime with "convert_hf_to_gguf.py not found".
+RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp.git /root/llama.cpp \
+    && cmake -S /root/llama.cpp -B /root/llama.cpp/build -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /root/llama.cpp/build --config Release -j "$(nproc)" --target llama-quantize
+ENV PATH="/root/llama.cpp/build/bin:$PATH"
 
 WORKDIR /app
 COPY pyproject.toml ./
 RUN uv sync --no-dev --extra ml --extra gpu-cloud
+# The convert script runs under the uv venv's Python (PATH below), so its extra
+# deps must live in that venv. Install only what convert needs on top of the ml
+# stack (torch/transformers are already there) — NOT the full convert
+# requirements file, whose CPU torch pin would clobber the CUDA torch.
+RUN uv pip install --python /app/.venv gguf sentencepiece protobuf
 
 COPY src/ src/
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:/root/llama.cpp/build/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 CMD ["python", "-m", "src.worker"]

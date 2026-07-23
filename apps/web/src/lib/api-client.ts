@@ -185,6 +185,15 @@ export interface ExportDownloadResponse {
   filename: string;
 }
 
+export interface OllamaExportResponse {
+  model_name: string;
+  filename: string;
+  download_url: string;
+  file_size_bytes: number | null;
+  modelfile: string;
+  instructions: string[];
+}
+
 export interface InferenceUsageDay {
   date: string;
   request_count: number;
@@ -738,6 +747,11 @@ export const api = {
 
     download: (token: string, exportId: string) =>
       request<ExportDownloadResponse>(`/api/v1/exports/${exportId}/download`, {
+        token,
+      }),
+
+    ollama: (token: string, exportId: string) =>
+      request<OllamaExportResponse>(`/api/v1/exports/${exportId}/ollama`, {
         token,
       }),
   },

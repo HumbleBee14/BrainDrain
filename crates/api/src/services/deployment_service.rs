@@ -112,7 +112,7 @@ impl DeploymentService {
 
     /// Best-effort lookup of the system prompt for a model via
     /// model → training job → dataset → data guide. Returns "" on any miss.
-    async fn resolve_guide_system_prompt(
+    pub(crate) async fn resolve_guide_system_prompt(
         state: &AppState,
         tenant_id: Uuid,
         model: &Model,

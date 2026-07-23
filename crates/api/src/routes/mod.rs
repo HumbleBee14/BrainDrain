@@ -139,6 +139,7 @@ fn v1_router() -> Router<AppState> {
         exports::create_export,
         exports::list_exports,
         exports::download_export,
+        exports::ollama_export_recipe,
         // API Keys
         api_keys::create_api_key,
         api_keys::list_api_keys,
@@ -244,6 +245,7 @@ fn v1_router() -> Router<AppState> {
         crate::dto::export::ExportRequest,
         crate::dto::export::ExportResponse,
         crate::dto::export::ExportDownloadResponse,
+        crate::dto::export::OllamaExportResponse,
         // API Keys
         crate::dto::api_key::CreateApiKeyRequest,
         crate::dto::api_key::CreateApiKeyResponse,

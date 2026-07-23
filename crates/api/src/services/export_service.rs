@@ -1,8 +1,12 @@
+use platform_storage::ObjectStorage;
 use uuid::Uuid;
 
-use crate::dto::export::{ExportResponse, VALID_QUANT_TYPES};
+use crate::app_state::AppState;
+use crate::dto::export::{ExportResponse, OllamaExportResponse, VALID_QUANT_TYPES};
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{ExportRepository, ModelRepository};
+use crate::services::deployment_service::DeploymentService;
+use crate::services::ollama_modelfile;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 
 /// Business logic for GGUF model export operations.
@@ -158,5 +162,76 @@ impl ExportService {
         );
 
         Ok((url, export.file_size_bytes, filename))
+    }
+
+    /// Build the one-click "run locally with Ollama" recipe for a completed
+    /// export: a presigned GGUF download URL, a Modelfile, and the `ollama`
+    /// commands. The Modelfile carries the base-model family's stop tokens and
+    /// the trained system prompt so local generation matches how the model was
+    /// served.
+    pub async fn ollama_recipe(
+        state: &AppState,
+        tenant_id: Uuid,
+        export_id: Uuid,
+    ) -> AppResult<OllamaExportResponse> {
+        let export = state
+            .export_repo()
+            .get_by_id(tenant_id, export_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Export not found".to_string(),
+            })?;
+
+        if export.status != "completed" {
+            return Err(AppError::BadRequest {
+                message: format!("Export is not ready (status: {})", export.status),
+            });
+        }
+
+        let storage_path = export
+            .storage_path
+            .ok_or(AppError::Internal(anyhow::anyhow!(
+                "Completed export has no storage path"
+            )))?;
+
+        let model = state
+            .model_repo()
+            .get_by_id(tenant_id, export.model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model for this export not found".to_string(),
+            })?;
+
+        // Same system prompt the deploy path serves under (train/serve parity).
+        let system_prompt =
+            DeploymentService::resolve_guide_system_prompt(state, tenant_id, &model).await;
+
+        let download_url = state
+            .storage()
+            .presigned_url(&storage_path, 3600)
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("Failed to generate download URL: {e}"))
+            })?;
+
+        let filename = format!(
+            "model-{}-{}.gguf",
+            &export.model_id.to_string()[..8],
+            export.quant_type
+        );
+        let model_name =
+            ollama_modelfile::model_name(&export.model_id.to_string(), &export.quant_type);
+        let modelfile =
+            ollama_modelfile::build_modelfile(&model.base_model, &filename, &system_prompt);
+        let instructions = ollama_modelfile::build_instructions(&model_name, &filename);
+
+        Ok(OllamaExportResponse {
+            model_name,
+            filename,
+            download_url,
+            file_size_bytes: export.file_size_bytes,
+            modelfile,
+            instructions,
+        })
     }
 }
