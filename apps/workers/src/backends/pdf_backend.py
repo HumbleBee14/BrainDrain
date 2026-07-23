@@ -71,7 +71,7 @@ class PyMuPdfBackend:
 
 
 class DoclingBackend:
-    """PDF extraction using Docling. Install with: pip install braindrain-workers[pdf-ml]
+    """PDF extraction using Docling. Install with: pip install platform-workers[pdf-ml]
 
     Produces richer structure (tables, figures, reading order) at the cost of
     higher CPU/memory usage and a larger install.
@@ -86,7 +86,7 @@ class DoclingBackend:
             from docling.document_converter import DocumentConverter, PdfFormatOption
         except ImportError as e:
             raise ImportError(
-                "Docling is not installed. Run: pip install braindrain-workers[pdf-ml]"
+                "Docling is not installed. Run: pip install platform-workers[pdf-ml]"
             ) from e
 
         pipeline_options = PdfPipelineOptions()

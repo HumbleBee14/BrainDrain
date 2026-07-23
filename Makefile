@@ -37,7 +37,7 @@ dev-workers:
 
 # Generate TypeScript types from Rust (ts-rs)
 typegen:
-	cargo test --workspace export_bindings_ -- --exact && echo "TypeScript types regenerated in apps/web/src/lib/generated/"
+	cargo test --workspace export_bindings_ && echo "TypeScript types regenerated in apps/web/src/lib/generated/"
 
 # Run all tests
 test:
