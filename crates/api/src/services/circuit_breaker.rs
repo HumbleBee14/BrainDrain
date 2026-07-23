@@ -28,8 +28,15 @@ enum CircuitState {
     Open {
         tripped_at: Instant,
     },
-    /// A probe request is in flight. All other requests are rejected.
-    HalfOpen,
+    /// A probe request is in flight. Other requests are rejected until the probe
+    /// resolves. `entered_at` bounds this state: if a probe future is dropped
+    /// (e.g. the client disconnects) before it can report success/failure, the
+    /// breaker would otherwise stay HalfOpen forever and reject all traffic. A
+    /// HalfOpen older than `recovery_timeout` is treated as a stale/abandoned
+    /// probe and a fresh probe is allowed.
+    HalfOpen {
+        entered_at: Instant,
+    },
 }
 
 impl CircuitBreaker {
@@ -63,7 +70,9 @@ impl CircuitBreaker {
                         // Transition to HalfOpen: allow exactly one probe request.
                         // The state is set to HalfOpen while the lock is held, so
                         // concurrent requests will see HalfOpen and be rejected.
-                        *state = CircuitState::HalfOpen;
+                        *state = CircuitState::HalfOpen {
+                            entered_at: Instant::now(),
+                        };
                         tracing::info!("Circuit breaker transitioning to half-open");
                     } else {
                         return Err(AppError::ServiceUnavailable {
@@ -71,11 +80,23 @@ impl CircuitBreaker {
                         });
                     }
                 }
-                CircuitState::HalfOpen => {
-                    // Already probing — reject concurrent requests while probing
-                    return Err(AppError::ServiceUnavailable {
-                        message: "Inference service temporarily unavailable".to_string(),
-                    });
+                CircuitState::HalfOpen { entered_at } => {
+                    if entered_at.elapsed() >= self.recovery_timeout {
+                        // The previous probe never resolved (its future was dropped,
+                        // e.g. client disconnect). Don't stay bricked: start a fresh
+                        // probe rather than rejecting forever.
+                        *state = CircuitState::HalfOpen {
+                            entered_at: Instant::now(),
+                        };
+                        tracing::warn!(
+                            "Circuit breaker half-open probe was abandoned; starting a new probe"
+                        );
+                    } else {
+                        // A probe is genuinely in flight — reject concurrent requests.
+                        return Err(AppError::ServiceUnavailable {
+                            message: "Inference service temporarily unavailable".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -116,7 +137,7 @@ impl CircuitBreaker {
                             };
                         }
                     }
-                    CircuitState::HalfOpen => {
+                    CircuitState::HalfOpen { .. } => {
                         tracing::warn!("Circuit breaker probe failed, returning to open");
                         *state = CircuitState::Open {
                             tripped_at: Instant::now(),
@@ -204,6 +225,47 @@ mod tests {
         // Should transition to half-open and allow probe
         let result = cb.execute(|| async { Ok::<i32, AppError>(42) }).await;
         assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn abandoned_half_open_probe_does_not_brick_breaker() {
+        // Regression: if a probe future is dropped (client disconnect) after the
+        // breaker enters HalfOpen but before it resolves, the breaker must not
+        // stay HalfOpen forever. After recovery_timeout it allows a fresh probe.
+        let cb = CircuitBreaker::new(1, Duration::from_millis(50));
+
+        // Trip to Open.
+        let _ = cb
+            .execute(|| async { Err::<(), _>(AppError::Internal(anyhow::anyhow!("fail"))) })
+            .await;
+
+        // Simulate an abandoned probe: manually put the breaker in HalfOpen with an
+        // old timestamp, as if a prior probe's future had been dropped.
+        {
+            let mut state = cb.state.lock().await;
+            *state = CircuitState::HalfOpen {
+                entered_at: Instant::now() - Duration::from_millis(100),
+            };
+        }
+
+        // A new request must be allowed to probe (not rejected forever).
+        let result = cb.execute(|| async { Ok::<i32, AppError>(7) }).await;
+        assert_eq!(result.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn fresh_half_open_still_rejects_concurrent_requests() {
+        // The escape must not weaken the normal guarantee: a genuinely in-flight
+        // probe (recent HalfOpen) still rejects concurrent requests.
+        let cb = CircuitBreaker::new(1, Duration::from_secs(60));
+        {
+            let mut state = cb.state.lock().await;
+            *state = CircuitState::HalfOpen {
+                entered_at: Instant::now(),
+            };
+        }
+        let result = cb.execute(|| async { Ok::<(), AppError>(()) }).await;
+        assert!(matches!(result, Err(AppError::ServiceUnavailable { .. })));
     }
 
     #[tokio::test]

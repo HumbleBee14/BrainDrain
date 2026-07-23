@@ -50,25 +50,26 @@ pub async fn handle_stripe_webhook(
     let event: serde_json::Value =
         serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Idempotency: deduplicate webhook deliveries using Redis SETNX with 24h TTL.
+    // Idempotency: skip events we have already fully processed. The dedup key is
+    // claimed AFTER successful processing, never before. Claiming before would open
+    // a crash window — if the process died (or the key's DEL failed) after the claim
+    // but before the effect committed, Stripe's retry would be skipped for the TTL
+    // and a paid subscription could silently never activate. Because all handlers
+    // below are idempotent absolute UPDATEs (keyed by tenant/subscription id),
+    // reprocessing a duplicate is harmless, so a post-success marker is sufficient
+    // and never risks losing the effect.
     let event_id = event["id"].as_str().unwrap_or("").to_string();
     let dedup_key = (!event_id.is_empty()).then(|| format!("stripe_event:{event_id}"));
     if let Some(ref key) = dedup_key {
         let mut redis = state.redis();
-        let set_res: redis::RedisResult<Option<String>> = redis::cmd("SET")
-            .arg(key)
-            .arg("1")
-            .arg("NX")
-            .arg("EX")
-            .arg(86400)
-            .query_async(&mut redis)
-            .await;
-        match set_res {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                tracing::debug!(event_id, "Duplicate Stripe event — skipping");
+        let exists: redis::RedisResult<bool> =
+            redis::cmd("EXISTS").arg(key).query_async(&mut redis).await;
+        match exists {
+            Ok(true) => {
+                tracing::debug!(event_id, "Stripe event already processed — skipping");
                 return Ok(StatusCode::OK);
             }
+            Ok(false) => {}
             // Fail open: a Redis outage must not silently drop a billing event.
             Err(e) => tracing::warn!(
                 error = %e,
@@ -90,13 +91,19 @@ pub async fn handle_stripe_webhook(
         }
     };
 
-    // Release the idempotency key on failure so Stripe's retry can reprocess the
-    // event instead of it being permanently skipped for the TTL window.
-    if result.is_err()
+    // Mark the event processed only after the effect has committed. On failure we
+    // deliberately do NOT set the key, so Stripe's retry reprocesses the event.
+    if result.is_ok()
         && let Some(ref key) = dedup_key
     {
         let mut redis = state.redis();
-        let _: redis::RedisResult<i64> = redis::cmd("DEL").arg(key).query_async(&mut redis).await;
+        let _: redis::RedisResult<Option<String>> = redis::cmd("SET")
+            .arg(key)
+            .arg("1")
+            .arg("EX")
+            .arg(86400)
+            .query_async(&mut redis)
+            .await;
     }
 
     result
