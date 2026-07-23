@@ -393,6 +393,8 @@ pub async fn generate_dataset(
     let result = DataGuideService::generate_dataset(
         state.data_guide_repo(),
         state.document_repo(),
+        state.dataset_repo(),
+        state.tenant_repo(),
         state.orchestrator(),
         user.tenant_id,
         guide.project_id,

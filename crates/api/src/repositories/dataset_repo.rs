@@ -86,6 +86,21 @@ impl DatasetRepository for PgDatasetRepo {
         })
     }
 
+    fn sum_pair_count(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let total = sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(SUM(pair_count), 0)::BIGINT FROM datasets WHERE tenant_id = $1",
+            )
+            .bind(tenant_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(total)
+        })
+    }
+
     fn count_by_status(
         &self,
         tenant_id: Uuid,

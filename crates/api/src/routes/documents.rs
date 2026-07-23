@@ -87,6 +87,7 @@ pub async fn upload_document(
 
         let result = DocumentService::upload(
             state.document_repo(),
+            state.tenant_repo(),
             state.storage(),
             user.tenant_id,
             project_id,
