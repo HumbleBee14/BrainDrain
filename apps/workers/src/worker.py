@@ -172,6 +172,25 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
     return cpu_activities, gpu_activities
 
 
+async def _orphan_sweep_loop(infra: InfraContainer, interval_secs: int) -> None:
+    """Periodically cancel Modal GPU calls orphaned by cancelled/reaped jobs.
+
+    Runs only under the Modal provider. Best-effort: a failed sweep is logged
+    and retried next cycle, never crashing the worker.
+    """
+    from src.gpu_provider import cancel_orphaned_gpu_calls
+
+    logger = logging.getLogger("platform.worker")
+    while True:
+        await asyncio.sleep(interval_secs)
+        try:
+            n = await cancel_orphaned_gpu_calls(infra)
+            if n:
+                logger.info("Orphan sweep cancelled %d abandoned Modal GPU call(s)", n)
+        except Exception:
+            logger.warning("Orphaned Modal-call sweep failed", exc_info=True)
+
+
 async def main() -> None:
     settings = WorkerSettings()
 
@@ -244,10 +263,29 @@ async def main() -> None:
         activities=activities,
     )
 
+    # Under the Modal provider, sweep for GPU calls orphaned by cancelled or
+    # reaped jobs so a terminated/reaped run does not keep billing a remote GPU.
+    sweep_task: asyncio.Task | None = None
+    if settings.gpu_provider == "modal" and settings.modal_orphan_sweep_interval_secs > 0:
+        sweep_task = asyncio.create_task(
+            _orphan_sweep_loop(infra, settings.modal_orphan_sweep_interval_secs)
+        )
+        logger.info(
+            "Orphaned Modal-call sweep enabled (every %ds)",
+            settings.modal_orphan_sweep_interval_secs,
+        )
+
     logger.info("Worker started. Waiting for tasks...")
     try:
         await worker.run()
     finally:
+        if sweep_task is not None:
+            sweep_task.cancel()
+            try:
+                await sweep_task
+            except asyncio.CancelledError:
+                pass
+
         from src.infra import close_container
 
         await close_container()

@@ -301,6 +301,106 @@ class LocalGpuProvider:
 _RESERVATION_TABLES = ("training_jobs", "evaluations")
 
 
+def _extract_call_id(stored: str | None) -> str | None:
+    """Return the bare Modal FunctionCall id from a stored reservation value.
+
+    Reservations are stored tagged ``"<function_name>:<call_id>"``; the earliest
+    single-shot-training release stored a bare id. Returns ``None`` for an empty
+    value.
+    """
+    if not stored:
+        return None
+    _tag, sep, call_id = stored.partition(":")
+    return call_id if sep else stored
+
+
+async def _cancel_function_call(fc) -> None:
+    """Cancel a Modal ``FunctionCall``, tolerating sync/async cancel APIs.
+
+    Modal exposes async variants as ``method.aio``; fall back to a plain call
+    (awaiting it if it happens to return a coroutine) so this works across SDK
+    versions.
+    """
+    import inspect
+
+    cancel = getattr(fc, "cancel", None)
+    if cancel is None:
+        return
+    aio = getattr(cancel, "aio", None)
+    if aio is not None:
+        await aio()
+        return
+    result = cancel()
+    if inspect.isawaitable(result):
+        await result
+
+
+# Terminal, abandoned job states whose lingering Modal reservation means a GPU
+# call is still running (and billing) with nothing left to consume its result.
+# A user cancel terminates the workflow -> status 'cancelled'; the reaper marks
+# a stuck job 'failed'. Neither clears modal_call_id, and neither stops the
+# remote call. Completed rows are excluded — their call has already finished.
+_ORPHAN_SWEEP_QUERY = """
+    SELECT id, tenant_id, modal_call_id, 'training_jobs' AS tbl
+    FROM training_jobs
+    WHERE status IN ('cancelled', 'failed') AND modal_call_id IS NOT NULL
+    UNION ALL
+    SELECT id, tenant_id, modal_call_id, 'evaluations' AS tbl
+    FROM evaluations
+    WHERE status = 'failed' AND modal_call_id IS NOT NULL
+"""
+
+_ORPHAN_CLEAR_SQL = {
+    "training_jobs": (
+        "UPDATE training_jobs SET modal_call_id = NULL WHERE id = $1 AND tenant_id = $2"
+    ),
+    "evaluations": ("UPDATE evaluations SET modal_call_id = NULL WHERE id = $1 AND tenant_id = $2"),
+}
+
+
+async def cancel_orphaned_gpu_calls(infra) -> int:
+    """Cancel Modal GPU calls left running by cancelled or reaped jobs.
+
+    A user cancel terminates the Temporal workflow and the reaper marks a stuck
+    job failed — but neither stops the remote Modal ``FunctionCall``, so the GPU
+    keeps running and billing until it finishes on its own. This reconciliation
+    finds rows in a terminal-but-abandoned state that still carry a
+    ``modal_call_id``, cancels the call, and clears the reservation.
+
+    Safe by construction: only rows whose status is already terminal are
+    touched, so an actively-running job is never cancelled, and this never
+    depends on Temporal cancellation delivery. Cancelling an already-finished
+    call is a harmless no-op. Idempotent — clearing the reservation stops the
+    row from being reprocessed on the next sweep.
+
+    Returns the number of Modal calls cancelled.
+    """
+    import modal
+
+    db = infra.db
+    rows = await db.fetch(_ORPHAN_SWEEP_QUERY)
+    cancelled = 0
+    for row in rows:
+        call_id = _extract_call_id(row["modal_call_id"])
+        if call_id:
+            try:
+                fc = modal.FunctionCall.from_id(call_id)
+                await _cancel_function_call(fc)
+                cancelled += 1
+                logger.info(
+                    "Cancelled orphaned Modal call %s for %s %s",
+                    call_id,
+                    row["tbl"],
+                    str(row["id"])[:8],
+                )
+            except Exception:
+                # Leave the reservation in place so a later sweep retries it.
+                logger.warning("Failed to cancel orphaned Modal call %s", call_id, exc_info=True)
+                continue
+        await db.execute(_ORPHAN_CLEAR_SQL[row["tbl"]], row["id"], row["tenant_id"])
+    return cancelled
+
+
 class ModalGpuProvider:
     """Run GPU work on Modal serverless GPUs via a pre-deployed app.
 
