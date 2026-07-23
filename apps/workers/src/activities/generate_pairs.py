@@ -9,6 +9,7 @@ quality-gate (FaithfulnessScorer) are provided via src.datagen.registry.
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -16,6 +17,7 @@ import httpx
 from temporalio import activity
 
 from src import s3_paths
+from src.activities.pair_checkpoint import Checkpoint, NullCheckpoint, PairCheckpoint
 from src.backends.llm_provider import get as get_llm_provider
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, PairGenerator
@@ -86,38 +88,76 @@ async def apply_faithfulness_gate(
     return kept, dropped
 
 
-async def generate_pairs_for_chunks(
+def _finished_record(pair: GeneratedPair, chunk: dict, task_type: str) -> dict:
+    """Serializable pair record carrying its source chunk's provenance.
+
+    doc/chunk ids are attached at generation time (not via a later id()-keyed
+    lookup) so a record survives being checkpointed to S3 and reloaded on retry.
+    """
+    return {
+        "id": str(uuid.uuid4()),
+        "doc_id": chunk.get("doc_id"),
+        "chunk_id": chunk.get("chunk_id"),
+        "task_type": task_type,
+        "instruction": pair.prompt,
+        "response": pair.response,
+        "source_text": pair.source_text[:500],
+    }
+
+
+async def generate_pairs_with_checkpoint(
     chunks: list[dict],
     facets: list[Facet],
     pair_generator: PairGenerator,
+    scorer: FaithfulnessScorer | None,
+    checkpoint: Checkpoint,
     *,
     task_type: str,
     guidance: str,
     pairs_per_chunk: int,
-) -> tuple[list[GeneratedPair], dict[int, tuple[str | None, str | None]], int]:
-    """Generate pairs for every eligible chunk, tolerating transient per-chunk errors.
+    faithfulness_enabled: bool,
+) -> tuple[list[dict], int, int]:
+    """Generate finished pair records chunk-by-chunk, resuming from `checkpoint`.
 
-    A single chunk hitting a timeout, rate limit, or transport error must not
-    discard chunks that already succeeded. Only `TRANSIENT_GENERATION_ERRORS`
-    are swallowed here; a `ValueError` from the generator (malformed/missing
-    LLM output) indicates a real bug and always propagates.
+    Each chunk is generated, faithfulness-gated, and its surviving records are
+    persisted to the checkpoint before the next chunk starts. On retry, chunks
+    already in the checkpoint are loaded and skipped, so a mid-run failure does
+    not discard completed work. Faithfulness scoring is per-pair against its own
+    source text, so applying the gate per chunk is equivalent to a single batch
+    pass over all pairs.
 
-    Raises if every attempted chunk failed and no pairs were produced — that's
-    a real failure, not an empty-input case.
+    A single chunk hitting a timeout, rate limit, or transport error is tolerated
+    (`TRANSIENT_GENERATION_ERRORS`) and left un-checkpointed so a retry
+    regenerates it; a `ValueError` from the generator (malformed/missing LLM
+    output) indicates a real bug and always propagates.
+
+    Returns `(finished_records, dropped_unfaithful, failed_chunks)`. Raises if
+    every attempted chunk failed transiently and nothing — checkpointed or new —
+    was produced.
     """
-    generated: list[GeneratedPair] = []
-    pair_meta: dict[int, tuple[str | None, str | None]] = {}
+    completed = checkpoint.load()
+    records: list[dict] = []
     avoid: list[str] = []
+    for i in sorted(completed):
+        recs = completed[i]
+        records.extend(recs)
+        avoid.extend(r["instruction"] for r in recs)
+
+    dropped_unfaithful = 0
     failed_chunks = 0
 
     for i, chunk in enumerate(chunks):
+        if i in completed:
+            continue
         activity.heartbeat()
+
         chunk_text = chunk.get("text", "")
         if len(chunk_text) < 50:
+            # Nothing to generate, but mark the chunk done so a retry skips it.
+            checkpoint.save(i, [])
             continue
 
         facet = facets[i % len(facets)] if facets else None
-
         try:
             pairs = await pair_generator.generate(
                 chunk_text=chunk_text[:3000],
@@ -132,18 +172,21 @@ async def generate_pairs_for_chunks(
             activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
             continue
 
-        for pair in pairs:
-            pair_meta[id(pair)] = (chunk.get("doc_id"), chunk.get("chunk_id"))
-        generated.extend(pairs)
-        avoid.extend(p.prompt for p in pairs)
+        kept, dropped = await apply_faithfulness_gate(pairs, scorer, enabled=faithfulness_enabled)
+        dropped_unfaithful += dropped
 
-    if failed_chunks > 0 and not generated:
+        recs = [_finished_record(pair, chunk, task_type) for pair in kept]
+        checkpoint.save(i, recs)
+        records.extend(recs)
+        avoid.extend(r["instruction"] for r in recs)
+
+    if failed_chunks > 0 and not records:
         raise RuntimeError(
             f"All {failed_chunks} chunk(s) failed synthetic pair generation due to "
             "transient errors; refusing to return an empty dataset."
         )
 
-    return generated, pair_meta, failed_chunks
+    return records, dropped_unfaithful, failed_chunks
 
 
 class GeneratePairsActivity:
@@ -194,13 +237,13 @@ class GeneratePairsActivity:
 
         provider = get_llm_provider(settings.llm_provider_backend)
 
-        # Track source chunk metadata per pair by identity — apply_faithfulness_gate
-        # operates on plain GeneratedPair objects, so doc/chunk ids ride alongside
-        # rather than through the gate itself.
         # Only user-kept facets steer generation; a discarded facet must not
         # leak back in via a stale `input.facets` payload. Missing `keep`
         # defaults to kept (matches the DTO default on the Rust side).
         facets = [Facet(**f) for f in input.facets if f.get("keep", True)] if input.facets else []
+
+        run_key = self._run_key()
+        checkpoint = self._build_checkpoint(input, run_key)
 
         async with httpx.AsyncClient(timeout=120.0) as http:
 
@@ -227,47 +270,36 @@ class GeneratePairsActivity:
             scorer = get_faithfulness_scorer(settings, make_llm_call(settings.judge_temperature))
 
             pairs_per_chunk = clamp_pairs_per_chunk(input.pairs_per_chunk)
-            generated, pair_meta, failed_chunks = await generate_pairs_for_chunks(
+            records, dropped_unfaithful, failed_chunks = await generate_pairs_with_checkpoint(
                 chunks,
                 facets,
                 pair_generator,
+                scorer,
+                checkpoint,
                 task_type=input.task_type,
                 guidance=input.guidance,
                 pairs_per_chunk=pairs_per_chunk,
+                faithfulness_enabled=settings.faithfulness_gate_enabled,
             )
 
-        kept, dropped_unfaithful = await apply_faithfulness_gate(
-            generated, scorer, enabled=settings.faithfulness_gate_enabled
-        )
-
         activity.logger.info(
-            "Pair generation: generated=%d dropped_unfaithful=%d failed_chunks=%d chunks=%d",
-            len(generated),
+            "Pair generation: kept=%d dropped_unfaithful=%d failed_chunks=%d chunks=%d",
+            len(records),
             dropped_unfaithful,
             failed_chunks,
             len(chunks),
         )
 
-        if not kept:
+        if not records:
+            self._clear_checkpoint(checkpoint)
             return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
 
-        all_pairs = [
-            {
-                "id": str(uuid.uuid4()),
-                "doc_id": pair_meta[id(pair)][0],
-                "chunk_id": pair_meta[id(pair)][1],
-                "task_type": input.task_type,
-                "instruction": pair.prompt,
-                "response": pair.response,
-                "source_text": pair.source_text[:500],
-            }
-            for pair in kept
-        ]
-
-        # Upload pairs as JSONL
-        batch_id = str(uuid.uuid4())
+        # A stable batch id makes the final write idempotent: a crash after the
+        # last chunk but before this write is retried to the same key rather than
+        # orphaning a partial object.
+        batch_id = run_key or str(uuid.uuid4())
         pairs_key = s3_paths.pairs_path(input.tenant_id, input.project_id, batch_id)
-        lines = [json.dumps(p, ensure_ascii=False) for p in all_pairs]
+        lines = [json.dumps(p, ensure_ascii=False) for p in records]
         s3.put_object(
             Bucket=bucket,
             Key=pairs_key,
@@ -275,4 +307,34 @@ class GeneratePairsActivity:
             ContentType="application/jsonl",
         )
 
-        return GenerateSyntheticPairsOutput(pair_count=len(all_pairs), storage_path=pairs_key)
+        self._clear_checkpoint(checkpoint)
+        return GenerateSyntheticPairsOutput(pair_count=len(records), storage_path=pairs_key)
+
+    def _run_key(self) -> str:
+        """Stable-across-retries, unique-across-executions key for this run.
+
+        Temporal keeps workflow-run and activity ids constant across retry
+        attempts, so they identify a single logical execution. Returns "" when no
+        activity context is available (e.g. direct unit calls), which disables
+        checkpointing rather than risking a colliding key.
+        """
+        try:
+            info = activity.info()
+            raw = f"{info.workflow_run_id}-{info.activity_id}"
+        except Exception:
+            return ""
+        return re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+
+    def _build_checkpoint(self, input: GenerateSyntheticPairsInput, run_key: str) -> Checkpoint:
+        if not self.infra.settings.pair_checkpoint_enabled or not run_key:
+            return NullCheckpoint()
+        prefix = s3_paths.pairs_checkpoint_prefix(input.tenant_id, input.project_id, run_key)
+        return PairCheckpoint(self.infra.s3, self.infra.s3_bucket, prefix)
+
+    def _clear_checkpoint(self, checkpoint: Checkpoint) -> None:
+        try:
+            checkpoint.clear()
+        except Exception as exc:
+            activity.logger.warning(
+                "Failed to clear pair checkpoint; orphaned objects may remain: %s", exc
+            )

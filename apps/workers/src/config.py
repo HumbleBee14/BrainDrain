@@ -80,6 +80,10 @@ class WorkerSettings(BaseSettings):
     # (pair, source) inputs yield a stable verdict instead of drifting.
     generation_temperature: float = 0.7
     judge_temperature: float = 0.0
+    # Persist each chunk's finished pairs to S3 as it completes so a mid-run
+    # failure resumes from the last checkpoint instead of regenerating every
+    # chunk. Disable only if the extra per-chunk writes are undesirable.
+    pair_checkpoint_enabled: bool = True
 
     # Logging
     log_level: str = "INFO"
