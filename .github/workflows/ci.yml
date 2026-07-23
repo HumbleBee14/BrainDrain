@@ -11,9 +11,54 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
+  # ── Detect which parts of the monorepo changed ──
+  # Each job below runs only when files it cares about changed. Cross-cutting
+  # guards are deliberately wired into multiple filters:
+  #   - generated TypeScript feeds BOTH the Rust typegen-drift check and the
+  #     frontend type-check, so it triggers `rust` and `frontend`.
+  #   - the Rust→Python constant sync reads crates/shared/{constants,enums}.rs,
+  #     so those trigger `python`.
+  # Any change to this workflow runs everything, so CI changes test themselves.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'apps/web/src/lib/generated/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'apps/web/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'apps/workers/**'
+              - 'scripts/sync_constants.py'
+              - 'crates/shared/src/constants.rs'
+              - 'crates/shared/src/enums.rs'
+              - '.github/workflows/ci.yml'
+
   # ── Rust checks ──
   rust:
     name: Rust (clippy + test)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
 
     services:
@@ -66,6 +111,8 @@ jobs:
   # ── Frontend checks ──
   frontend:
     name: Frontend (lint + type-check)
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -95,6 +142,8 @@ jobs:
   # ── Python checks ──
   python:
     name: Python (ruff + type-check)
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
