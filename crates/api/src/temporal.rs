@@ -174,6 +174,16 @@ pub trait WorkflowOrchestrator: Send + Sync {
         &self,
         workflow_id: &str,
     ) -> BoxFuture<'_, Result<WorkflowStatus, OrchestratorError>>;
+
+    /// Terminate a running workflow. Terminate (not cancel) is immediate — the
+    /// worker activity is killed without a chance to run cleanup, so the caller
+    /// is responsible for the terminal DB state and billing. A workflow that is
+    /// already gone (404) is treated as success.
+    fn terminate_workflow(
+        &self,
+        workflow_id: &str,
+        reason: &str,
+    ) -> BoxFuture<'_, Result<(), OrchestratorError>>;
 }
 
 /// Temporal implementation of the WorkflowOrchestrator trait.
@@ -687,6 +697,43 @@ impl WorkflowOrchestrator for TemporalClient {
                 run_id,
                 status: wf_status,
             })
+        })
+    }
+
+    fn terminate_workflow(
+        &self,
+        workflow_id: &str,
+        reason: &str,
+    ) -> BoxFuture<'_, Result<(), OrchestratorError>> {
+        let workflow_id = workflow_id.to_string();
+        let reason = reason.to_string();
+        Box::pin(async move {
+            let url = format!(
+                "{}/api/v1/namespaces/{}/workflows/{}/terminate",
+                self.base_url, self.namespace, workflow_id
+            );
+
+            let resp = self
+                .http
+                .post(&url)
+                .json(&serde_json::json!({ "reason": reason }))
+                .send()
+                .await?;
+
+            let status = resp.status();
+            // Already gone → nothing to terminate; treat as success.
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Ok(());
+            }
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(OrchestratorError::Api {
+                    status: status.as_u16(),
+                    body,
+                });
+            }
+
+            Ok(())
         })
     }
 }

@@ -274,7 +274,14 @@ pub async fn cancel_training_job(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<TrainingJobResponse>> {
     require_role(&user, TeamRole::Member)?;
-    let job = TrainingJobService::cancel(state.training_job_repo(), user.tenant_id, id).await?;
+    let job = TrainingJobService::cancel(
+        state.training_job_repo(),
+        state.tenant_repo(),
+        state.orchestrator(),
+        user.tenant_id,
+        id,
+    )
+    .await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
