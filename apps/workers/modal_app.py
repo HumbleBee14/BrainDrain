@@ -15,8 +15,7 @@ single deployed function serves every gpu_class.
 import modal
 
 # Base deps (temporalio/asyncpg/redis/boto3/httpx/pydantic*, needed transitively
-# at import time — see comment below) plus the pyproject [ml] extra minus
-# distilabel (data-generation only, not used by remote training). This is NOT
+# at import time — see comment below) plus the pyproject [ml] extra. This is NOT
 # a literal mirror of either dependency group — see docs/CLOUD_GPU_TRAINING.md
 # §8. Modal builds this image on its own infra.
 image = (

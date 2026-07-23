@@ -80,7 +80,7 @@ Partitions are created automatically:
 | **Purpose** | Durability / transport | Reporting / analytics |
 | **Who writes** | API handlers | Relay worker only |
 | **Who reads** | Relay worker only | Dashboard, billing API, admin |
-| **Retention** | Not auto-pruned (see note below) | Permanent (partitioned) |
+| **Retention** | Delivered rows pruned after `billing_outbox_retention_days` (default 30) | Permanent (partitioned) |
 | **Partitioned** | No | Yes (monthly) |
 | **Indexes** | Pending rows, delivered rows | Tenant + date, operation type |
 
@@ -90,13 +90,11 @@ Separating write surface from read surface means:
 - If the ledger has issues (missing partition, index bloat), the outbox buffers safely
 - The relay delivers rows asynchronously in batches of up to 500, decoupling request handling from ledger writes
 
-> **Note — outbox pruning is not currently automated.** A `cleanup_delivered(retention_days)`
-> function exists in `services/billing_outbox.rs`, but it is marked `#[allow(dead_code)]`
-> and is not wired into any scheduler or startup task. Delivered outbox rows
-> (`delivered_at IS NOT NULL`) are therefore **not** pruned automatically today —
-> they accumulate until pruned manually. This is a known limitation; automating
-> the cleanup is future work. Until then, either invoke the cleanup path manually
-> or run a periodic `DELETE FROM billing_outbox WHERE delivered_at IS NOT NULL AND delivered_at < NOW() - INTERVAL '<n> days'`.
+> **Outbox pruning.** The relay loop periodically calls `cleanup_delivered(retention_days)`
+> (`services/billing_outbox.rs`), deleting outbox rows whose `delivered_at` is older
+> than `billing_outbox_retention_days` (default **30**; set to `0` to disable). Only
+> already-delivered buffer rows are removed — the ledger keeps the permanent record —
+> so the outbox table stays bounded without operator intervention.
 
 ---
 
