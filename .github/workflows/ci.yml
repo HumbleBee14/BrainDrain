@@ -54,6 +54,15 @@ jobs:
       - name: Run tests
         run: cargo test --all
 
+      # `cargo test --all` runs the ts-rs export tests, which (re)write the
+      # generated TypeScript into apps/web/src/lib/generated. If a DTO changed
+      # without `make typegen` being run and committed, those files now differ
+      # from what's checked in — fail so stale bindings never reach main.
+      - name: Check generated TypeScript types are in sync
+        run: |
+          git diff --exit-code apps/web/src/lib/generated \
+            || { echo "::error::Generated TypeScript types are stale. Run 'make typegen' and commit the result."; exit 1; }
+
   # ── Frontend checks ──
   frontend:
     name: Frontend (lint + type-check)
