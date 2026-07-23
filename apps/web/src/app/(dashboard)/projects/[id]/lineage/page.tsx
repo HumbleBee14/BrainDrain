@@ -9,6 +9,7 @@ import { useDatasets } from "@/hooks/use-datasets";
 import { useTrainingJobs } from "@/hooks/use-training";
 import { useModels } from "@/hooks/use-models";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { ErrorState } from "@/components/error-state";
 import type {
   Document,
   Dataset,
@@ -131,10 +132,32 @@ function StageHeader({
 export default function LineagePage() {
   const params = useParams<{ id: string }>();
   const { data: project } = useProject(params.id);
-  const { data: docsData } = useDocuments(params.id, 0, 100);
-  const { data: datasetsData } = useDatasets(params.id);
-  const { data: jobsData } = useTrainingJobs(params.id);
-  const { data: modelsData } = useModels(params.id, 0, 50);
+  const docsQuery = useDocuments(params.id, 0, 100);
+  const datasetsQuery = useDatasets(params.id);
+  const jobsQuery = useTrainingJobs(params.id);
+  const modelsQuery = useModels(params.id, 0, 50);
+
+  const { data: docsData } = docsQuery;
+  const { data: datasetsData } = datasetsQuery;
+  const { data: jobsData } = jobsQuery;
+  const { data: modelsData } = modelsQuery;
+
+  const isError =
+    docsQuery.isError ||
+    datasetsQuery.isError ||
+    jobsQuery.isError ||
+    modelsQuery.isError;
+  const isFetching =
+    docsQuery.isFetching ||
+    datasetsQuery.isFetching ||
+    jobsQuery.isFetching ||
+    modelsQuery.isFetching;
+  const refetchAll = () => {
+    docsQuery.refetch();
+    datasetsQuery.refetch();
+    jobsQuery.refetch();
+    modelsQuery.refetch();
+  };
 
   const documents = useMemo(() => docsData?.data ?? [], [docsData?.data]);
   const datasets = useMemo(() => datasetsData?.data ?? [], [datasetsData?.data]);
@@ -146,7 +169,21 @@ export default function LineagePage() {
     [documents, datasets, jobs, models],
   );
 
-  const isLoading = !docsData || !datasetsData || !jobsData || !modelsData;
+  const isLoading =
+    !isError && (!docsData || !datasetsData || !jobsData || !modelsData);
+
+  if (isError) {
+    return (
+      <div className="mt-6">
+        <ErrorState
+          title="Couldn't load lineage data"
+          message="One or more parts of the pipeline failed to load. Your data is safe — please try again."
+          onRetry={refetchAll}
+          isRetrying={isFetching}
+        />
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

@@ -219,6 +219,53 @@ export class ApiClientError extends Error {
   }
 }
 
+/**
+ * Parses an error response body into the ApiError envelope.
+ *
+ * Not every error response is JSON: a text/plain 400 from the API, or an HTML
+ * 502 from a proxy/load balancer, would make `res.json()` throw a SyntaxError
+ * that masks the real HTTP error and surfaces as a confusing toast. Guard on
+ * the Content-Type header — only parse JSON when the body actually is JSON —
+ * and otherwise fall back to the raw text / status line. Genuine JSON error
+ * envelopes keep their original shape and behavior.
+ */
+async function parseErrorBody(res: Response): Promise<ApiError> {
+  const contentType = res.headers.get("content-type") ?? "";
+  const fallbackMessage =
+    res.statusText || `Request failed with status ${res.status}`;
+
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = (await res.json()) as Partial<ApiError> | null;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        parsed.error &&
+        typeof parsed.error.message === "string"
+      ) {
+        return parsed as ApiError;
+      }
+    } catch {
+      // Claimed to be JSON but failed to parse — fall through to status line.
+    }
+    return { error: { code: "http_error", message: fallbackMessage } };
+  }
+
+  // Non-JSON body (text/plain, HTML from a proxy, empty, …).
+  if (contentType.includes("text/plain")) {
+    try {
+      const text = (await res.text()).trim();
+      if (text) {
+        return { error: { code: "http_error", message: text.slice(0, 500) } };
+      }
+    } catch {
+      // Body unavailable — fall through to the status line.
+    }
+  }
+
+  return { error: { code: "http_error", message: fallbackMessage } };
+}
+
 function isRetryable(error: unknown): boolean {
   if (error instanceof ApiClientError) {
     return error.status >= 500;
@@ -311,13 +358,25 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
+  // Idempotency for mutating requests: a stable key lets the backend's
+  // idempotency middleware dedupe retries (fetchWithRetry may replay 5xx /
+  // network failures) so a single user action never mutates state twice.
+  // The key is generated once per request() call and reused across retries.
+  const method = (fetchOptions.method ?? "GET").toUpperCase();
+  if (
+    (method === "POST" || method === "PUT" || method === "PATCH") &&
+    !headers["Idempotency-Key"]
+  ) {
+    headers["Idempotency-Key"] = crypto.randomUUID();
+  }
+
   const res = await fetchWithRetry(`${API_URL}${path}`, {
     ...fetchOptions,
     headers,
   });
 
   if (!res.ok) {
-    const body = (await res.json()) as ApiError;
+    const body = await parseErrorBody(res);
     throw new ApiClientError(res.status, body);
   }
 
@@ -337,12 +396,15 @@ async function uploadRequest(
 ): Promise<UploadResponse[]> {
   const res = await fetchWithRetry(`${API_URL}${path}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Idempotency-Key": crypto.randomUUID(),
+    },
     body: formData,
   });
 
   if (!res.ok) {
-    const body = (await res.json()) as ApiError;
+    const body = await parseErrorBody(res);
     throw new ApiClientError(res.status, body);
   }
 
