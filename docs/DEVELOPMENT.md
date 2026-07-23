@@ -293,6 +293,7 @@ Platform/
 - **TrainingEngine Protocol** — Unsloth is swappable for any ML backend (PEFT, axolotl, etc.)
 - **Multi-tenancy: repo + RLS** — every query requires `tenant_id` (primary isolation), with PostgreSQL Row-Level Security as an enforced second layer. See "Database roles & tenant isolation" below.
 - **Platform admin** — infrastructure/admin endpoints (e.g. the inference-instance fleet) require a platform admin, not a tenant `Owner`. Grant via the `PLATFORM_ADMIN_USER_IDS` (JWT `sub`) / `PLATFORM_ADMIN_EMAILS` allowlists; both empty = deny-all.
+- **Pluggable email & billing** — `EmailProvider` (SMTP, via `SMTP_*`) and `BillingProvider` (Stripe, via `STRIPE_*`) sit behind traits; a provider is used when configured, otherwise an honest no-op that returns errors instead of faking success. Any SMTP provider works (Resend/SES/Brevo/SendGrid — no self-hosted mail server); email deliveries fail visibly when SMTP is unset.
 - **Dual auth** — Clerk JWT for platform users, API keys for model consumers (separate extractors)
 - **Dev token auth** — `dev_{tenant_uuid}_{user_id}` format for local development without Clerk
 - **Soft deletes** — projects use `deleted_at` instead of hard delete

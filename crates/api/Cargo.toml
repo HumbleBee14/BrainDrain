@@ -54,6 +54,9 @@ subtle = { workspace = true }
 # Async traits
 async-trait = { workspace = true }
 
+# Email (SMTP)
+lettre = { workspace = true }
+
 # Utilities
 bytes = { workspace = true }
 futures = { workspace = true }

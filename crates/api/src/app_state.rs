@@ -33,6 +33,7 @@ use crate::services::billing_outbox::BillingOutboxRelay;
 use crate::services::billing_provider::BillingProvider;
 use crate::services::circuit_breaker::CircuitBreaker;
 use crate::services::delivery_worker::DeliveryWorker;
+use crate::services::email_provider::EmailProvider;
 use crate::services::feature_flags::{
     FeatureFlags, FlagContext, INFERENCE_BACKEND_TGI_ENABLED,
     NOTIFICATIONS_DELIVERY_WORKER_ENABLED, UnleashPollerHandle, build_feature_flags_async,
@@ -40,6 +41,7 @@ use crate::services::feature_flags::{
 use crate::services::inference_backend::{
     InferenceBackend, build_backend, build_backend_for_instance,
 };
+use crate::services::smtp_email::{NoOpEmailProvider, SmtpEmailProvider};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
 
@@ -85,6 +87,7 @@ struct AppStateInner {
     pub notification_repo: Arc<dyn NotificationRepository>,
     pub tenant_repo: Arc<dyn TenantRepository>,
     pub billing_provider: Arc<dyn BillingProvider>,
+    pub email_provider: Arc<dyn EmailProvider>,
     pub inference_backend: Arc<dyn InferenceBackend>,
     /// Cached backends for registered inference instances, keyed by base_url.
     /// Ensures circuit breakers accumulate state across requests to the same instance.
@@ -341,6 +344,38 @@ impl AppState {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build webhook HTTP client: {e}"))?;
 
+        // Email provider: SMTP when configured, else an honest no-op.
+        let email_provider: Arc<dyn EmailProvider> = match (
+            config.smtp_host.as_deref().filter(|s| !s.is_empty()),
+            config.smtp_username.clone().filter(|s| !s.is_empty()),
+            config.smtp_password.clone().filter(|s| !s.is_empty()),
+            config.email_from.as_deref().filter(|s| !s.is_empty()),
+        ) {
+            (Some(host), Some(username), Some(password), Some(from)) => {
+                let provider =
+                    SmtpEmailProvider::new(host, config.smtp_port, username, password, from)
+                        .map_err(|e| anyhow::anyhow!("SMTP email provider setup failed: {e}"))?;
+                tracing::info!(
+                    host,
+                    port = config.smtp_port,
+                    "SMTP email provider configured"
+                );
+                Arc::new(provider) as Arc<dyn EmailProvider>
+            }
+            _ => {
+                if config.smtp_host.as_deref().is_some_and(|s| !s.is_empty()) {
+                    tracing::warn!(
+                        "SMTP partially configured — need SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_FROM; email disabled"
+                    );
+                } else {
+                    tracing::warn!(
+                        "SMTP not configured — email notifications disabled (email deliveries will fail visibly)"
+                    );
+                }
+                Arc::new(NoOpEmailProvider) as Arc<dyn EmailProvider>
+            }
+        };
+
         // Notification delivery worker (configurable poll interval) {Current: polls every 10s for pending webhook deliveries)
         let delivery_worker = if feature_flags.bool_variation(
             NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
@@ -350,6 +385,7 @@ impl AppState {
             Arc::new(DeliveryWorker::new(
                 Arc::clone(&notification_repo),
                 webhook_http_client,
+                Arc::clone(&email_provider),
                 Duration::from_secs(config.delivery_poll_interval_secs),
             ))
         } else {
@@ -392,6 +428,7 @@ impl AppState {
                 notification_repo,
                 tenant_repo,
                 billing_provider,
+                email_provider,
                 inference_backend,
                 instance_backend_cache: std::sync::RwLock::new(std::collections::HashMap::new()),
                 feature_flags,
@@ -508,6 +545,11 @@ impl AppState {
 
     pub fn billing_provider(&self) -> &dyn BillingProvider {
         &*self.inner.billing_provider
+    }
+
+    #[allow(dead_code)] // Available for direct sends (invites, etc.); delivery worker holds its own handle.
+    pub fn email_provider(&self) -> &dyn EmailProvider {
+        &*self.inner.email_provider
     }
 
     pub fn inference_backend(&self) -> &dyn InferenceBackend {
