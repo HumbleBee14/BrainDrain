@@ -342,7 +342,7 @@ class DomainSuite:
             prompt_msgs = messages[:-1]
             expected = messages[-1].get("content", "")
 
-            prompt_text = _format_prompt(prompt_msgs)
+            prompt_text = _format_prompt(tok_ft, prompt_msgs)
             generated = _generate(model_ft, tok_ft, prompt_text)
 
             rubric = judge.score_domain(prompt_text, generated, expected)
@@ -408,8 +408,12 @@ class GeneralCapabilitySuite:
             qtype = item.get("type", "open_ended")
             category_total[cat] = category_total.get(cat, 0) + 1
 
-            ft_answer = _generate(model_ft, tok_ft, question, max_new_tokens=200)
-            base_answer = _generate(model_base, tok_base, question, max_new_tokens=200)
+            ft_answer = _generate(
+                model_ft, tok_ft, _as_user_prompt(tok_ft, question), max_new_tokens=200
+            )
+            base_answer = _generate(
+                model_base, tok_base, _as_user_prompt(tok_base, question), max_new_tokens=200
+            )
 
             ft_ok = _check_answer(ft_answer, expected, qtype, judge)
             base_ok = _check_answer(base_answer, expected, qtype, judge)
@@ -491,7 +495,7 @@ class ABComparisonSuite:
                 continue
 
             prompt_msgs = messages[:-1]
-            prompt_text = _format_prompt(prompt_msgs)
+            prompt_text = _format_prompt(tok_ft, prompt_msgs)
 
             ft_response = _generate(model_ft, tok_ft, prompt_text)
             base_response = _generate(model_base, tok_base, prompt_text)
@@ -565,8 +569,12 @@ class SafetySuite:
         for item in prompts:
             prompt = item["prompt"]
 
-            ft_response = _generate(model_ft, tok_ft, prompt, max_new_tokens=300)
-            base_response = _generate(model_base, tok_base, prompt, max_new_tokens=300)
+            ft_response = _generate(
+                model_ft, tok_ft, _as_user_prompt(tok_ft, prompt), max_new_tokens=300
+            )
+            base_response = _generate(
+                model_base, tok_base, _as_user_prompt(tok_base, prompt), max_new_tokens=300
+            )
 
             ft_is_refusal = _classify_refusal(ft_response)
             base_is_refusal = _classify_refusal(base_response)
@@ -624,15 +632,28 @@ def _generate(model, tokenizer, prompt: str, max_new_tokens: int = 512) -> str:
     return _get_model_inference().generate(model, tokenizer, prompt, max_new_tokens)
 
 
-def _format_prompt(messages: list[dict]) -> str:
-    """Format messages as a prompt string."""
-    parts = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-    parts.append("<|im_start|>assistant\n")
-    return "\n".join(parts)
+def _format_prompt(tokenizer, messages: list[dict]) -> str:
+    """Format messages as a generation prompt using the model's chat template.
+
+    Evaluation must format prompts exactly as the serving backend does, so it
+    measures the model as it is actually deployed. Uses `apply_chat_template`
+    (via `chat_template.render_chat`) with the generation marker appended,
+    replacing the hardcoded ChatML that only matched Qwen and prevented eval
+    from catching train/serve skew on every other model.
+    """
+    from src.activities.chat_template import render_chat
+
+    return render_chat(tokenizer, messages, add_generation_prompt=True)
+
+
+def _as_user_prompt(tokenizer, question: str) -> str:
+    """Format a bare question as a single-user-turn generation prompt.
+
+    Benchmark suites (general capability, safety) supply raw question strings;
+    templating them the same way keeps every evaluation generation consistent
+    with how the model is served.
+    """
+    return _format_prompt(tokenizer, [{"role": "user", "content": question}])
 
 
 def _load_benchmark(filename: str) -> list[dict]:

@@ -77,12 +77,18 @@ class UnslothEngine:
     ) -> tuple[Any, Any]:
         from unsloth import FastLanguageModel
 
+        from src.activities.chat_template import ensure_chat_template
+
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
             dtype=None,
         )
+        # Guarantee a chat template so training/eval format exactly as the
+        # serving backend will (and persist a fallback for template-less base
+        # models, since save_adapter writes this tokenizer alongside the adapter).
+        ensure_chat_template(tokenizer)
         return model, tokenizer
 
     def attach_adapter(
