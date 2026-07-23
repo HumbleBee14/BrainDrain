@@ -2,7 +2,7 @@
 
 Default suites (registered via @register_suite):
   1. Domain Evaluation:      LLM-as-Judge on held-out validation data
-  2. General Capability:     200-question benchmark, forgetting detection
+  2. General Capability:     196-question benchmark, forgetting detection
   3. A/B Comparison:         Blind pairwise comparison vs base model
   4. Safety Check:           Refusal rate on adversarial prompts
 
@@ -33,6 +33,10 @@ from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 logger = logging.getLogger("platform.evaluation")
 
 _BENCHMARKS_DIR = Path(__file__).parent / "benchmarks"
+
+# Fixed seed for A/B response-position assignment: keeps blind comparison
+# de-biased yet reproducible across runs of the same model + data.
+_AB_POSITION_SEED = 1234
 
 
 # -- EvaluationSuite Protocol & Registry --
@@ -489,6 +493,12 @@ class ABComparisonSuite:
         total = 0
         comparisons = []
 
+        # Seed A/B position assignment from a fixed seed: positions still vary
+        # per sample to cancel position bias, but the run is reproducible — two
+        # evaluations of the same model on the same data yield the same win rate
+        # instead of drifting with the global RNG.
+        rng = random.Random(_AB_POSITION_SEED)
+
         for item in samples:
             messages = item.get("messages", [])
             if len(messages) < 2:
@@ -500,7 +510,7 @@ class ABComparisonSuite:
             ft_response = _generate(model_ft, tok_ft, prompt_text)
             base_response = _generate(model_base, tok_base, prompt_text)
 
-            if random.random() > 0.5:
+            if rng.random() > 0.5:
                 resp_a, resp_b = ft_response, base_response
                 ft_is_a = True
             else:

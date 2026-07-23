@@ -125,6 +125,11 @@ pub struct Config {
     #[serde(default = "default_delivery_poll_interval_secs")]
     pub delivery_poll_interval_secs: u64,
 
+    /// Billing outbox: prune delivered rows older than this many days. The relay
+    /// runs the prune on a coarse cadence. Set to 0 to disable pruning.
+    #[serde(default = "default_billing_outbox_retention_days")]
+    pub billing_outbox_retention_days: i32,
+
     /// Stale deploy reap threshold in minutes.
     #[serde(default = "default_deploy_stale_minutes")]
     pub deploy_stale_minutes: i64,
@@ -464,6 +469,9 @@ fn default_billing_flush_interval_secs() -> u64 {
 }
 fn default_delivery_poll_interval_secs() -> u64 {
     10
+}
+fn default_billing_outbox_retention_days() -> i32 {
+    30
 }
 fn default_deploy_stale_minutes() -> i64 {
     10

@@ -414,12 +414,7 @@ class FinalizeIterativeTrainingActivity:
 
         # Calculate actual cost from aggregate iteration runtimes
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
-        total_runtime = 0.0
-        for val in input.metrics.values():
-            if isinstance(val, dict):
-                for rk, rv in val.items():
-                    if rk.endswith("train_runtime") and isinstance(rv, (int, float)):
-                        total_runtime += rv
+        total_runtime = _sum_gpu_runtime_seconds(input.metrics)
         runtime_hours = total_runtime / 3600.0
         actual_cost = round(runtime_hours * gpu_rate, 2)
         input.metrics["estimated_cost"] = actual_cost
@@ -587,11 +582,7 @@ async def run_training_core(
         )
 
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
-        total_runtime = sum(
-            v
-            for k, v in metrics.items()
-            if k.endswith("train_runtime") and isinstance(v, (int, float))
-        )
+        total_runtime = _sum_gpu_runtime_seconds(metrics)
         metrics["estimated_cost"] = round((total_runtime / 3600.0) * gpu_rate, 2)
 
         adapter_dir = tmpdir_path / "adapter"
@@ -1508,11 +1499,33 @@ async def _get_project_id(db, job_id: str) -> str:
     return str(row["project_id"])
 
 
+def _sum_gpu_runtime_seconds(metrics: dict) -> float:
+    """Total GPU runtime across all training phases, in seconds.
+
+    Sums every ``*runtime`` metric — the SFT runtime (``train_runtime`` /
+    ``<phase>_train_runtime`` / ``iter_N_train_runtime``) AND the DPO/GRPO phase
+    runtimes, which the aligned/reasoning strategies nest one level deep under a
+    ``"dpo"``/``"grpo"`` key. Matching only ``"train_runtime"`` previously missed
+    the DPO/GRPO GPU time, so aligned/reasoning runs were billed for the SFT pass
+    only — undercharging the tenant. Recurses into nested metric dicts so both
+    the flat and nested shapes are covered. ``bool`` is excluded (it subclasses
+    ``int``).
+    """
+    total = 0.0
+    for key, value in metrics.items():
+        if isinstance(value, dict):
+            total += _sum_gpu_runtime_seconds(value)
+        elif (
+            key.endswith("runtime")
+            and isinstance(value, int | float)
+            and not isinstance(value, bool)
+        ):
+            total += value
+    return total
+
+
 def _extract_training_runtime_seconds(metrics: dict) -> int:
-    total_runtime = sum(
-        v for k, v in metrics.items() if k.endswith("train_runtime") and isinstance(v, (int, float))
-    )
-    return int(round(total_runtime))
+    return int(round(_sum_gpu_runtime_seconds(metrics)))
 
 
 def _training_billing_event_id(job_id: str, outcome: str) -> uuid.UUID:

@@ -348,6 +348,7 @@ impl AppState {
             Some(Arc::new(BillingOutboxRelay::new(
                 db.clone(),
                 Duration::from_secs(config.billing_flush_interval_secs),
+                config.billing_outbox_retention_days,
             )))
         } else {
             tracing::info!("Billing outbox disabled — using in-memory batcher");

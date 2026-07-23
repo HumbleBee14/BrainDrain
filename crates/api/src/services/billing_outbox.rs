@@ -178,6 +178,9 @@ const MAX_ATTEMPTS: i32 = 5;
 const RELAY_BATCH_SIZE: i64 = 500;
 const RELAY_LOCK_ID: i64 = 900_200_001;
 const STREAM_PENDING_STALE_SECS: i64 = 300;
+/// How often the relay prunes delivered outbox rows. Coarse on purpose — the
+/// buffer only needs bounding, not tight trimming.
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 
 enum BatchResult {
     Processed(usize),
@@ -185,9 +188,9 @@ enum BatchResult {
 }
 
 impl BillingOutboxRelay {
-    pub fn new(db: PgPool, poll_interval: Duration) -> Self {
+    pub fn new(db: PgPool, poll_interval: Duration, retention_days: i32) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let handle = tokio::spawn(relay_loop(db, poll_interval, shutdown_rx));
+        let handle = tokio::spawn(relay_loop(db, poll_interval, retention_days, shutdown_rx));
         Self {
             shutdown: Mutex::new(Some(ShutdownHandle {
                 signal: shutdown_tx,
@@ -213,12 +216,36 @@ impl BillingOutboxRelay {
     }
 }
 
-async fn relay_loop(db: PgPool, poll_interval: Duration, mut shutdown_rx: oneshot::Receiver<()>) {
+async fn relay_loop(
+    db: PgPool,
+    poll_interval: Duration,
+    retention_days: i32,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) {
     let mut interval = tokio::time::interval(poll_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // Coarse cadence for pruning delivered rows. Consume the immediate first
+    // tick so we don't prune the instant the process boots.
+    let mut cleanup_interval = tokio::time::interval(CLEANUP_INTERVAL);
+    cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    cleanup_interval.tick().await;
+
     loop {
         tokio::select! {
+            // Prune delivered outbox rows past the retention window so the
+            // buffer table cannot grow without bound. Disabled when
+            // retention_days <= 0. The permanent ledger keeps the data; these
+            // are just already-relayed buffer rows.
+            _ = cleanup_interval.tick(), if retention_days > 0 => {
+                match cleanup_delivered(&db, retention_days).await {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(pruned = n, retention_days, "Pruned delivered billing-outbox rows");
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "Billing outbox cleanup failed"),
+                }
+            }
             _ = interval.tick() => {
                 // Drain all pending batches per tick (not just one)
                 loop {
@@ -417,7 +444,8 @@ async fn deliver_to_ledger(
     Ok(())
 }
 
-#[allow(dead_code)]
+/// Delete outbox rows already delivered longer ago than `retention_days`.
+/// Invoked periodically by the relay loop (see `CLEANUP_INTERVAL`).
 pub async fn cleanup_delivered(db: &PgPool, retention_days: i32) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "DELETE FROM billing_outbox \
