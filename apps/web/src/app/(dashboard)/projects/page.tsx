@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useProjects } from "@/hooks/use-projects";
+import { ErrorState } from "@/components/error-state";
 
 export default function ProjectsPage() {
-  const { data, isLoading } = useProjects();
+  const { data, isLoading, isError, isFetching, refetch } = useProjects();
   const projects = data?.data ?? [];
 
   return (
@@ -19,7 +20,14 @@ export default function ProjectsPage() {
         </Link>
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        <ErrorState
+          title="Couldn't load your projects"
+          message="We couldn't reach the projects service. Your data is safe — please try again."
+          onRetry={() => refetch()}
+          isRetrying={isFetching}
+        />
+      ) : isLoading ? (
         <div className="py-12 text-center">
           <p className="text-zinc-500">Loading projects...</p>
         </div>

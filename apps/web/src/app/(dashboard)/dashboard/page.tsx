@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { OnboardingBanner } from "@/components/onboarding-banner";
+import { ErrorState } from "@/components/error-state";
 import {
   useDashboardStats,
   useUsageSummary,
@@ -9,9 +10,30 @@ import {
 } from "@/hooks/use-dashboard";
 
 export default function DashboardPage() {
-  const { data: stats, isLoading: statsLoading } = useDashboardStats();
-  const { data: usage, isLoading: usageLoading } = useUsageSummary();
-  const { data: activity, isLoading: activityLoading } = useRecentActivity();
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    isError: statsError,
+    isFetching: statsFetching,
+    refetch: refetchStats,
+  } = useDashboardStats();
+  const {
+    data: usage,
+    isLoading: usageLoading,
+    isError: usageError,
+    isFetching: usageFetching,
+    refetch: refetchUsage,
+  } = useUsageSummary();
+  const {
+    data: activity,
+    isLoading: activityLoading,
+    isError: activityError,
+    isFetching: activityFetching,
+    refetch: refetchActivity,
+  } = useRecentActivity();
+
+  const isError = statsError || usageError || activityError;
+  const isFetching = statsFetching || usageFetching || activityFetching;
 
   const maxCost = usage?.cost_by_day?.length
     ? Math.max(...usage.cost_by_day.map((d) => d.cost_usd), 0.01)
@@ -31,6 +53,19 @@ export default function DashboardPage() {
         </Link>
       </div>
 
+      {isError ? (
+        <ErrorState
+          title="Couldn't load your dashboard"
+          message="We couldn't reach the dashboard service. Your data is safe — please try again."
+          onRetry={() => {
+            refetchStats();
+            refetchUsage();
+            refetchActivity();
+          }}
+          isRetrying={isFetching}
+        />
+      ) : (
+        <>
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-6 md:mb-8">
         <StatCard
@@ -194,6 +229,8 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useModel } from "@/hooks/use-models";
 import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { useDeploymentStatus } from "@/hooks/use-deployments";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { ErrorState } from "@/components/error-state";
 import {
   getStoredPlaygroundKey,
   storePlaygroundKey,
@@ -23,7 +24,12 @@ interface ChatMessage {
 export default function PlaygroundPage() {
   const params = useParams<{ id: string; modelId: string }>();
   const { data: model } = useModel(params.modelId);
-  const { data: deployment } = useDeploymentStatus(params.modelId);
+  const {
+    data: deployment,
+    isError: deploymentError,
+    isFetching: deploymentFetching,
+    refetch: refetchDeployment,
+  } = useDeploymentStatus(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -164,6 +170,33 @@ export default function PlaygroundPage() {
       handleSend();
     }
   };
+
+  if (deploymentError) {
+    return (
+      <div>
+        <div className="mb-8">
+          <Breadcrumbs
+            items={[
+              { label: "Projects", href: "/projects" },
+              { label: "Project", href: `/projects/${params.id}` },
+              {
+                label: model?.name || "Model",
+                href: `/projects/${params.id}/models/${params.modelId}`,
+              },
+              { label: "Playground" },
+            ]}
+          />
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Playground</h1>
+        </div>
+        <ErrorState
+          title="Couldn't load deployment status"
+          message="We couldn't check whether this model is deployed. Please try again."
+          onRetry={() => refetchDeployment()}
+          isRetrying={deploymentFetching}
+        />
+      </div>
+    );
+  }
 
   if (!isActive) {
     return (

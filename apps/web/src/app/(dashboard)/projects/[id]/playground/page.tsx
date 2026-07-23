@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useModels } from "@/hooks/use-models";
 import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { ErrorState } from "@/components/error-state";
 import { useProject } from "@/hooks/use-projects";
 import {
   getStoredPlaygroundKey,
@@ -144,7 +145,12 @@ function ChatPanel({
 export default function ABPlaygroundPage() {
   const params = useParams<{ id: string }>();
   const { data: project } = useProject(params.id);
-  const { data: modelsData } = useModels(params.id, 0, 50);
+  const {
+    data: modelsData,
+    isError: modelsError,
+    isFetching: modelsFetching,
+    refetch: refetchModels,
+  } = useModels(params.id, 0, 50);
 
   const [panelA, setPanelA] = useState<PanelState>({ ...INITIAL_PANEL });
   const [panelB, setPanelB] = useState<PanelState>({ ...INITIAL_PANEL });
@@ -440,15 +446,28 @@ export default function ABPlaygroundPage() {
         </div>
       </div>
 
-      {/* No deployed models message */}
-      {deployedModels.length === 0 && (
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center mb-4 shrink-0">
-          <p className="text-zinc-500 mb-1">No deployed models found.</p>
-          <p className="text-xs text-zinc-400 dark:text-zinc-600">
-            Deploy at least one model from the project page to use the A/B
-            playground.
-          </p>
+      {/* Failed to load models */}
+      {modelsError ? (
+        <div className="mb-4 shrink-0">
+          <ErrorState
+            title="Couldn't load models"
+            message="We couldn't load this project's models. Your data is safe — please try again."
+            onRetry={() => refetchModels()}
+            isRetrying={modelsFetching}
+            compact
+          />
         </div>
+      ) : (
+        /* No deployed models message */
+        deployedModels.length === 0 && (
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-8 text-center mb-4 shrink-0">
+            <p className="text-zinc-500 mb-1">No deployed models found.</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-600">
+              Deploy at least one model from the project page to use the A/B
+              playground.
+            </p>
+          </div>
+        )
       )}
 
       {/* Settings panel */}
