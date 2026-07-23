@@ -1,0 +1,13 @@
+# Temporal dynamic config for local development.
+#
+# Shipped in-repo and mounted into the auto-setup container so `make temporal`
+# does not depend on a file bundled inside a specific image tag. Newer
+# `temporalio/auto-setup` images stopped bundling this file, which made a
+# pinned/`latest` image exit on startup ("no such file or directory"). An empty
+# map is valid; the entries below are conservative dev-friendly defaults.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Dev only: makes newly added search attributes visible immediately.
+    constraints: {}
