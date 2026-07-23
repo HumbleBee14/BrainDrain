@@ -824,6 +824,22 @@ pub trait NotificationRepository: Send + Sync {
         max_attempts: i32,
         limit: i64,
     ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
+
+    /// Recent in-app deliveries for the bell menu, newest first.
+    fn list_in_app(
+        &self,
+        tenant_id: Uuid,
+        limit: i64,
+    ) -> BoxFuture<'_, AppResult<Vec<NotificationDelivery>>>;
+
+    /// Count unread in-app deliveries for the bell badge.
+    fn count_unread_in_app(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Mark a single in-app delivery read. Returns whether a row was updated.
+    fn mark_in_app_read(&self, tenant_id: Uuid, id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
+
+    /// Mark every unread in-app delivery read. Returns the number updated.
+    fn mark_all_in_app_read(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<u64>>;
 }
 
 /// Contract for model export database operations.

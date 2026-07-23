@@ -176,6 +176,13 @@ async fn process_pending(
             "email" => {
                 dispatch_email(repo, email_provider, &delivery, &pref).await;
             }
+            "in_app" => {
+                // In-app deliveries are read directly by the client; there is no
+                // external dispatch. Mark sent so the row leaves the pending poll.
+                let _ = repo
+                    .update_delivery_status(delivery.tenant_id, delivery.id, "sent", None)
+                    .await;
+            }
             other => {
                 tracing::warn!(
                     delivery_id = %delivery.id,

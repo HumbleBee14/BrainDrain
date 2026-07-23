@@ -71,3 +71,35 @@ impl From<NotificationDelivery> for NotificationDeliveryResponse {
         }
     }
 }
+
+/// A single in-app notification for the bell menu.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct InAppNotificationResponse {
+    pub id: String,
+    pub event_type: String,
+    #[schema(value_type = Object)]
+    pub payload: serde_json::Value,
+    pub created_at: String,
+    pub read_at: Option<String>,
+}
+
+impl From<NotificationDelivery> for InAppNotificationResponse {
+    fn from(d: NotificationDelivery) -> Self {
+        Self {
+            id: d.id.to_string(),
+            event_type: d.event_type,
+            payload: d.payload,
+            created_at: d.created_at.to_rfc3339(),
+            read_at: d.read_at.map(|t| t.to_rfc3339()),
+        }
+    }
+}
+
+/// In-app notifications plus the unread count for the bell badge.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct InAppNotificationsResponse {
+    pub items: Vec<InAppNotificationResponse>,
+    pub unread_count: i64,
+}

@@ -175,6 +175,9 @@ fn v1_router() -> Router<AppState> {
         notifications::list_preferences,
         notifications::update_preferences,
         notifications::list_deliveries,
+        notifications::list_in_app,
+        notifications::mark_in_app_read,
+        notifications::mark_all_in_app_read,
         // Audit Logs
         audit_logs::list_audit_logs,
         // Settings
@@ -264,6 +267,8 @@ fn v1_router() -> Router<AppState> {
         crate::dto::notification::UpdatePreferencesRequest,
         crate::dto::notification::PreferenceUpdate,
         crate::dto::notification::NotificationDeliveryResponse,
+        crate::dto::notification::InAppNotificationResponse,
+        crate::dto::notification::InAppNotificationsResponse,
         // Inference
         inference::ChatCompletionRequest,
         inference::ChatMessage,

@@ -883,6 +883,30 @@ export const api = {
         token,
         method: "POST",
       }),
+
+    getInApp: (token: string) =>
+      request<{
+        items: Array<{
+          id: string;
+          event_type: string;
+          payload: Record<string, unknown>;
+          created_at: string;
+          read_at: string | null;
+        }>;
+        unread_count: number;
+      }>("/api/v1/notifications/in-app", { token }),
+
+    markInAppRead: (token: string, id: string) =>
+      request<void>(`/api/v1/notifications/in-app/${id}/read`, {
+        token,
+        method: "POST",
+      }),
+
+    markAllInAppRead: (token: string) =>
+      request<void>("/api/v1/notifications/in-app/read-all", {
+        token,
+        method: "POST",
+      }),
   },
 
   settings: {

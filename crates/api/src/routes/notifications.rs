@@ -9,7 +9,8 @@ use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::notification::{
-    NotificationDeliveryResponse, NotificationPreferenceResponse, UpdatePreferencesRequest,
+    InAppNotificationsResponse, NotificationDeliveryResponse, NotificationPreferenceResponse,
+    UpdatePreferencesRequest,
 };
 use crate::error::AppResult;
 use crate::rbac::require_role;
@@ -26,7 +27,13 @@ pub fn router() -> Router<AppState> {
         .route("/notifications/deliveries", get(list_deliveries))
         .route("/notifications/preferences/:id/test", post(test_webhook))
         .route("/notifications/deliveries/:id/retry", post(retry_delivery))
+        .route("/notifications/in-app", get(list_in_app))
+        .route("/notifications/in-app/read-all", post(mark_all_in_app_read))
+        .route("/notifications/in-app/:id/read", post(mark_in_app_read))
 }
+
+/// Default number of in-app notifications returned to the bell menu.
+const IN_APP_LIMIT: i64 = 30;
 
 /// List notification preferences.
 #[utoipa::path(
@@ -192,4 +199,59 @@ pub async fn retry_delivery(
     .await;
 
     Ok(Json(result))
+}
+
+/// List in-app notifications for the bell menu. Available to any team member.
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/in-app",
+    tag = "Notifications",
+    responses(
+        (status = 200, description = "In-app notifications", body = InAppNotificationsResponse),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn list_in_app(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+) -> AppResult<Json<InAppNotificationsResponse>> {
+    let result =
+        NotificationService::list_in_app(state.notification_repo(), user.tenant_id, IN_APP_LIMIT)
+            .await?;
+
+    Ok(Json(result))
+}
+
+/// Mark a single in-app notification read.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/in-app/{id}/read",
+    tag = "Notifications",
+    params(("id" = Uuid, Path, description = "Notification ID")),
+    responses((status = 204, description = "Marked read")),
+    security(("jwt" = []))
+)]
+pub async fn mark_in_app_read(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<axum::http::StatusCode> {
+    NotificationService::mark_in_app_read(state.notification_repo(), user.tenant_id, id).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+/// Mark every in-app notification read.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/in-app/read-all",
+    tag = "Notifications",
+    responses((status = 204, description = "All marked read")),
+    security(("jwt" = []))
+)]
+pub async fn mark_all_in_app_read(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+) -> AppResult<axum::http::StatusCode> {
+    NotificationService::mark_all_in_app_read(state.notification_repo(), user.tenant_id).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

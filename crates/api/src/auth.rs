@@ -501,20 +501,38 @@ const DEFAULT_NOTIFICATION_EVENTS: &[&str] = &[
     "invitation",
 ];
 
-/// Seed default email notification preferences for a freshly bootstrapped owner.
+/// Seed default notification preferences for a freshly bootstrapped owner.
+/// In-app is always on; email is added when the JWT carries an address.
 /// Best-effort — a failure here never blocks sign-in.
 async fn seed_default_notification_prefs(state: &AppState, user: &AuthenticatedUser) {
-    let Some(email) = user.email.as_deref().filter(|e| !e.is_empty()) else {
-        return;
-    };
-    let config = serde_json::json!({ "address": email });
+    let email_config = user
+        .email
+        .as_deref()
+        .filter(|e| !e.is_empty())
+        .map(|e| serde_json::json!({ "address": e }));
+
     for event_type in DEFAULT_NOTIFICATION_EVENTS {
         if let Err(e) = state
             .notification_repo()
-            .upsert_preference(user.tenant_id, "email", event_type, true, config.clone())
+            .upsert_preference(
+                user.tenant_id,
+                "in_app",
+                event_type,
+                true,
+                serde_json::json!({}),
+            )
             .await
         {
-            tracing::warn!(error = %e, event_type, "Failed to seed default notification preference");
+            tracing::warn!(error = %e, event_type, "Failed to seed default in-app preference");
+        }
+
+        if let Some(ref config) = email_config
+            && let Err(e) = state
+                .notification_repo()
+                .upsert_preference(user.tenant_id, "email", event_type, true, config.clone())
+                .await
+        {
+            tracing::warn!(error = %e, event_type, "Failed to seed default email preference");
         }
     }
 }
