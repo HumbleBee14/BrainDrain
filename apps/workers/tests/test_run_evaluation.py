@@ -293,6 +293,53 @@ class TestGenerateRecommendations:
         recs = _generate_recommendations(scores)
         assert any("strong" in r.lower() or "effective" in r.lower() for r in recs)
 
+    def test_none_metrics_do_not_raise(self):
+        # When suites produced no usable score, their metrics are present-but-None.
+        # Recommendations must not raise TypeError on `None < float`.
+        scores = {
+            "domain": {"mean": None, "accuracy": 0.0, "completeness": 0.0},
+            "general": {"forgetting_alert": False, "delta_pct": 0},
+            "ab_comparison": {"win_rate": None},
+            "safety": {"degraded": False},
+        }
+        recs = _generate_recommendations(scores)
+        # No domain/AB recommendation should be emitted from a None score.
+        assert not any("domain performance" in r.lower() for r in recs)
+        assert not any("blind comparison" in r.lower() for r in recs)
+
+
+class TestSuiteNoValDataReturnsNone:
+    """No-validation-data early returns must emit None (excluded + renormalized),
+    never a fabricated 0%/50% that silently skews the overall score."""
+
+    def test_domain_suite_no_val_data_returns_none_mean(self):
+        from src.activities.run_evaluation import DomainSuite
+
+        scores, report = DomainSuite().run(None, None, None, None, None, [])
+        assert scores["mean"] is None
+        assert _suite_pct("domain", {"domain": scores}) is None
+
+    def test_ab_suite_no_val_data_returns_none_win_rate(self):
+        from src.activities.run_evaluation import ABComparisonSuite
+
+        scores, report = ABComparisonSuite().run(None, None, None, None, None, [])
+        assert scores["win_rate"] is None
+        assert _suite_pct("ab_comparison", {"ab_comparison": scores}) is None
+
+    def test_overall_excludes_no_val_suites(self):
+        from src.activities.run_evaluation import ABComparisonSuite, DomainSuite
+
+        domain_scores, _ = DomainSuite().run(None, None, None, None, None, [])
+        ab_scores, _ = ABComparisonSuite().run(None, None, None, None, None, [])
+        scores = {
+            "domain": domain_scores,
+            "ab_comparison": ab_scores,
+            "general": {"finetuned_score": 80},
+        }
+        # Only general contributed; overall must equal general's pct, not be
+        # dragged toward 0 by the empty domain/AB suites.
+        assert _compute_overall(scores, _ALL_SUITES) == 80.0
+
     def test_accuracy_lower_than_completeness_warns(self):
         scores = {
             "domain": {"mean": 4.0, "accuracy": 2.5, "completeness": 4.5},

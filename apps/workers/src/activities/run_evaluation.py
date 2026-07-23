@@ -321,8 +321,11 @@ class DomainSuite:
 
     def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
         if not val_dataset:
+            # No validation data — report no domain result (mean=None) so the
+            # overall score excludes this suite and renormalizes, rather than
+            # counting a fabricated 0% that would silently tank the score.
             return (
-                {"accuracy": 0, "completeness": 0, "faithfulness": 0, "mean": 0},
+                {"accuracy": 0.0, "completeness": 0.0, "faithfulness": 0.0, "mean": None},
                 {"note": "No validation data available", "samples": []},
             )
 
@@ -468,8 +471,10 @@ class ABComparisonSuite:
 
     def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset):
         if not val_dataset:
+            # No validation data — report no win rate (None) so the overall score
+            # excludes this suite instead of counting a fabricated 50%.
             return (
-                {"win_rate": 0.5, "confidence_low": 0.0, "confidence_high": 1.0},
+                {"win_rate": None, "confidence_low": 0.0, "confidence_high": 1.0},
                 {"note": "No validation data available", "comparisons": []},
             )
 
@@ -783,12 +788,18 @@ def _generate_recommendations(scores: dict) -> list[str]:
     recs = []
 
     domain = scores.get("domain", {})
-    if domain.get("mean", 0) < 3.0:
+    # mean/accuracy/completeness may be present-but-None when the domain suite
+    # produced no usable score; guard before comparing so recommendations never
+    # raise TypeError on None < float.
+    domain_mean = domain.get("mean")
+    if domain_mean is not None and domain_mean < 3.0:
         recs.append(
             "Domain performance is below average. Consider increasing training data "
             "quality or adding more domain-specific examples."
         )
-    if domain.get("accuracy", 0) < domain.get("completeness", 0):
+    domain_acc = domain.get("accuracy")
+    domain_comp = domain.get("completeness")
+    if domain_acc is not None and domain_comp is not None and domain_acc < domain_comp:
         recs.append(
             "Accuracy is lower than completeness. The model may be generating "
             "plausible but incorrect answers. Add more factual training data."
@@ -808,12 +819,13 @@ def _generate_recommendations(scores: dict) -> list[str]:
         )
 
     ab = scores.get("ab_comparison", {})
-    if ab.get("win_rate", 0.5) < 0.4:
+    ab_win_rate = ab.get("win_rate")
+    if ab_win_rate is not None and ab_win_rate < 0.4:
         recs.append(
             "The base model outperforms the fine-tuned model in blind comparison. "
             "Training may need more/better data or hyperparameter tuning."
         )
-    elif ab.get("win_rate", 0.5) > 0.7:
+    elif ab_win_rate is not None and ab_win_rate > 0.7:
         recs.append("Strong performance in A/B comparison. The fine-tuning is effective.")
 
     safety = scores.get("safety", {})
