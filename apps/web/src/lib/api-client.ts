@@ -33,6 +33,7 @@ import type {
   GeneratePreviewRequest,
   RateSamplesRequest,
   UpdateGuidanceRequest,
+  CatalogResponse,
 } from "./generated";
 
 // ── Re-export generated types with frontend-friendly aliases ──
@@ -63,6 +64,8 @@ export type {
   TriggerParseResponse,
   TriggerRefineResponse,
   PaginatedResponse,
+  CatalogModel,
+  CatalogResponse,
 } from "./generated";
 
 // Response types with frontend-friendly aliases
@@ -188,30 +191,6 @@ export interface InferenceUsageDay {
   prompt_tokens: number;
   completion_tokens: number;
   cost_usd: number;
-}
-
-// Mirrors crates/api/src/routes/catalog.rs. Not ts-rs generated — those DTOs
-// only derive utoipa::ToSchema (for OpenAPI docs), not TS. If they gain a
-// `#[derive(TS)]`, switch these to `export type { ... } from "./generated"`
-// and run `make typegen`.
-export interface CatalogModel {
-  model_id: string;
-  display_name: string;
-  size: string;
-  vram_4bit_gb: number;
-  vram_full_gb: number;
-  best_for: string[];
-  recommended_for: string[];
-  gated: boolean;
-  default_mode: string;
-  est_hours_1k_pairs: number;
-  est_cost_1k_pairs: number;
-}
-
-export interface CatalogResponse {
-  models: CatalogModel[];
-  suggested: string | null;
-  suggested_mode: string | null;
 }
 
 // ── API client infrastructure ──

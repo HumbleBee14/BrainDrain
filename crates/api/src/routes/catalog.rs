@@ -2,6 +2,7 @@ use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::app_state::AppState;
@@ -13,7 +14,8 @@ pub fn router() -> Router<AppState> {
 }
 
 /// A recommended base model with metadata for the UI.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
 pub struct CatalogModel {
     /// HuggingFace model ID (e.g. "unsloth/Llama-3.1-8B-Instruct")
     pub model_id: String,
@@ -40,7 +42,8 @@ pub struct CatalogModel {
 }
 
 /// Response wrapping the catalog with auto-suggestion.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
 pub struct CatalogResponse {
     /// Full catalog of recommended models
     pub models: Vec<CatalogModel>,
