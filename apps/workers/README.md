@@ -13,7 +13,7 @@
 
 ## Why Python (Not Rust)
 
-This is the only backend component in Python. Reason: the ML libraries it calls (Unsloth, TRL, distilabel, MinerU, vLLM) are Python-only. No Rust or Go alternatives exist for these.
+This is the only backend component in Python. Reason: the ML libraries it calls (Unsloth, TRL, PyMuPDF, Docling, vLLM) are Python-only. No Rust or Go alternatives exist for these.
 
 ## Pipeline Stages
 
@@ -33,18 +33,18 @@ Each stage is a **Temporal activity** (individually retryable, observable in Tem
 | `EvaluateWorkflow` | Score model quality (LLM-as-judge + metrics) | 1 hour |
 | `FullPipelineWorkflow` | Chains all stages end-to-end | Sum of above |
 
-## Activities (Currently Stubs)
+## Activities
 
 | Activity | Phase | ML Library |
 |---|---|---|
-| `parse_document` | Phase 1 | MinerU, python-docx |
-| `generate_synthetic_pairs` | Phase 1 | distilabel |
+| `parse_document` | Phase 1 | PyMuPDF (default) / Docling (optional extra), python-docx |
+| `generate_synthetic_pairs` | Phase 1 | Raw HTTP (`httpx`) calls to any OpenAI-compatible endpoint |
 | `build_dataset` | Phase 1 | HuggingFace datasets |
 | `start_training` | Phase 2 | Unsloth, TRL |
 | `run_evaluation` | Phase 3 | Custom + LLM-as-judge |
-| `deploy_model` | Phase 4 | vLLM |
+| `deploy_model` | Phase 4 | vLLM (also supports TGI, SGLang via the control-plane backend abstraction) |
 
-All activities have **typed dataclass inputs and outputs** — ready to fill in with real ML code.
+All activities are real, wired implementations with typed dataclass inputs/outputs — not stubs. See [docs/DATA_PIPELINE.md](../../docs/DATA_PIPELINE.md) and [docs/CLOUD_GPU_TRAINING.md](../../docs/CLOUD_GPU_TRAINING.md) for the actual code paths.
 
 ## Running Locally
 
@@ -80,7 +80,7 @@ Swap any backend with a single env var — no code changes required.
 
 | Variable | Default | Options | What it controls |
 |---|---|---|---|
-| `APP_PDF_BACKEND` | `pymupdf` | `pymupdf`, `docling` | PDF extraction library |
+| `APP_PDF_BACKEND` | `pymupdf` | `pymupdf`, `docling` | PDF extraction library (neither backend does OCR — no path for scanned/image-only PDFs) |
 | `APP_LANGUAGE_DETECTOR_BACKEND` | `langdetect` | `langdetect`, `null` | Language detection |
 | `APP_TRAINING_ENGINE` | `unsloth` | `unsloth` + custom | Model loading & LoRA |
 | `APP_METRICS_BACKEND` | `redis` | `redis`, `log`, `null` | Training metrics sink |
@@ -90,7 +90,7 @@ Swap any backend with a single env var — no code changes required.
 
 ```bash
 # Use Docling for richer PDF structure (tables, figures, reading order)
-APP_PDF_BACKEND=docling  # requires: pip install braindrain-workers[pdf-ml]
+APP_PDF_BACKEND=docling  # requires: pip install platform-workers[pdf-ml]
 
 # Local dev without Redis — stream metrics to the logger instead
 APP_METRICS_BACKEND=log
@@ -139,3 +139,14 @@ docker run --gpus all --env-file .env platform-workers
 ```
 
 Final image is **~500MB+** (Python + ML dependencies).
+
+## GPU Compute
+
+Training/evaluation dispatch through a `GpuProvider` protocol
+(`src/gpu_provider.py`): `LocalGpuProvider` (attached CUDA GPU, the default
+and the fully-exercised path) or `ModalGpuProvider` (serverless GPUs on
+Modal). The Modal path is validated for deploy and smoke-test runs; a full
+train-to-S3 run on cloud infra is not yet proven end-to-end. There is no
+RunPod (or other third-party GPU marketplace) integration. See
+[docs/CLOUD_GPU_TRAINING.md](../../docs/CLOUD_GPU_TRAINING.md) for the
+verified state and how to add a new provider.

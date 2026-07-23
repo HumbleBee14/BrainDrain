@@ -14,9 +14,10 @@ This folder contains the current architecture, operations, and product-flow docu
 
 | Document | Focus |
 |----------|-------|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Detailed design rationale, subsystem notes, and technical decisions |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | **Original design doc (Feb 2026), aspirational** — design rationale and technical decisions at project inception; see its banner for how it diverges from what was built |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Serving and deployment architecture, including multi-instance inference |
 | [DATA_PIPELINE.md](./DATA_PIPELINE.md) | Ingestion, refinement, and training data flow |
+| [CLOUD_GPU_TRAINING.md](./CLOUD_GPU_TRAINING.md) | Cloud GPU training (Modal): verified state, reservation pattern, known crash-window caveats |
 
 ## Production Operations
 
@@ -39,8 +40,13 @@ See the feature docs under [features/](./features/) for focused notes on:
 
 ## Build History and Research
 
+These are dated, historical records (development trackers and phase
+completion reports) — read them as a log of what happened at the time, not
+as a live description of the current system. `phase0/` through `phase5/`
+completion reports follow the same pattern.
+
 | Document | Focus |
 |----------|-------|
 | [DEVELOPMENT.md](./DEVELOPMENT.md) | Phase-by-phase build log |
 | [PRODUCTION_EXCELLENCE_PR_PLAN.md](./PRODUCTION_EXCELLENCE_PR_PLAN.md) | Final production-hardening roadmap and completion record |
-| [RESEARCH.md](./RESEARCH.md) | Supporting research and landscape analysis |
+| [RESEARCH.md](./RESEARCH.md) | **Landscape research (Feb 2026), aspirational** — market/tooling survey from project inception, not all of it adopted; see its banner |

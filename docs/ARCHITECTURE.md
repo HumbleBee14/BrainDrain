@@ -1,5 +1,17 @@
 # Platform — System Architecture & Learning Notes (February 2026)
 
+> **This is the original, aspirational design document written at project
+> inception (February 2026).** It describes the intended architecture, not
+> necessarily what was built. Notable divergences: parsing shipped with
+> PyMuPDF/Docling (no MinerU, no Nougat, no OCR for scanned PDFs); synthetic
+> data generation uses raw calls to an OpenAI-compatible endpoint (no
+> distilabel); cloud GPU training uses Modal, validated for deploy/smoke
+> only (no RunPod, no full train→S3 cloud proof yet); serving/CD are
+> implemented but not proven end-to-end. For the as-built system, see
+> [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md),
+> [PROJECT_FLOW.md](./PROJECT_FLOW.md), [DATA_PIPELINE.md](./DATA_PIPELINE.md),
+> and [CLOUD_GPU_TRAINING.md](./CLOUD_GPU_TRAINING.md).
+
 ## Table of Contents
 
 1. [System Overview](#1-system-overview)

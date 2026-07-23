@@ -163,6 +163,14 @@ This enables:
 
 Single-instance mode still works when the feature flag is off.
 
+**Verified state:** the backend abstraction, multi-instance placement, and
+health reconciliation are implemented with unit tests. vLLM (with the S3
+LoRA resolver, see `infra/serving/README.md`) is the primary exercised
+backend; TGI and SGLang implement the same trait but are less exercised.
+Neither the serving path nor the CI/CD pipeline (build-and-validate only,
+`push: false` by design — see `docs/DEPLOYMENT.md`) has been proven against
+sustained production traffic yet.
+
 ### Serving Request Path
 
 ```text
