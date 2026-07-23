@@ -42,6 +42,7 @@ from src.activities.training_engine import (
 from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
 from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
+from src.notifications import EVENT_TRAINING_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig
 
 logger = logging.getLogger("platform.training")
@@ -163,6 +164,23 @@ class StartTrainingActivity:
                         },
                     )
 
+                    await enqueue_notification(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        event_type=EVENT_TRAINING_COMPLETE,
+                        payload={
+                            "status": "completed",
+                            "training_job_id": job_id,
+                            "model_name": model_name,
+                            "base_model": input.base_model,
+                            "subject": f"Training complete: {model_name}",
+                            "message": (
+                                f"Fine-tuning of {input.base_model} finished. "
+                                f"Model '{model_name}' is ready to evaluate and deploy."
+                            ),
+                        },
+                    )
+
             logger.info("Training completed for job %s, model: %s", job_id, model_name)
             return result
 
@@ -186,6 +204,21 @@ class StartTrainingActivity:
                         mode=input.mode,
                         method=input.method,
                         base_model=input.base_model,
+                    )
+
+                    await enqueue_notification(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        event_type=EVENT_TRAINING_COMPLETE,
+                        payload={
+                            "status": "failed",
+                            "training_job_id": job_id,
+                            "base_model": input.base_model,
+                            "subject": "Training job failed",
+                            "message": (
+                                f"Fine-tuning of {input.base_model} failed: {str(e)[:500]}"
+                            ),
+                        },
                     )
 
             raise
@@ -369,6 +402,23 @@ class FinalizeIterativeTrainingActivity:
                         "base_model": input.base_model,
                         "gpu_class": input.gpu_class,
                         "iterative": True,
+                    },
+                )
+
+                await enqueue_notification(
+                    conn,
+                    tenant_id=input.tenant_id,
+                    event_type=EVENT_TRAINING_COMPLETE,
+                    payload={
+                        "status": "completed",
+                        "training_job_id": job_id,
+                        "model_name": model_name,
+                        "base_model": input.base_model,
+                        "subject": f"Training complete: {model_name}",
+                        "message": (
+                            f"Fine-tuning of {input.base_model} finished. "
+                            f"Model '{model_name}' is ready to evaluate and deploy."
+                        ),
                     },
                 )
 

@@ -27,6 +27,7 @@ from src.backends.judge import get as get_judge
 from src.constants import EvaluationStatus
 from src.gpu_provider import GpuProvider
 from src.infra import InfraContainer
+from src.notifications import EVENT_EVALUATION_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 
 logger = logging.getLogger("platform.evaluation")
@@ -138,37 +139,76 @@ class RunEvaluationActivity:
                 )
                 scores, report = output.scores, output.report
 
-            await db.execute(
-                """UPDATE evaluations
-                SET status = $1, scores = $3,
-                    report = $4, completed_at = NOW()
-                WHERE id = $2""",
-                EvaluationStatus.COMPLETED,
-                eval_id,
-                json.dumps(scores),
-                json.dumps(report),
-            )
-
-            await db.execute(
-                "UPDATE models SET eval_scores = $2, updated_at = NOW() WHERE id = $1",
-                input.model_id,
-                json.dumps(scores),
-            )
-
             overall_score = scores.get("overall")
+
+            async with db.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE evaluations
+                        SET status = $1, scores = $3,
+                            report = $4, completed_at = NOW()
+                        WHERE id = $2""",
+                        EvaluationStatus.COMPLETED,
+                        eval_id,
+                        json.dumps(scores),
+                        json.dumps(report),
+                    )
+
+                    await conn.execute(
+                        "UPDATE models SET eval_scores = $2, updated_at = NOW() WHERE id = $1",
+                        input.model_id,
+                        json.dumps(scores),
+                    )
+
+                    await enqueue_notification(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        event_type=EVENT_EVALUATION_COMPLETE,
+                        payload={
+                            "status": "completed",
+                            "evaluation_id": eval_id,
+                            "model_id": input.model_id,
+                            "overall_score": overall_score,
+                            "subject": "Evaluation complete",
+                            "message": (
+                                "Model evaluation finished"
+                                + (
+                                    f" with an overall score of {overall_score}."
+                                    if overall_score is not None
+                                    else "."
+                                )
+                            ),
+                        },
+                    )
+
             logger.info("Evaluation completed for %s, overall score: %s", eval_id, overall_score)
             return RunEvaluationOutput(scores=scores, report=report)
 
         except Exception as e:
             logger.exception("Evaluation failed for %s", eval_id)
-            await db.execute(
-                """UPDATE evaluations
-                SET status = $1, report = $3, completed_at = NOW()
-                WHERE id = $2""",
-                EvaluationStatus.FAILED,
-                eval_id,
-                json.dumps({"error": str(e)[:2000]}),
-            )
+            async with db.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """UPDATE evaluations
+                        SET status = $1, report = $3, completed_at = NOW()
+                        WHERE id = $2""",
+                        EvaluationStatus.FAILED,
+                        eval_id,
+                        json.dumps({"error": str(e)[:2000]}),
+                    )
+
+                    await enqueue_notification(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        event_type=EVENT_EVALUATION_COMPLETE,
+                        payload={
+                            "status": "failed",
+                            "evaluation_id": eval_id,
+                            "model_id": input.model_id,
+                            "subject": "Evaluation failed",
+                            "message": f"Model evaluation failed: {str(e)[:500]}",
+                        },
+                    )
             raise
 
 
