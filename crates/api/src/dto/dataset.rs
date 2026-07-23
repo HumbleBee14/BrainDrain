@@ -36,3 +36,28 @@ impl From<Dataset> for DatasetResponse {
         }
     }
 }
+
+/// A single rejected row from a dataset import.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct DatasetImportRowError {
+    /// 1-based line number within the uploaded file.
+    pub line: u32,
+    /// Why the row was rejected.
+    pub error: String,
+}
+
+/// Result of importing an OpenAI-format chat JSONL dataset. The created dataset
+/// enters the same review flow as a generated one (`review_pending`); rejected
+/// rows are reported per row rather than failing the whole file.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct DatasetImportResponse {
+    pub dataset: DatasetResponse,
+    /// Rows accepted and stored.
+    pub imported_rows: u32,
+    /// Rows rejected as malformed.
+    pub rejected_rows: u32,
+    /// Per-row errors (may be truncated; `rejected_rows` is the true total).
+    pub errors: Vec<DatasetImportRowError>,
+}

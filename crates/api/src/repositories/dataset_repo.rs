@@ -148,4 +148,41 @@ impl DatasetRepository for PgDatasetRepo {
             Ok(dataset)
         })
     }
+
+    fn create_imported(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        name: String,
+        storage_path: String,
+        pair_count: i32,
+        stats: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<Dataset>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let dataset = sqlx::query_as::<_, Dataset>(
+                r#"
+                INSERT INTO datasets
+                    (id, tenant_id, project_id, name, format, storage_path,
+                     status, pair_count, stats, config)
+                VALUES ($1, $2, $3, $4, 'chatml', $5, $6, $7, $8, '{}'::jsonb)
+                RETURNING *
+                "#,
+            )
+            .bind(dataset_id)
+            .bind(tenant_id)
+            .bind(project_id)
+            .bind(name)
+            .bind(storage_path)
+            .bind(DatasetStatus::ReviewPending.to_string())
+            .bind(pair_count)
+            .bind(stats)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(dataset)
+        })
+    }
 }

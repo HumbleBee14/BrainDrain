@@ -108,6 +108,7 @@ fn v1_router() -> Router<AppState> {
         datasets::list_datasets,
         datasets::get_dataset,
         datasets::preview_dataset,
+        datasets::import_dataset,
         datasets::get_parsed_content,
         // Data Studio
         datagen::create_data_guide,
@@ -206,6 +207,8 @@ fn v1_router() -> Router<AppState> {
         crate::dto::document::UploadResponse,
         // Datasets
         crate::dto::dataset::DatasetResponse,
+        crate::dto::dataset::DatasetImportResponse,
+        crate::dto::dataset::DatasetImportRowError,
         datasets::ParsedContentResponse,
         // Data Studio
         crate::dto::datagen::Facet,

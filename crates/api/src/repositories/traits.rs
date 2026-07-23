@@ -170,6 +170,21 @@ pub trait DatasetRepository: Send + Sync {
         dataset_id: Uuid,
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
+
+    /// Insert a dataset row for an imported (rather than generated) dataset.
+    /// The row enters `review_pending` so it goes through the same approve/
+    /// reject flow as a generated one.
+    #[allow(clippy::too_many_arguments)]
+    fn create_imported(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        name: String,
+        storage_path: String,
+        pair_count: i32,
+        stats: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<Dataset>>;
 }
 
 /// Contract for data guide database operations.

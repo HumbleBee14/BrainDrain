@@ -26,6 +26,11 @@ pub const MAX_UPLOAD_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 /// Default max batch upload size: 10 GB.
 pub const MAX_BATCH_UPLOAD_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+/// Max size of a dataset JSONL import. Lower than a document upload because the
+/// whole file is buffered and parsed in memory to validate + split it, rather
+/// than streamed straight to storage: 100 MB.
+pub const MAX_DATASET_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
+
 /// Supported file extensions for document upload. Every entry must have a real
 /// text-extracting parser — no image/scanned formats, since there is no OCR path.
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["pdf", "docx", "txt", "html", "htm", "md", "csv"];
