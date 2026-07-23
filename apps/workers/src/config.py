@@ -52,6 +52,10 @@ class WorkerSettings(BaseSettings):
     modal_evaluation_function_name: str = "run_evaluation"
     modal_secret_name: str = "platform-training-secrets"
     modal_poll_interval_secs: int = 15
+    # How often to sweep for orphaned Modal calls — remote GPU calls whose job
+    # was cancelled or reaped (terminated workflow / dead worker) while the call
+    # kept running and billing. Set <= 0 to disable the sweep.
+    modal_orphan_sweep_interval_secs: int = 300
 
     # Backend selection — swap any processing layer without code changes
     pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
