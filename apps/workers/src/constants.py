@@ -40,7 +40,6 @@ MODAL_DEFAULT_GPU: str = "T4"
 
 class DocumentStatus:
     UPLOADED = "uploaded"
-    SCANNING = "scanning"
     PARSING = "parsing"
     PARSED = "parsed"
     FAILED = "failed"

@@ -12,7 +12,6 @@ use utoipa::ToSchema;
 #[ts(export)]
 pub enum DocumentStatus {
     Uploaded,
-    Scanning,
     Parsing,
     Parsed,
     Failed,
