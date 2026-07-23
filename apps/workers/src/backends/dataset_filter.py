@@ -6,12 +6,14 @@ Protocols:
 
 Built-in backends:
   Filters:      "heuristic" (default, length-based rules)
-  Deduplicators: "hash" (default, MD5 content hash)
+  Deduplicators: "hash" (default, MD5 content hash), "near" (token-Jaccard
+                 near-duplicate removal)
 
 Register custom backends with register_filter() / register_deduplicator().
 """
 
 import hashlib
+import re
 from typing import Protocol
 
 
@@ -88,6 +90,44 @@ class HashDeduplicator:
         return unique
 
 
+class NearDuplicateDeduplicator:
+    """Near-duplicate dedup via token-Jaccard similarity on instruction+response.
+
+    Exact duplicates are removed first (cheap), then a pair whose combined
+    text is at least `threshold` Jaccard-similar (word-token overlap) to an
+    already-kept pair is dropped. This catches reworded/paraphrased pairs that
+    the exact-hash deduplicator lets through. O(n·k) in the number kept, which
+    is fine for typical dataset sizes.
+    """
+
+    def __init__(self, threshold: float = 0.85):
+        self.threshold = threshold
+
+    @staticmethod
+    def _tokens(pair: dict) -> frozenset[str]:
+        text = pair.get("instruction", "") + " " + pair.get("response", "")
+        return frozenset(re.findall(r"\w+", text.lower()))
+
+    @staticmethod
+    def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    def deduplicate(self, pairs: list[dict]) -> list[dict]:
+        kept: list[dict] = []
+        kept_tokens: list[frozenset[str]] = []
+        for pair in pairs:
+            tokens = self._tokens(pair)
+            if any(self._jaccard(tokens, other) >= self.threshold for other in kept_tokens):
+                continue
+            kept.append(pair)
+            kept_tokens.append(tokens)
+        return kept
+
+
 # -- Registries & factories --
 
 _FILTER_REGISTRY: dict[str, type] = {
@@ -96,6 +136,7 @@ _FILTER_REGISTRY: dict[str, type] = {
 
 _DEDUP_REGISTRY: dict[str, type] = {
     "hash": HashDeduplicator,
+    "near": NearDuplicateDeduplicator,
 }
 
 

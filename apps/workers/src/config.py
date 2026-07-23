@@ -62,7 +62,7 @@ class WorkerSettings(BaseSettings):
     chunking_backend: str = "recursive"  # "recursive" | "sliding"
     llm_provider_backend: str = "openai"  # "openai" (any OpenAI-compatible)
     dataset_filter_backend: str = "heuristic"  # "heuristic"
-    dedup_backend: str = "hash"  # "hash"
+    dedup_backend: str = "hash"  # "hash" (exact) | "near" (token-Jaccard near-dup)
     judge_backend: str = "openai"  # "openai"
     # Judge resilience: retry transient errors, then fail loudly by default so a
     # broken judge never silently poisons rewards/scores with fabricated numbers.
