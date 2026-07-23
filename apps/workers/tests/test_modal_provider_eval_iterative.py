@@ -184,7 +184,7 @@ async def test_evaluation_reserves_on_evaluations_table_and_does_not_clear(monke
         dataset_path="p",
         judge_model="jm",
         judge_api_base="jb",
-        gpu_class="A100-80GB",
+        gpu_class="a10080gb",
         llm_config={
             "api_base_url": "u",
             "api_key": "k",
