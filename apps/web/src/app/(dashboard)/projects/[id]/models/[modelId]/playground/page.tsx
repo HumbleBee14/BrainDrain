@@ -4,9 +4,14 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import { useModel } from "@/hooks/use-models";
-import { useApiKeys, useCreateApiKey } from "@/hooks/use-api-keys";
+import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { useDeploymentStatus } from "@/hooks/use-deployments";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import {
+  getStoredPlaygroundKey,
+  storePlaygroundKey,
+  clearStoredPlaygroundKey,
+} from "@/lib/playground-key";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -19,7 +24,6 @@ export default function PlaygroundPage() {
   const params = useParams<{ id: string; modelId: string }>();
   const { data: model } = useModel(params.modelId);
   const { data: deployment } = useDeploymentStatus(params.modelId);
-  const { data: apiKeys } = useApiKeys(params.modelId);
   const createApiKey = useCreateApiKey(params.modelId);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -36,27 +40,26 @@ export default function PlaygroundPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const isActive = deployment?.deployment_status === "active";
-  const keys = apiKeys ?? [];
-  const activeKeys = keys.filter((k) => k.is_active);
 
   const ensureApiKey = useCallback(async (): Promise<string | null> => {
     if (playgroundKey) return playgroundKey;
 
-    // Use first active key if available
-    if (activeKeys.length > 0) {
-      // We only have the prefix, not the full key. Need to create a new one.
+    const stored = getStoredPlaygroundKey(params.modelId);
+    if (stored) {
+      setPlaygroundKey(stored);
+      return stored;
     }
 
-    // Auto-create a playground key
     try {
       const result = await createApiKey.mutateAsync({ name: "playground" });
       setPlaygroundKey(result.key);
+      storePlaygroundKey(params.modelId, result.key);
       return result.key;
     } catch {
       setError("Failed to create API key for playground.");
       return null;
     }
-  }, [playgroundKey, activeKeys, createApiKey]);
+  }, [playgroundKey, createApiKey, params.modelId]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -95,6 +98,10 @@ export default function PlaygroundPage() {
       });
 
       if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          clearStoredPlaygroundKey(params.modelId);
+          setPlaygroundKey(null);
+        }
         const body = await res
           .json()
           .catch(() => ({ error: { message: "Request failed" } }));

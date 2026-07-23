@@ -24,6 +24,8 @@ import {
 } from "@/hooks/use-exports";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 function DeploymentBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     undeployed:
@@ -160,6 +162,7 @@ export default function ModelDetailPage() {
   const [keyName, setKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [exportQuantType, setExportQuantType] = useState("Q5_K_M");
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -207,6 +210,21 @@ export default function ModelDetailPage() {
     setCopiedKey(true);
     setTimeout(() => setCopiedKey(false), 2000);
   };
+
+  const handleCopySnippet = async (id: string, text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedSnippet(id);
+    setTimeout(() => setCopiedSnippet((cur) => (cur === id ? null : cur)), 2000);
+  };
+
+  const endpointUrl = `${API_URL}/v1/chat/completions`;
+  const curlSnippet = `curl ${endpointUrl} \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model.name}",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'`;
 
   return (
     <div>
@@ -516,6 +534,54 @@ export default function ModelDetailPage() {
           <p className="text-sm text-zinc-400 dark:text-zinc-600">No API keys yet.</p>
         )}
       </div>
+
+      {/* Inference endpoint */}
+      {isActive && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
+            Inference Endpoint
+          </h2>
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 space-y-5">
+            <div>
+              <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+                Endpoint URL
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white font-mono break-all">
+                  {endpointUrl}
+                </code>
+                <button
+                  onClick={() => handleCopySnippet("url", endpointUrl)}
+                  className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition shrink-0"
+                >
+                  {copiedSnippet === "url" ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-2">
+                OpenAI-compatible Chat Completions API. Authenticate with an API
+                key above; the key selects this model, so the{" "}
+                <code className="font-mono">model</code> field is optional.
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-zinc-500 uppercase tracking-wider">
+                  Example request
+                </p>
+                <button
+                  onClick={() => handleCopySnippet("curl", curlSnippet)}
+                  className="rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
+                >
+                  {copiedSnippet === "curl" ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <pre className="rounded-lg bg-zinc-50 dark:bg-zinc-900 p-4 text-xs text-zinc-800 dark:text-zinc-200 font-mono overflow-x-auto">
+                {curlSnippet}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Evaluations section */}
       <div className="mb-8">

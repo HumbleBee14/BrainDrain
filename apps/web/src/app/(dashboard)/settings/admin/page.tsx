@@ -2,12 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 import {
   useAdminConfig,
   useUpdateAdminConfig,
   useResetAdminConfig,
 } from "@/hooks/use-settings";
+import { useCurrentRole } from "@/hooks/use-team";
+import { ErrorState } from "@/components/error-state";
 import type { AdminConfigResponse } from "@/lib/api-client";
+
+const positiveInt = (min: number) =>
+  z.number().int("Must be a whole number").gte(min, `Must be at least ${min}`);
+const nonNegative = z.number().gte(0, "Cannot be negative");
+
+const adminConfigSchema = z.object({
+  gpu_rates: z.record(z.string(), nonNegative),
+  cost_approval_threshold: nonNegative,
+  inference_input_cost_per_million: nonNegative,
+  inference_output_cost_per_million: nonNegative,
+  default_max_tokens: positiveInt(1),
+  default_rate_limit_rpm: positiveInt(1),
+  max_batch_size: positiveInt(1),
+  chunk_size_tokens: positiveInt(100),
+});
 
 const GPU_LABELS: Record<string, string> = {
   t4: "T4",
@@ -27,6 +45,7 @@ function NumberField({
   min,
   prefix,
   suffix,
+  error,
 }: {
   label: string;
   description: string;
@@ -36,6 +55,7 @@ function NumberField({
   min?: number;
   prefix?: string;
   suffix?: string;
+  error?: string;
 }) {
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
@@ -47,25 +67,36 @@ function NumberField({
         {prefix && <span className="text-sm text-zinc-500">{prefix}</span>}
         <input
           type="number"
-          value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          value={Number.isNaN(value) ? "" : value}
+          onChange={(e) => {
+            const raw = e.target.value;
+            onChange(raw === "" ? NaN : parseFloat(raw));
+          }}
           step={step ?? 1}
           min={min ?? 0}
-          className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white font-mono"
+          className={`w-full rounded-lg border bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white font-mono ${
+            error
+              ? "border-red-400 dark:border-red-500"
+              : "border-zinc-300 dark:border-zinc-700"
+          }`}
         />
         {suffix && <span className="text-sm text-zinc-500">{suffix}</span>}
       </div>
+      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
 }
 
 export default function AdminConfigPage() {
-  const { data: config, isLoading } = useAdminConfig();
+  const { data: config, isLoading, isError, refetch, isFetching } =
+    useAdminConfig();
+  const { isAdmin, isLoading: roleLoading } = useCurrentRole();
   const updateConfig = useUpdateAdminConfig();
   const resetConfig = useResetAdminConfig();
 
   const [form, setForm] = useState<AdminConfigResponse | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (config && !form) {
@@ -93,6 +124,7 @@ export default function AdminConfigPage() {
     if (!form) return;
     setForm({ ...form, [key]: value });
     setDirty(true);
+    setErrors({});
   };
 
   const updateGpuRate = (gpuClass: string, rate: number) => {
@@ -102,20 +134,23 @@ export default function AdminConfigPage() {
       gpu_rates: { ...form.gpu_rates, [gpuClass]: rate },
     });
     setDirty(true);
+    setErrors({});
   };
 
   const handleSave = () => {
     if (!form) return;
-    updateConfig.mutate({
-      gpu_rates: form.gpu_rates,
-      cost_approval_threshold: form.cost_approval_threshold,
-      inference_input_cost_per_million: form.inference_input_cost_per_million,
-      inference_output_cost_per_million: form.inference_output_cost_per_million,
-      default_max_tokens: form.default_max_tokens,
-      default_rate_limit_rpm: form.default_rate_limit_rpm,
-      max_batch_size: form.max_batch_size,
-      chunk_size_tokens: form.chunk_size_tokens,
-    });
+    const parsed = adminConfigSchema.safeParse(form);
+    if (!parsed.success) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        fieldErrors[issue.path.join(".")] = issue.message;
+      }
+      setErrors(fieldErrors);
+      toast.error("Please fix the highlighted fields before saving");
+      return;
+    }
+    setErrors({});
+    updateConfig.mutate(parsed.data);
     setDirty(false);
   };
 
@@ -123,6 +158,54 @@ export default function AdminConfigPage() {
     resetConfig.mutate(undefined as unknown as void);
     setDirty(false);
   };
+
+  if (roleLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <p className="text-zinc-500">Loading configuration...</p>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center text-center py-20">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 mb-4">
+          <svg
+            className="h-6 w-6 text-zinc-500"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h1 className="text-lg font-semibold text-zinc-900 dark:text-white">
+          Admin access required
+        </h1>
+        <p className="mt-1 max-w-sm text-sm text-zinc-500">
+          Only organization admins and owners can view or change platform
+          configuration. Contact an admin if you need access.
+        </p>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load admin configuration"
+        message="The configuration service didn't respond. Check your connection and try again."
+        onRetry={() => refetch()}
+        isRetrying={isFetching}
+      />
+    );
+  }
 
   if (isLoading || !form) {
     return (
@@ -185,16 +268,30 @@ export default function AdminConfigPage() {
                 <span className="text-sm text-zinc-500">$</span>
                 <input
                   type="number"
-                  value={rate}
+                  value={Number.isNaN(rate) ? "" : rate}
                   onChange={(e) =>
-                    updateGpuRate(gpuClass, parseFloat(e.target.value) || 0)
+                    updateGpuRate(
+                      gpuClass,
+                      e.target.value === ""
+                        ? NaN
+                        : parseFloat(e.target.value),
+                    )
                   }
                   step={0.1}
                   min={0}
-                  className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2 py-1.5 text-sm text-zinc-900 dark:text-white font-mono"
+                  className={`w-full rounded border bg-zinc-50 dark:bg-zinc-900 px-2 py-1.5 text-sm text-zinc-900 dark:text-white font-mono ${
+                    errors[`gpu_rates.${gpuClass}`]
+                      ? "border-red-400 dark:border-red-500"
+                      : "border-zinc-300 dark:border-zinc-700"
+                  }`}
                 />
                 <span className="text-xs text-zinc-400 dark:text-zinc-600">/hr</span>
               </div>
+              {errors[`gpu_rates.${gpuClass}`] && (
+                <p className="mt-1 text-xs text-red-500">
+                  {errors[`gpu_rates.${gpuClass}`]}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -214,6 +311,7 @@ export default function AdminConfigPage() {
             onChange={(v) => updateField("cost_approval_threshold", v)}
             step={0.5}
             prefix="$"
+            error={errors.cost_approval_threshold}
           />
           <NumberField
             label="Chunk Size"
@@ -223,6 +321,7 @@ export default function AdminConfigPage() {
             step={100}
             min={100}
             suffix="tokens"
+            error={errors.chunk_size_tokens}
           />
         </div>
       </div>
@@ -244,6 +343,7 @@ export default function AdminConfigPage() {
             step={0.01}
             prefix="$"
             suffix="/M tokens"
+            error={errors.inference_input_cost_per_million}
           />
           <NumberField
             label="Output Token Cost"
@@ -255,6 +355,7 @@ export default function AdminConfigPage() {
             step={0.01}
             prefix="$"
             suffix="/M tokens"
+            error={errors.inference_output_cost_per_million}
           />
           <NumberField
             label="Default Max Tokens"
@@ -263,6 +364,7 @@ export default function AdminConfigPage() {
             onChange={(v) => updateField("default_max_tokens", v)}
             step={64}
             min={1}
+            error={errors.default_max_tokens}
           />
           <NumberField
             label="Max Batch Size"
@@ -270,6 +372,7 @@ export default function AdminConfigPage() {
             value={form.max_batch_size}
             onChange={(v) => updateField("max_batch_size", v)}
             min={1}
+            error={errors.max_batch_size}
           />
         </div>
       </div>
@@ -288,6 +391,7 @@ export default function AdminConfigPage() {
             onChange={(v) => updateField("default_rate_limit_rpm", v)}
             min={1}
             suffix="req/min"
+            error={errors.default_rate_limit_rpm}
           />
         </div>
       </div>

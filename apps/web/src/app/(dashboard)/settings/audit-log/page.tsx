@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useAuditLogs } from "@/hooks/use-audit-logs";
+import { ErrorState } from "@/components/error-state";
 
 const PAGE_SIZE = 25;
 
@@ -44,7 +45,7 @@ export default function AuditLogPage() {
   const [resourceTypeFilter, setResourceTypeFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { data, isLoading } = useAuditLogs({
+  const { data, isLoading, isError, isFetching, refetch } = useAuditLogs({
     offset: page * PAGE_SIZE,
     limit: PAGE_SIZE,
     action: actionFilter || undefined,
@@ -197,6 +198,14 @@ export default function AuditLogPage() {
       </div>
 
       {/* Table */}
+      {isError ? (
+        <ErrorState
+          title="Couldn't load the audit log"
+          message="The audit service didn't respond. Check your connection and try again."
+          onRetry={() => refetch()}
+          isRetrying={isFetching}
+        />
+      ) : (
       <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center text-zinc-500">
@@ -297,6 +306,7 @@ export default function AuditLogPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

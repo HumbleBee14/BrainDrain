@@ -6,6 +6,11 @@ import { useModels } from "@/hooks/use-models";
 import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { useProject } from "@/hooks/use-projects";
+import {
+  getStoredPlaygroundKey,
+  storePlaygroundKey,
+  clearStoredPlaygroundKey,
+} from "@/lib/playground-key";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -180,9 +185,16 @@ export default function ABPlaygroundPage() {
     ): Promise<string | null> => {
       if (panel.apiKey) return panel.apiKey;
 
+      const stored = getStoredPlaygroundKey(panel.modelId);
+      if (stored) {
+        setPanel((prev) => ({ ...prev, apiKey: stored }));
+        return stored;
+      }
+
       try {
         const result = await createKey.mutateAsync({ name: "playground-ab" });
         setPanel((prev) => ({ ...prev, apiKey: result.key }));
+        storePlaygroundKey(panel.modelId, result.key);
         return result.key;
       } catch {
         setPanel((prev) => ({
@@ -198,6 +210,7 @@ export default function ABPlaygroundPage() {
   const streamToPanel = useCallback(
     async (
       apiKey: string,
+      modelId: string,
       messages: ChatMessage[],
       setPanel: React.Dispatch<React.SetStateAction<PanelState>>,
       scrollRef: React.RefObject<HTMLDivElement | null>,
@@ -225,6 +238,10 @@ export default function ABPlaygroundPage() {
         });
 
         if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            clearStoredPlaygroundKey(modelId);
+            setPanel((prev) => ({ ...prev, apiKey: null }));
+          }
           const body = await res
             .json()
             .catch(() => ({ error: { message: "Request failed" } }));
@@ -349,7 +366,14 @@ export default function ABPlaygroundPage() {
           return;
         }
         const msgs = [...panel.messages, userMessage];
-        await streamToPanel(apiKey, msgs, setPanel, scrollRef, controller.signal);
+        await streamToPanel(
+          apiKey,
+          panel.modelId,
+          msgs,
+          setPanel,
+          scrollRef,
+          controller.signal,
+        );
       }),
     );
   };

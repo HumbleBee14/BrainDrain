@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, type TeamMember, type TeamInvitation } from "@/lib/api-client";
 import { useAuthedQuery, useAuthedMutation } from "@/hooks/use-authed-query";
@@ -9,6 +10,19 @@ export function useTeamMembers() {
     queryKey: ["team", "members"],
     queryFn: (token) => api.team.listMembers(token),
   });
+}
+
+// Clerk's userId is the same value the API stores as team_member.user_id.
+export function useCurrentRole() {
+  const { userId } = useAuth();
+  const { data: members, isLoading, isError } = useTeamMembers();
+  const role = members?.find((m) => m.user_id === userId)?.role ?? null;
+  return {
+    role,
+    isAdmin: role === "admin" || role === "owner",
+    isLoading,
+    isError,
+  };
 }
 
 export function useTeamInvitations() {

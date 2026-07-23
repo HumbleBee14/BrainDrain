@@ -2,11 +2,26 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 import {
   useLlmSettings,
   useUpdateLlmSettings,
   useDeleteLlmSettings,
 } from "@/hooks/use-settings";
+import { ErrorState } from "@/components/error-state";
+
+const llmSettingsSchema = z.object({
+  api_base_url: z
+    .string()
+    .trim()
+    .url("Enter a valid URL (e.g. https://api.openai.com/v1)"),
+  model: z.string().trim().min(1, "Model is required"),
+  max_tokens: z
+    .number()
+    .int("Must be a whole number")
+    .gte(100, "Must be at least 100")
+    .lte(128000, "Must be 128000 or less"),
+});
 
 const PROVIDERS = [
   {
@@ -65,9 +80,11 @@ const DEFAULT_FORM: FormState = {
 };
 
 export default function LlmSettingsPage() {
-  const { data: settings, isLoading } = useLlmSettings();
+  const { data: settings, isLoading, isError, isFetching, refetch } =
+    useLlmSettings();
   const updateSettings = useUpdateLlmSettings();
   const deleteSettings = useDeleteLlmSettings();
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (updateSettings.isSuccess) toast.success("LLM settings saved");
@@ -115,9 +132,21 @@ export default function LlmSettingsPage() {
   const updateField = (field: keyof FormState, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     setHasChanges(true);
+    setFormErrors({});
   };
 
   const handleSave = () => {
+    const parsed = llmSettingsSchema.safeParse(form);
+    if (!parsed.success) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        fieldErrors[issue.path.join(".")] = issue.message;
+      }
+      setFormErrors(fieldErrors);
+      toast.error("Please fix the highlighted fields before saving");
+      return;
+    }
+    setFormErrors({});
     const payload: Record<string, string | number> = {
       provider: form.provider,
       api_base_url: form.api_base_url,
@@ -155,7 +184,14 @@ export default function LlmSettingsPage() {
         platform&apos;s default provider is used.
       </p>
 
-      {isLoading ? (
+      {isError ? (
+        <ErrorState
+          title="Couldn't load LLM settings"
+          message="We couldn't reach the settings service. Your configuration is safe — please try again."
+          onRetry={() => refetch()}
+          isRetrying={isFetching}
+        />
+      ) : isLoading ? (
         <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-8 text-center text-zinc-500">
           Loading settings...
         </div>
@@ -234,11 +270,21 @@ export default function LlmSettingsPage() {
                   value={form.api_base_url}
                   onChange={(e) => updateField("api_base_url", e.target.value)}
                   placeholder="https://api.openai.com/v1"
-                  className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
+                  className={`w-full bg-zinc-50 dark:bg-zinc-900 border rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono ${
+                    formErrors.api_base_url
+                      ? "border-red-400 dark:border-red-500"
+                      : "border-zinc-300 dark:border-zinc-700"
+                  }`}
                 />
-                <p className="text-xs text-zinc-500 mt-1">
-                  Must be an OpenAI-compatible API endpoint.
-                </p>
+                {formErrors.api_base_url ? (
+                  <p className="text-xs text-red-500 mt-1">
+                    {formErrors.api_base_url}
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Must be an OpenAI-compatible API endpoint.
+                  </p>
+                )}
               </div>
 
               {/* API Key */}
@@ -322,6 +368,9 @@ export default function LlmSettingsPage() {
                     className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm font-mono"
                   />
                 )}
+                {formErrors.model && (
+                  <p className="text-xs text-red-500 mt-1">{formErrors.model}</p>
+                )}
               </div>
 
               {/* Max Tokens */}
@@ -337,12 +386,22 @@ export default function LlmSettingsPage() {
                   }
                   min={100}
                   max={128000}
-                  className="w-48 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
+                  className={`w-48 bg-zinc-50 dark:bg-zinc-900 border rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm ${
+                    formErrors.max_tokens
+                      ? "border-red-400 dark:border-red-500"
+                      : "border-zinc-300 dark:border-zinc-700"
+                  }`}
                 />
-                <p className="text-xs text-zinc-500 mt-1">
-                  Maximum tokens per LLM call for data generation and evaluation
-                  judging.
-                </p>
+                {formErrors.max_tokens ? (
+                  <p className="text-xs text-red-500 mt-1">
+                    {formErrors.max_tokens}
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Maximum tokens per LLM call for data generation and
+                    evaluation judging.
+                  </p>
+                )}
               </div>
             </div>
 

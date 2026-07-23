@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCurrentRole } from "@/hooks/use-team";
 
 const tabs = [
   { label: "Team", href: "/settings/team" },
@@ -10,7 +11,7 @@ const tabs = [
   { label: "Usage", href: "/settings/usage" },
   { label: "Notifications", href: "/settings/notifications" },
   { label: "Inference", href: "/settings/inference" },
-  { label: "Admin Config", href: "/settings/admin" },
+  { label: "Admin Config", href: "/settings/admin", adminOnly: true },
   { label: "Audit Log", href: "/settings/audit-log" },
 ];
 
@@ -20,12 +21,14 @@ export default function SettingsLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { isAdmin } = useCurrentRole();
+  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
 
   return (
     <div>
       <div className="overflow-x-auto border-b border-zinc-200 dark:border-zinc-800 mb-6">
         <div className="flex gap-1 whitespace-nowrap">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <Link
               key={tab.href}
               href={tab.href}
