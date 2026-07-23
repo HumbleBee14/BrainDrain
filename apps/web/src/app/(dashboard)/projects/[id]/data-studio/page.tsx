@@ -163,6 +163,8 @@ export default function DataStudioPage() {
   const [initialGuidance, setInitialGuidance] = useState("");
   const [localGuidance, setLocalGuidance] = useState("");
   const [guidanceDirty, setGuidanceDirty] = useState(false);
+  const [localSystemPrompt, setLocalSystemPrompt] = useState("");
+  const [systemPromptDirty, setSystemPromptDirty] = useState(false);
   const [localFacets, setLocalFacets] = useState<Facet[]>([]);
 
   const notFound =
@@ -182,12 +184,19 @@ export default function DataStudioPage() {
   }, [guide, guidanceDirty]);
 
   useEffect(() => {
+    if (guide && !systemPromptDirty) setLocalSystemPrompt(guide.system_prompt);
+  }, [guide, systemPromptDirty]);
+
+  useEffect(() => {
     if (guide) setLocalFacets(guide.facets);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guide?.id, facetsKey]);
 
   useEffect(() => {
-    if (updateGuidance.isSuccess) setGuidanceDirty(false);
+    if (updateGuidance.isSuccess) {
+      setGuidanceDirty(false);
+      setSystemPromptDirty(false);
+    }
   }, [updateGuidance.isSuccess]);
 
   // Toasts for mutation outcomes.
@@ -229,7 +238,7 @@ export default function DataStudioPage() {
   }, [refineGuidance.isError, refineGuidance.error]);
 
   useEffect(() => {
-    if (updateGuidance.isSuccess) toast.success("Guidance saved");
+    if (updateGuidance.isSuccess) toast.success("Saved");
   }, [updateGuidance.isSuccess]);
   useEffect(() => {
     if (updateGuidance.isError) toast.error(updateGuidance.error.message);
@@ -418,22 +427,47 @@ export default function DataStudioPage() {
               placeholder="Describe the kind of training examples you want (tone, style, focus areas)..."
               className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 disabled:opacity-60 mb-3"
             />
+
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+              System Prompt{" "}
+              <span className="font-normal text-zinc-400 dark:text-zinc-500">
+                (advanced, optional)
+              </span>
+            </label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+              Baked into every training example and used as the default when you
+              serve the model. Leave blank for a neutral assistant.
+            </p>
+            <textarea
+              value={localSystemPrompt}
+              onChange={(e) => {
+                setLocalSystemPrompt(e.target.value);
+                setSystemPromptDirty(true);
+              }}
+              disabled={!canEditGuidance}
+              rows={2}
+              placeholder="e.g. You are a concise legal assistant for tenancy law."
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 disabled:opacity-60 mb-3"
+            />
             <div className="flex flex-wrap gap-2 md:gap-3">
               <button
                 onClick={() =>
                   updateGuidance.mutate({
                     id: guide.id,
-                    data: { guidance: localGuidance },
+                    data: {
+                      guidance: localGuidance,
+                      system_prompt: localSystemPrompt,
+                    },
                   })
                 }
                 disabled={
                   !canEditGuidance ||
-                  !guidanceDirty ||
+                  (!guidanceDirty && !systemPromptDirty) ||
                   updateGuidance.isPending
                 }
                 className="rounded-lg bg-zinc-900 dark:bg-white px-4 py-2 text-sm font-medium text-white dark:text-zinc-900 hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {updateGuidance.isPending ? "Saving..." : "Save Guidance"}
+                {updateGuidance.isPending ? "Saving..." : "Save"}
               </button>
               <button
                 onClick={() => refineGuidance.mutate(guide.id)}

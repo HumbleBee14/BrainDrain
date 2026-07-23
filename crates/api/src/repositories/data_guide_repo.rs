@@ -88,6 +88,31 @@ impl DataGuideRepository for PgDataGuideRepo {
         })
     }
 
+    fn get_by_dataset_id(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<DataGuide>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let guide = sqlx::query_as::<_, DataGuide>(
+                r#"
+                SELECT * FROM data_guides
+                WHERE dataset_id = $1 AND tenant_id = $2
+                ORDER BY updated_at DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(dataset_id)
+            .bind(tenant_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(guide)
+        })
+    }
+
     fn update_status(
         &self,
         tenant_id: Uuid,
@@ -160,15 +185,20 @@ impl DataGuideRepository for PgDataGuideRepo {
         tenant_id: Uuid,
         id: Uuid,
         guidance: &str,
+        system_prompt: Option<&str>,
         refinement_history: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>> {
         let guidance = guidance.to_string();
+        let system_prompt = system_prompt.map(|s| s.to_string());
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             sqlx::query(
                 r#"
                 UPDATE data_guides
-                SET guidance = $3, refinement_history = $4, updated_at = NOW()
+                SET guidance = $3,
+                    system_prompt = COALESCE($5, system_prompt),
+                    refinement_history = $4,
+                    updated_at = NOW()
                 WHERE id = $1 AND tenant_id = $2
                 "#,
             )
@@ -176,6 +206,7 @@ impl DataGuideRepository for PgDataGuideRepo {
             .bind(tenant_id)
             .bind(guidance)
             .bind(refinement_history)
+            .bind(system_prompt)
             .execute(&mut *tx)
             .await?;
 

@@ -87,6 +87,24 @@ pub struct ChatMessage {
     content: String,
 }
 
+/// Prepend the model's trained system prompt when the caller sent none, so the
+/// model is served under the same system prompt it was fine-tuned on. A
+/// caller-supplied system message always wins; an empty/absent stored prompt is
+/// a no-op (preserving the prior pass-through behavior).
+fn with_default_system_prompt(messages: &[ChatMessage], default_prompt: &str) -> Vec<ChatMessage> {
+    let has_system = messages.iter().any(|m| m.role == "system");
+    if default_prompt.is_empty() || has_system {
+        return messages.to_vec();
+    }
+    let mut out = Vec::with_capacity(messages.len() + 1);
+    out.push(ChatMessage {
+        role: "system".to_string(),
+        content: default_prompt.to_string(),
+    });
+    out.extend_from_slice(messages);
+    out
+}
+
 fn default_temperature() -> f64 {
     0.7
 }
@@ -182,10 +200,17 @@ pub async fn chat_completions(
 
     let is_streaming = body.stream.unwrap_or(false);
 
+    let messages = with_default_system_prompt(
+        &body.messages,
+        model.deployment_config["system_prompt"]
+            .as_str()
+            .unwrap_or(""),
+    );
+
     // Build the inference request via the backend (handles adapter selection correctly)
     let mut inference_request = backend.build_inference_body(
         &adapter_name,
-        &serde_json::json!(body.messages),
+        &serde_json::json!(messages),
         body.temperature,
         max_tokens,
         body.top_p.unwrap_or(1.0),
@@ -492,6 +517,10 @@ pub async fn batch_chat_completions(
     let batch_url = batch_backend.chat_completions_url();
     let http_client = state.http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
+    let default_system_prompt = model.deployment_config["system_prompt"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
 
     // Process batch items concurrently with bounded parallelism
     let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
@@ -501,12 +530,14 @@ pub async fn batch_chat_completions(
             let client = http_client.clone();
             let cb = batch_backend.circuit_breaker().clone();
             let backend = batch_backend.clone();
+            let system_prompt = default_system_prompt.clone();
 
             async move {
                 let max_tokens = item.max_tokens.min(max_tokens_limit);
+                let messages = with_default_system_prompt(&item.messages, &system_prompt);
                 let request_body = backend.build_inference_body(
                     &adapter,
-                    &serde_json::json!(item.messages),
+                    &serde_json::json!(messages),
                     item.temperature,
                     max_tokens,
                     item.top_p.unwrap_or(1.0),
@@ -616,4 +647,42 @@ pub async fn batch_chat_completions(
             failed,
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn injects_default_when_caller_sends_no_system_message() {
+        let msgs = vec![msg("user", "hi")];
+        let out = with_default_system_prompt(&msgs, "You are a legal assistant.");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].role, "system");
+        assert_eq!(out[0].content, "You are a legal assistant.");
+        assert_eq!(out[1].role, "user");
+    }
+
+    #[test]
+    fn caller_supplied_system_message_wins() {
+        let msgs = vec![msg("system", "caller persona"), msg("user", "hi")];
+        let out = with_default_system_prompt(&msgs, "trained persona");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].content, "caller persona");
+    }
+
+    #[test]
+    fn empty_default_is_pass_through() {
+        let msgs = vec![msg("user", "hi")];
+        let out = with_default_system_prompt(&msgs, "");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].role, "user");
+    }
 }

@@ -3,4 +3,9 @@
 /**
  * Request body for updating the free-form guidance text.
  */
-export type UpdateGuidanceRequest = { guidance: string, };
+export type UpdateGuidanceRequest = { guidance: string, 
+/**
+ * Optional system prompt for the trained model. Omit to leave unchanged;
+ * empty string clears it back to the neutral default.
+ */
+system_prompt?: string, };

@@ -35,6 +35,9 @@ pub struct DataGuideResponse {
     pub task_type: TaskType,
     pub status: DataGuideStatus,
     pub guidance: String,
+    /// Optional system prompt baked into every training example and reused as
+    /// the serving default. Empty means the neutral built-in default.
+    pub system_prompt: String,
     pub facets: Vec<Facet>,
     pub preview_samples: Vec<PreviewSample>,
     pub dataset_id: Option<String>,
@@ -50,6 +53,7 @@ impl From<DataGuide> for DataGuideResponse {
             task_type: g.task_type.parse().unwrap_or(TaskType::QuestionAnswering),
             status: g.status.parse().unwrap_or(DataGuideStatus::Draft),
             guidance: g.guidance,
+            system_prompt: g.system_prompt,
             facets: serde_json::from_value(g.facets).unwrap_or_default(),
             preview_samples: serde_json::from_value(g.preview_samples).unwrap_or_default(),
             dataset_id: g.dataset_id.map(|id| id.to_string()),
@@ -110,6 +114,10 @@ pub struct RateSamplesRequest {
 #[ts(export)]
 pub struct UpdateGuidanceRequest {
     pub guidance: String,
+    /// Optional system prompt for the trained model. Omit to leave unchanged;
+    /// empty string clears it back to the neutral default.
+    #[ts(optional)]
+    pub system_prompt: Option<String>,
 }
 
 /// Request body for generating the full dataset from the stored data guide session.
@@ -130,6 +138,7 @@ mod tests {
             task_type: TaskType::QuestionAnswering,
             status: DataGuideStatus::Draft,
             guidance: String::new(),
+            system_prompt: String::new(),
             facets: Vec::new(),
             preview_samples: Vec::new(),
             dataset_id: None,
