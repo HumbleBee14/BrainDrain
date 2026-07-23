@@ -2,6 +2,25 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Notification event-type identifiers users subscribe to via notification
+/// preferences. These are the coarse categories a tenant opts into (underscore
+/// form) — distinct from the dotted `PipelineEvent` types below. Single source
+/// of truth so preference seeding and event emission cannot drift apart.
+pub mod notification {
+    pub const TRAINING_COMPLETE: &str = "training_complete";
+    pub const EVALUATION_COMPLETE: &str = "evaluation_complete";
+    pub const DEPLOYMENT_STATUS: &str = "deployment_status";
+    pub const INVITATION: &str = "invitation";
+
+    /// Events a freshly bootstrapped tenant is opted into by default.
+    pub const DEFAULTS: &[&str] = &[
+        TRAINING_COMPLETE,
+        EVALUATION_COMPLETE,
+        DEPLOYMENT_STATUS,
+        INVITATION,
+    ];
+}
+
 /// Base trait for all pipeline events.
 /// Every event is serializable and carries tenant context for multi-tenancy.
 pub trait PipelineEvent: Serialize {
@@ -138,6 +157,18 @@ impl PipelineEvent for ModelDeployedEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_event_values_are_stable() {
+        // These strings are matched against stored preferences and the worker's
+        // emitted events; pin them so a rename can't silently break delivery.
+        assert_eq!(notification::TRAINING_COMPLETE, "training_complete");
+        assert_eq!(notification::EVALUATION_COMPLETE, "evaluation_complete");
+        assert_eq!(notification::DEPLOYMENT_STATUS, "deployment_status");
+        assert_eq!(notification::INVITATION, "invitation");
+        assert_eq!(notification::DEFAULTS.len(), 4);
+        assert!(notification::DEFAULTS.contains(&notification::INVITATION));
+    }
 
     #[test]
     fn event_types_are_dotted_format() {

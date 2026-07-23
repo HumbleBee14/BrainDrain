@@ -492,15 +492,6 @@ pub async fn auth_middleware(
     next.run(request).await
 }
 
-/// Event types a new tenant is opted into by email so it hears about the core
-/// pipeline milestones without any setup.
-const DEFAULT_NOTIFICATION_EVENTS: &[&str] = &[
-    "training_complete",
-    "evaluation_complete",
-    "deployment_status",
-    "invitation",
-];
-
 /// Seed default notification preferences for a freshly bootstrapped owner.
 /// In-app is always on; email is added when the JWT carries an address.
 /// Best-effort — a failure here never blocks sign-in.
@@ -511,7 +502,7 @@ async fn seed_default_notification_prefs(state: &AppState, user: &AuthenticatedU
         .filter(|e| !e.is_empty())
         .map(|e| serde_json::json!({ "address": e }));
 
-    for event_type in DEFAULT_NOTIFICATION_EVENTS {
+    for event_type in platform_shared::events::notification::DEFAULTS {
         if let Err(e) = state
             .notification_repo()
             .upsert_preference(
