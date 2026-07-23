@@ -165,11 +165,11 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
               <ScoreCard
                 label="Base Model"
-                value={`${(scores.general.base_score * 100).toFixed(1)}%`}
+                value={`${scores.general.base_score.toFixed(1)}%`}
               />
               <ScoreCard
                 label="Fine-tuned"
-                value={`${(scores.general.finetuned_score * 100).toFixed(1)}%`}
+                value={`${scores.general.finetuned_score.toFixed(1)}%`}
               />
             </div>
             <ScoreCard
@@ -192,14 +192,12 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
                       </span>
                       <span className="text-zinc-600 dark:text-zinc-400">
                         {(
-                          (vals as { base: number; finetuned: number })
-                            .finetuned * 100
-                        ).toFixed(0)}
+                          vals as { base: number; finetuned: number }
+                        ).finetuned.toFixed(0)}
                         % (base:{" "}
                         {(
-                          (vals as { base: number; finetuned: number }).base *
-                          100
-                        ).toFixed(0)}
+                          vals as { base: number; finetuned: number }
+                        ).base.toFixed(0)}
                         %)
                       </span>
                     </div>
