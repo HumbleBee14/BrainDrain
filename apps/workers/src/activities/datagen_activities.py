@@ -69,10 +69,17 @@ async def _resolve_tenant_llm(
 
 
 def _llm_call_closure(
-    infra: InfraContainer, llm_config: TenantLlmConfig, provider, http: httpx.AsyncClient
+    infra: InfraContainer,
+    llm_config: TenantLlmConfig,
+    provider,
+    http: httpx.AsyncClient,
+    temperature: float,
 ) -> LlmCall:
     """Same closure construction as GeneratePairsActivity — routes every call
-    through the circuit breaker with the tenant's resolved provider config."""
+    through the circuit breaker with the tenant's resolved provider config.
+
+    `temperature` is bound per closure so the deterministic judge and the
+    creative generator can share this factory with different sampling."""
 
     async def llm_call(prompt: str) -> str:
         return await infra.circuit_breaker.call(
@@ -83,6 +90,7 @@ def _llm_call_closure(
             api_base_url=llm_config.api_base_url,
             api_key=llm_config.api_key,
             max_tokens=llm_config.max_tokens,
+            temperature=temperature,
         )
 
     return llm_call
@@ -155,7 +163,9 @@ class GenerateFacetsActivity:
         doc_texts = [text[:6000] for _, text in docs]
 
         async with httpx.AsyncClient(timeout=120.0) as http:
-            llm_call = _llm_call_closure(self.infra, llm_config, provider, http)
+            llm_call = _llm_call_closure(
+                self.infra, llm_config, provider, http, settings.generation_temperature
+            )
             extractor = get_facet_extractor(settings, llm_call)
             facets = await extractor.extract(
                 doc_texts=doc_texts,
@@ -219,9 +229,14 @@ class GeneratePreviewActivity:
         facets = [Facet(**f) for f in input.facets if f.get("keep", True)] if input.facets else []
 
         async with httpx.AsyncClient(timeout=120.0) as http:
-            llm_call = _llm_call_closure(self.infra, llm_config, provider, http)
+            llm_call = _llm_call_closure(
+                self.infra, llm_config, provider, http, settings.generation_temperature
+            )
+            judge_call = _llm_call_closure(
+                self.infra, llm_config, provider, http, settings.judge_temperature
+            )
             pair_generator = get_pair_generator(settings, llm_call)
-            scorer = get_faithfulness_scorer(settings, llm_call)
+            scorer = get_faithfulness_scorer(settings, judge_call)
 
             generated: list[GeneratedPair] = []
             facet_ids: dict[int, str | None] = {}
@@ -311,7 +326,9 @@ class RefineGuidanceActivity:
         rated_samples = [RatedSample(**r) for r in input.rated]
 
         async with httpx.AsyncClient(timeout=120.0) as http:
-            llm_call = _llm_call_closure(self.infra, llm_config, provider, http)
+            llm_call = _llm_call_closure(
+                self.infra, llm_config, provider, http, settings.generation_temperature
+            )
             refiner = get_guidance_refiner(settings, llm_call)
             new_guidance, rationale = await refiner.refine(
                 task_type=input.task_type,

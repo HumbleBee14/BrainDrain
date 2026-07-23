@@ -194,19 +194,27 @@ class GeneratePairsActivity:
 
         async with httpx.AsyncClient(timeout=120.0) as http:
 
-            async def llm_call(prompt: str) -> str:
-                return await self.infra.circuit_breaker.call(
-                    provider.generate,
-                    http,
-                    prompt,
-                    model=llm_config.model,
-                    api_base_url=llm_config.api_base_url,
-                    api_key=llm_config.api_key,
-                    max_tokens=llm_config.max_tokens,
-                )
+            def make_llm_call(temperature: float):
+                async def llm_call(prompt: str) -> str:
+                    return await self.infra.circuit_breaker.call(
+                        provider.generate,
+                        http,
+                        prompt,
+                        model=llm_config.model,
+                        api_base_url=llm_config.api_base_url,
+                        api_key=llm_config.api_key,
+                        max_tokens=llm_config.max_tokens,
+                        temperature=temperature,
+                    )
 
-            pair_generator: PairGenerator = get_pair_generator(settings, llm_call)
-            scorer = get_faithfulness_scorer(settings, llm_call)
+                return llm_call
+
+            # Generation samples creatively; the faithfulness judge is scored
+            # near-deterministically so verdicts are stable for the same inputs.
+            pair_generator: PairGenerator = get_pair_generator(
+                settings, make_llm_call(settings.generation_temperature)
+            )
+            scorer = get_faithfulness_scorer(settings, make_llm_call(settings.judge_temperature))
 
             generated, pair_meta, failed_chunks = await generate_pairs_for_chunks(
                 chunks,
