@@ -206,8 +206,10 @@ class OpenAICompatibleJudge:
             'Respond ONLY in JSON: {"accuracy": N, "completeness": N, "faithfulness": N}'
         )
 
+        # On failure return no dimensions so the caller excludes the sample
+        # instead of scoring a fabricated midpoint.
         def _heuristic():
-            return {"accuracy": 3, "completeness": 3, "faithfulness": 3}
+            return {}
 
         try:
             return json.loads(self._call(judge_prompt))
