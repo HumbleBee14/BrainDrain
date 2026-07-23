@@ -36,6 +36,8 @@ import type {
   CatalogResponse,
   InferenceSampleResponse,
   FeedbackRating,
+  PromoteSampleItem,
+  PromoteSamplesResponse,
 } from "./generated";
 
 // ── Re-export generated types with frontend-friendly aliases ──
@@ -104,7 +106,12 @@ export type {
 
 // Feedback / data flywheel types
 export type { InferenceSampleResponse as InferenceSample } from "./generated";
-export type { FeedbackRating, SampleMessage } from "./generated";
+export type {
+  FeedbackRating,
+  SampleMessage,
+  PromoteSampleItem,
+  PromoteSamplesResponse,
+} from "./generated";
 
 // Data guide types (Data Studio guided synthetic data generation)
 export type { DataGuideResponse as DataGuide } from "./generated";
@@ -732,6 +739,21 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ enabled }),
       }),
+
+    promoteSamples: (
+      token: string,
+      modelId: string,
+      samples: PromoteSampleItem[],
+      name?: string,
+    ) =>
+      request<PromoteSamplesResponse>(
+        `/api/v1/models/${modelId}/samples/promote`,
+        {
+          token,
+          method: "POST",
+          body: JSON.stringify({ samples, name }),
+        },
+      ),
   },
 
   evaluations: {

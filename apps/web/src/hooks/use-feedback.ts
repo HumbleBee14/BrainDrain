@@ -7,6 +7,8 @@ import {
   type InferenceSample,
   type FeedbackRating,
   type PaginatedResponse,
+  type PromoteSampleItem,
+  type PromoteSamplesResponse,
 } from "@/lib/api-client";
 
 export function useSamples(
@@ -44,6 +46,27 @@ export function useRateSample(modelId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["samples", modelId] });
+    },
+  });
+}
+
+export function usePromoteSamples(modelId: string) {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    PromoteSamplesResponse,
+    Error,
+    { samples: PromoteSampleItem[]; name?: string }
+  >({
+    mutationFn: async ({ samples, name }) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.feedback.promoteSamples(token, modelId, samples, name);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["samples", modelId] });
+      queryClient.invalidateQueries({ queryKey: ["datasets"] });
     },
   });
 }

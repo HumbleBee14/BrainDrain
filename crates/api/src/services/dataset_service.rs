@@ -204,46 +204,20 @@ impl DatasetService {
             });
         }
 
-        let dataset_id = Uuid::new_v4();
-        let dataset_key = s3_paths::dataset_path(tenant_id, project_id, dataset_id);
-
-        // 90/10 train/val split, mirroring generated datasets.
         let total = parsed.records.len();
-        let split_idx = ((total as f64 * IMPORT_TRAIN_FRACTION) as usize).max(1);
-        let (train, val) = parsed.records.split_at(split_idx);
-
-        storage
-            .put(&dataset_key, jsonl_bytes(train), "application/jsonl")
-            .await
-            .map_err(AppError::Storage)?;
-
-        if !val.is_empty() {
-            let val_key = dataset_key.replace(".jsonl", "_val.jsonl");
-            storage
-                .put(&val_key, jsonl_bytes(val), "application/jsonl")
-                .await
-                .map_err(AppError::Storage)?;
-        }
-
-        let stats = serde_json::json!({
-            "source": "openai_import",
-            "total_pairs": total,
-            "train_pairs": train.len(),
-            "val_pairs": val.len(),
-            "rejected_rows": parsed.rejected_rows,
-        });
-
-        let dataset = dataset_repo
-            .create_imported(
-                tenant_id,
-                project_id,
-                dataset_id,
-                name.to_string(),
-                dataset_key,
-                total as i32,
-                stats,
-            )
-            .await?;
+        let dataset = Self::store_records_as_dataset(
+            dataset_repo,
+            storage,
+            tenant_id,
+            project_id,
+            name,
+            &parsed.records,
+            serde_json::json!({
+                "source": "openai_import",
+                "rejected_rows": parsed.rejected_rows,
+            }),
+        )
+        .await?;
 
         let errors = parsed
             .errors
@@ -260,6 +234,65 @@ impl DatasetService {
             rejected_rows: parsed.rejected_rows as u32,
             errors,
         })
+    }
+
+    /// Persist chat records as a new dataset: 90/10 train/val split, JSONL
+    /// objects in storage, and a `review_pending` dataset row. `extra_stats`
+    /// entries (e.g. source, provenance) are merged into the stats JSONB
+    /// alongside the computed pair counts.
+    pub async fn store_records_as_dataset(
+        dataset_repo: &dyn DatasetRepository,
+        storage: &impl ObjectStorage,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        name: &str,
+        records: &[serde_json::Value],
+        extra_stats: serde_json::Value,
+    ) -> AppResult<platform_db::models::Dataset> {
+        let dataset_id = Uuid::new_v4();
+        let dataset_key = s3_paths::dataset_path(tenant_id, project_id, dataset_id);
+
+        // 90/10 train/val split, mirroring generated datasets.
+        let total = records.len();
+        let split_idx = ((total as f64 * IMPORT_TRAIN_FRACTION) as usize).max(1);
+        let (train, val) = records.split_at(split_idx.min(total));
+
+        storage
+            .put(&dataset_key, jsonl_bytes(train), "application/jsonl")
+            .await
+            .map_err(AppError::Storage)?;
+
+        if !val.is_empty() {
+            let val_key = dataset_key.replace(".jsonl", "_val.jsonl");
+            storage
+                .put(&val_key, jsonl_bytes(val), "application/jsonl")
+                .await
+                .map_err(AppError::Storage)?;
+        }
+
+        let mut stats = serde_json::json!({
+            "total_pairs": total,
+            "train_pairs": train.len(),
+            "val_pairs": val.len(),
+        });
+        if let (Some(stats_map), Some(extra_map)) = (stats.as_object_mut(), extra_stats.as_object())
+        {
+            for (key, value) in extra_map {
+                stats_map.insert(key.clone(), value.clone());
+            }
+        }
+
+        dataset_repo
+            .create_imported(
+                tenant_id,
+                project_id,
+                dataset_id,
+                name.to_string(),
+                dataset_key,
+                total as i32,
+                stats,
+            )
+            .await
     }
 
     /// Get a presigned URL for the parsed content of a document.

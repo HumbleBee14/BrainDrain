@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+use crate::dto::dataset::DatasetResponse;
+
 /// One message of a captured inference request.
 #[derive(Debug, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
@@ -23,6 +25,7 @@ pub struct InferenceSampleResponse {
     pub response: String,
     pub rating: Option<FeedbackRating>,
     pub rating_comment: Option<String>,
+    pub promoted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -35,9 +38,38 @@ impl From<InferenceSample> for InferenceSampleResponse {
             response: s.response,
             rating: s.rating.and_then(|r| r.parse().ok()),
             rating_comment: s.rating_comment,
+            promoted_at: s.promoted_at,
             created_at: s.created_at,
         }
     }
+}
+
+/// One sample selected for promotion into a training dataset.
+#[derive(Debug, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct PromoteSampleItem {
+    pub sample_id: String,
+    /// Replacement assistant response. Required for negative-rated samples.
+    #[ts(optional)]
+    pub corrected_response: Option<String>,
+}
+
+/// Request to promote captured samples into a new training dataset.
+#[derive(Debug, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct PromoteSamplesRequest {
+    pub samples: Vec<PromoteSampleItem>,
+    /// Dataset name; defaults to "Production Feedback — {model name}".
+    #[ts(optional)]
+    pub name: Option<String>,
+}
+
+/// Result of promoting samples: the created dataset (in `review_pending`).
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct PromoteSamplesResponse {
+    pub dataset: DatasetResponse,
+    pub promoted_count: u32,
 }
 
 /// Feedback on a sample, submitted from the dashboard (sample id in path).

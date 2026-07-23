@@ -194,6 +194,7 @@ fn v1_router() -> Router<AppState> {
         inference::chat_completions,
         // Feedback (data flywheel)
         feedback::list_samples,
+        feedback::promote_samples,
         feedback::set_capture,
         feedback::submit_feedback,
         feedback::submit_api_feedback,
@@ -295,6 +296,9 @@ fn v1_router() -> Router<AppState> {
         crate::dto::feedback::SubmitFeedbackRequest,
         crate::dto::feedback::ApiFeedbackRequest,
         crate::dto::feedback::SetCaptureRequest,
+        crate::dto::feedback::PromoteSampleItem,
+        crate::dto::feedback::PromoteSamplesRequest,
+        crate::dto::feedback::PromoteSamplesResponse,
         // Stripe
         crate::dto::stripe::CreateCheckoutRequest,
         crate::dto::stripe::CheckoutSessionResponse,

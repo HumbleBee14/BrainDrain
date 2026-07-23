@@ -4,7 +4,12 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useModel } from "@/hooks/use-models";
-import { useSamples, useRateSample, useSetCapture } from "@/hooks/use-feedback";
+import {
+  useSamples,
+  useRateSample,
+  useSetCapture,
+  usePromoteSamples,
+} from "@/hooks/use-feedback";
 import type { FeedbackRating, InferenceSample } from "@/lib/api-client";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 
@@ -50,17 +55,36 @@ function lastUserMessage(sample: InferenceSample): string {
 function SampleRow({
   sample,
   onRate,
-  rating: pendingRating,
+  ratingPending,
+  selected,
+  onToggleSelect,
+  correction,
+  onCorrectionChange,
 }: {
   sample: InferenceSample;
   onRate: (sampleId: string, rating: FeedbackRating) => void;
-  rating: boolean;
+  ratingPending: boolean;
+  selected: boolean;
+  onToggleSelect: (sampleId: string) => void;
+  correction: string;
+  onCorrectionChange: (sampleId: string, value: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const promoted = !!sample.promoted_at;
 
   return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 space-y-3">
+    <div
+      className={`rounded-lg border p-4 space-y-3 ${selected ? "border-violet-300 dark:border-violet-800" : "border-zinc-200 dark:border-zinc-800"}`}
+    >
       <div className="flex items-start justify-between gap-3">
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={promoted}
+          onChange={() => onToggleSelect(sample.id)}
+          title={promoted ? "Already promoted" : "Select for promotion"}
+          className="mt-1.5 accent-violet-600 disabled:opacity-40"
+        />
         <button
           onClick={() => setExpanded((e) => !e)}
           className="text-left flex-1 min-w-0"
@@ -75,10 +99,15 @@ function SampleRow({
           </p>
         </button>
         <div className="flex items-center gap-2 shrink-0">
+          {promoted && (
+            <span className="inline-flex items-center rounded-full border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-900/30 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:text-violet-400">
+              promoted
+            </span>
+          )}
           <RatingBadge rating={sample.rating} />
           <button
             onClick={() => onRate(sample.id, "positive")}
-            disabled={pendingRating}
+            disabled={ratingPending}
             title="Good response"
             className={`rounded-lg border px-2.5 py-1.5 text-sm transition disabled:opacity-50 ${
               sample.rating === "positive"
@@ -90,7 +119,7 @@ function SampleRow({
           </button>
           <button
             onClick={() => onRate(sample.id, "negative")}
-            disabled={pendingRating}
+            disabled={ratingPending}
             title="Weak response"
             className={`rounded-lg border px-2.5 py-1.5 text-sm transition disabled:opacity-50 ${
               sample.rating === "negative"
@@ -124,6 +153,20 @@ function SampleRow({
           </p>
         </div>
       )}
+      {selected && sample.rating === "negative" && (
+        <div className="border-t border-zinc-100 dark:border-zinc-900 pt-3">
+          <label className="block text-xs text-zinc-500 mb-1">
+            Corrected response (required — this sample was rated negative)
+          </label>
+          <textarea
+            value={correction}
+            onChange={(e) => onCorrectionChange(sample.id, e.target.value)}
+            rows={3}
+            placeholder="Write the answer the model should have given..."
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-transparent p-2 text-sm text-zinc-900 dark:text-white"
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -133,6 +176,8 @@ export default function FeedbackPage() {
   const { data: model } = useModel(params.modelId);
   const [filter, setFilter] = useState<Filter>("all");
   const [offset, setOffset] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [corrections, setCorrections] = useState<Record<string, string>>({});
 
   const ratingParam = filter === "all" ? undefined : filter;
   const { data, isLoading } = useSamples(
@@ -143,6 +188,7 @@ export default function FeedbackPage() {
   );
   const rateSample = useRateSample(params.modelId);
   const setCapture = useSetCapture(params.modelId);
+  const promoteSamples = usePromoteSamples(params.modelId);
 
   const samples = data?.data ?? [];
   const total = data?.total ?? 0;
@@ -165,6 +211,46 @@ export default function FeedbackPage() {
     });
   };
 
+  const toggleSelect = (sampleId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sampleId)) next.delete(sampleId);
+      else next.add(sampleId);
+      return next;
+    });
+  };
+
+  const handlePromote = () => {
+    const selected = samples.filter((s) => selectedIds.has(s.id));
+    const missingCorrection = selected.find(
+      (s) => s.rating === "negative" && !corrections[s.id]?.trim(),
+    );
+    if (missingCorrection) {
+      toast.error(
+        "Negative-rated samples need a corrected response before promotion.",
+      );
+      return;
+    }
+    promoteSamples.mutate(
+      {
+        samples: selected.map((s) => ({
+          sample_id: s.id,
+          corrected_response: corrections[s.id]?.trim() || undefined,
+        })),
+      },
+      {
+        onSuccess: (res) => {
+          toast.success(
+            `Created dataset "${res.dataset.name}" with ${res.promoted_count} examples. Review and approve it to train.`,
+          );
+          setSelectedIds(new Set());
+          setCorrections({});
+        },
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
+
   return (
     <div>
       <div className="mb-8">
@@ -185,21 +271,34 @@ export default function FeedbackPage() {
               Feedback
             </h1>
             <p className="text-sm text-zinc-500 mt-1">
-              Captured production responses. Rate weak answers to feed the next
-              training run.
+              Captured production responses. Rate weak answers, correct them,
+              and promote the results into a training dataset.
             </p>
           </div>
-          <button
-            onClick={handleToggleCapture}
-            disabled={setCapture.isPending}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
-              captureOn
-                ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                : "border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400"
-            }`}
-          >
-            {captureOn ? "Capture: On" : "Capture: Off"}
-          </button>
+          <div className="flex gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                onClick={handlePromote}
+                disabled={promoteSamples.isPending}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50"
+              >
+                {promoteSamples.isPending
+                  ? "Promoting..."
+                  : `Promote ${selectedIds.size} to Training Data`}
+              </button>
+            )}
+            <button
+              onClick={handleToggleCapture}
+              disabled={setCapture.isPending}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+                captureOn
+                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                  : "border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400"
+              }`}
+            >
+              {captureOn ? "Capture: On" : "Capture: Off"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -250,7 +349,13 @@ export default function FeedbackPage() {
               key={s.id}
               sample={s}
               onRate={handleRate}
-              rating={rateSample.isPending}
+              ratingPending={rateSample.isPending}
+              selected={selectedIds.has(s.id)}
+              onToggleSelect={toggleSelect}
+              correction={corrections[s.id] ?? ""}
+              onCorrectionChange={(id, value) =>
+                setCorrections((prev) => ({ ...prev, [id]: value }))
+              }
             />
           ))}
         </div>

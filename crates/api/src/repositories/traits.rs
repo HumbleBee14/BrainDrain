@@ -514,6 +514,10 @@ pub trait InferenceSampleRepository: Send + Sync {
         rating: &str,
         comment: Option<String>,
     ) -> BoxFuture<'_, AppResult<bool>>;
+
+    /// Stamp `promoted_at` on the given samples. Returns how many rows were
+    /// updated (already-promoted rows are not re-stamped).
+    fn mark_promoted(&self, tenant_id: Uuid, sample_ids: &[Uuid]) -> BoxFuture<'_, AppResult<u64>>;
 }
 
 /// Contract for global inference instance control-plane operations.

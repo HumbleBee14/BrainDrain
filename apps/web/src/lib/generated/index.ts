@@ -99,6 +99,9 @@ export type { SampleMessage } from "./SampleMessage";
 export type { InferenceSampleResponse } from "./InferenceSampleResponse";
 export type { SubmitFeedbackRequest } from "./SubmitFeedbackRequest";
 export type { SetCaptureRequest } from "./SetCaptureRequest";
+export type { PromoteSampleItem } from "./PromoteSampleItem";
+export type { PromoteSamplesRequest } from "./PromoteSamplesRequest";
+export type { PromoteSamplesResponse } from "./PromoteSamplesResponse";
 
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {

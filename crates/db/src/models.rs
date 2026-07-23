@@ -138,6 +138,7 @@ pub struct InferenceSample {
     pub response: String,
     pub rating: Option<String>,
     pub rating_comment: Option<String>,
+    pub promoted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

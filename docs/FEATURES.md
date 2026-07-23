@@ -13,8 +13,9 @@ deployed, its real production traffic is the best source of training signal:
 capture requests/responses, let end-users and the team flag weak answers, and
 feed the curated examples into the next training run.
 
-This ships in two stages. Stage 1 (this section) is capture + feedback.
-Stage 2 (promotion of rated samples into training datasets) builds on it.
+Stage 1 is capture + feedback; stage 2 is promotion of rated samples into
+training datasets. Together they close the loop: capture → rate → correct →
+promote → approve dataset → retrain.
 
 ### How to use
 
@@ -39,6 +40,14 @@ Stage 2 (promotion of rated samples into training datasets) builds on it.
 4. **Review in the dashboard**: the model's *Feedback* page lists captured
    samples newest-first with filters (All / Unrated / Positive / Negative),
    expandable full conversations, and 👍/👎 rating buttons for the team.
+5. **Promote to training data** (stage 2): select samples on the Feedback page
+   and click *Promote N to Training Data*. Negative-rated samples require a
+   **corrected response** first (promoting a response the user flagged as bad
+   would poison the training set); positive/unrated samples use the captured
+   response as-is unless a correction is provided. Promotion creates a new
+   dataset in the model's project — named `Production Feedback — {model}` by
+   default — in the standard `review_pending` flow: preview it, approve it,
+   and train. Each sample can be promoted once (`promoted` badge afterwards).
 
 ### API surface
 
@@ -47,6 +56,7 @@ Stage 2 (promotion of rated samples into training datasets) builds on it.
 | `PUT /api/v1/models/{id}/capture` | JWT (Member+) | Toggle capture |
 | `GET /api/v1/models/{id}/samples?rating=&offset=&limit=` | JWT | List captured samples (`rating` = `positive`, `negative`, or `unrated`) |
 | `POST /api/v1/samples/{id}/feedback` | JWT (Member+) | Team rating from the dashboard |
+| `POST /api/v1/models/{id}/samples/promote` | JWT (Member+) | Create a training dataset from selected samples (≤500 per call) |
 | `POST /v1/feedback` | API key | End-user rating from the tenant's own app |
 
 ### Implementation notes
@@ -77,6 +87,14 @@ Stage 2 (promotion of rated samples into training datasets) builds on it.
   (every query carries `tenant_id`) plus RLS as the second layer.
 - **Batch endpoint** (`/v1/chat/completions/batch`) does not capture — batch
   callers get no per-item sample id to rate against.
+- **Promotion** builds records as the captured conversation plus the
+  (possibly corrected) response appended as the final assistant turn, with
+  `metadata: {source: "production_feedback", sample_id}` for lineage. Records
+  are stored through the same path as JSONL imports
+  (`DatasetService::store_records_as_dataset`): 90/10 train/val split, JSONL
+  in object storage, `review_pending` dataset row with provenance stats
+  (`source`, `model_id`). `inference_samples.promoted_at` (migration 024)
+  guards against double-promotion.
 
 ### Files
 

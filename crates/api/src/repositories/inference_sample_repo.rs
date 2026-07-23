@@ -164,4 +164,25 @@ impl InferenceSampleRepository for PgInferenceSampleRepo {
             Ok(result.rows_affected() > 0)
         })
     }
+
+    fn mark_promoted(&self, tenant_id: Uuid, sample_ids: &[Uuid]) -> BoxFuture<'_, AppResult<u64>> {
+        let sample_ids = sample_ids.to_vec();
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let result = sqlx::query(
+                r#"
+                UPDATE inference_samples
+                SET promoted_at = NOW()
+                WHERE id = ANY($1) AND tenant_id = $2 AND promoted_at IS NULL
+                "#,
+            )
+            .bind(&sample_ids)
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(result.rows_affected())
+        })
+    }
 }
