@@ -92,6 +92,7 @@ pub async fn create_training_job(
     let result = TrainingJobService::create(
         state.training_job_repo(),
         state.dataset_repo(),
+        state.tenant_repo(),
         state.orchestrator(),
         user.tenant_id,
         project_id,
@@ -138,7 +139,13 @@ pub async fn estimate_training_cost(
     Path(_project_id): Path<Uuid>,
     Json(body): Json<CreateTrainingJobRequest>,
 ) -> AppResult<Json<CostEstimateResponse>> {
-    let result = TrainingJobService::estimate(state.dataset_repo(), user.tenant_id, &body).await?;
+    let result = TrainingJobService::estimate(
+        state.dataset_repo(),
+        state.tenant_repo(),
+        user.tenant_id,
+        &body,
+    )
+    .await?;
     Ok(Json(result))
 }
 

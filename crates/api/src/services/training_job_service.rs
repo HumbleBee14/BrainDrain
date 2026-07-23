@@ -5,12 +5,10 @@ use crate::dto::training_job::{
     CostEstimateResponse, CreateTrainingJobRequest, TrainingJobResponse,
 };
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::{DatasetRepository, TrainingJobRepository};
+use crate::repositories::traits::{DatasetRepository, TenantRepository, TrainingJobRepository};
+use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingMethod, TrainingMode};
-
-/// Default cost threshold (USD) above which jobs require approval.
-const DEFAULT_COST_APPROVAL_THRESHOLD: f64 = 5.0;
 
 /// Business logic for training job operations.
 pub struct TrainingJobService;
@@ -24,6 +22,7 @@ impl TrainingJobService {
     pub async fn create(
         training_repo: &dyn TrainingJobRepository,
         dataset_repo: &dyn DatasetRepository,
+        tenant_repo: &dyn TenantRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -90,13 +89,13 @@ impl TrainingJobService {
             .get("num_train_epochs")
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as u32;
-        let cost_estimate = estimate_cost(
-            &req.base_model,
-            dataset.pair_count,
-            req.gpu_class.as_deref(),
-            &mode,
-            epochs,
+        let admin_config = TenantSettingsService::get_admin_config(tenant_repo, tenant_id).await?;
+        let gpu_rate = resolve_gpu_rate(
+            &admin_config.gpu_rates,
+            req.gpu_class.as_deref().unwrap_or("t4"),
         );
+        let hours = estimate_gpu_hours(&req.base_model, dataset.pair_count, &mode, epochs);
+        let cost_estimate = (hours * gpu_rate * 100.0).round() / 100.0;
 
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
@@ -137,7 +136,7 @@ impl TrainingJobService {
         };
 
         // Check if cost exceeds approval threshold
-        let threshold = cost_approval_threshold.unwrap_or(DEFAULT_COST_APPROVAL_THRESHOLD);
+        let threshold = cost_approval_threshold.unwrap_or(admin_config.cost_approval_threshold);
         if cost_estimate > threshold {
             // Set job to cost_approval status — requires manual approval before starting
             let updated = training_repo
@@ -237,6 +236,7 @@ impl TrainingJobService {
     /// Estimate training cost without creating a job.
     pub async fn estimate(
         dataset_repo: &dyn DatasetRepository,
+        tenant_repo: &dyn TenantRepository,
         tenant_id: Uuid,
         req: &CreateTrainingJobRequest,
     ) -> AppResult<CostEstimateResponse> {
@@ -267,24 +267,17 @@ impl TrainingJobService {
             .unwrap_or(3) as u32;
 
         let gpu_class_str = req.gpu_class.as_deref().unwrap_or("t4");
-        let gpu_rate = platform_shared::constants::GPU_HOURLY_RATES
-            .iter()
-            .find(|(name, _)| *name == gpu_class_str)
-            .map(|(_, rate)| *rate)
-            .unwrap_or(platform_shared::constants::GPU_DEFAULT_HOURLY_RATE);
+        let gpu_rates = TenantSettingsService::get_admin_config(tenant_repo, tenant_id)
+            .await?
+            .gpu_rates;
+        let gpu_rate = resolve_gpu_rate(&gpu_rates, gpu_class_str);
 
-        let cost = estimate_cost(
-            &req.base_model,
-            dataset.pair_count,
-            req.gpu_class.as_deref(),
-            &mode,
-            epochs,
-        );
-        let estimated_hours = if gpu_rate > 0.0 { cost / gpu_rate } else { 0.0 };
+        let hours = estimate_gpu_hours(&req.base_model, dataset.pair_count, &mode, epochs);
+        let cost = (hours * gpu_rate * 100.0).round() / 100.0;
 
         Ok(CostEstimateResponse {
             cost_estimate: cost,
-            estimated_hours: (estimated_hours * 100.0).round() / 100.0,
+            estimated_hours: (hours * 100.0).round() / 100.0,
             gpu_class: gpu_class_str.to_string(),
             gpu_rate_per_hour: gpu_rate,
         })
@@ -409,11 +402,11 @@ fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Valu
     defaults
 }
 
-/// Estimate training cost based on model size, dataset size, GPU class, training mode, and epochs.
-fn estimate_cost(
+/// Estimate training GPU-hours from model size, dataset size, mode, and epochs.
+/// Rate-independent — callers multiply by the applicable hourly rate.
+fn estimate_gpu_hours(
     base_model: &str,
     pair_count: Option<i32>,
-    gpu_class: Option<&str>,
     mode: &TrainingMode,
     epochs: u32,
 ) -> f64 {
@@ -435,16 +428,6 @@ fn estimate_cost(
 
     let pairs = pair_count.unwrap_or(1000) as f64;
 
-    // GPU hourly rate from shared constants
-    let gpu_rate = gpu_class
-        .and_then(|cls| {
-            platform_shared::constants::GPU_HOURLY_RATES
-                .iter()
-                .find(|(name, _)| *name == cls)
-                .map(|(_, rate)| *rate)
-        })
-        .unwrap_or(platform_shared::constants::GPU_DEFAULT_HOURLY_RATE);
-
     // Mode multiplier: advanced modes run additional passes
     let mode_multiplier = match mode {
         TrainingMode::Quick => 1.0,
@@ -454,9 +437,44 @@ fn estimate_cost(
     };
 
     let epoch_factor = epochs as f64 / 3.0;
-    let estimated_hours =
-        (params_b / 7.0) * (pairs / 5000.0).max(0.5) * epoch_factor * 0.5 * mode_multiplier;
-    (estimated_hours * gpu_rate * 100.0).round() / 100.0
+    (params_b / 7.0) * (pairs / 5000.0).max(0.5) * epoch_factor * 0.5 * mode_multiplier
+}
+
+/// Resolve the hourly rate for a GPU class, preferring the tenant's configured
+/// rates and falling back to the platform defaults for unset classes.
+fn resolve_gpu_rate(gpu_rates: &std::collections::HashMap<String, f64>, gpu_class: &str) -> f64 {
+    gpu_rates
+        .get(gpu_class)
+        .copied()
+        .or_else(|| {
+            platform_shared::constants::GPU_HOURLY_RATES
+                .iter()
+                .find(|(name, _)| *name == gpu_class)
+                .map(|(_, rate)| *rate)
+        })
+        .unwrap_or(platform_shared::constants::GPU_DEFAULT_HOURLY_RATE)
+}
+
+/// Dollar cost using the platform default rates. Test-only helper for the cost
+/// heuristic; production paths resolve the tenant's configured rates.
+#[cfg(test)]
+fn estimate_cost(
+    base_model: &str,
+    pair_count: Option<i32>,
+    gpu_class: Option<&str>,
+    mode: &TrainingMode,
+    epochs: u32,
+) -> f64 {
+    let gpu_rate = gpu_class
+        .and_then(|cls| {
+            platform_shared::constants::GPU_HOURLY_RATES
+                .iter()
+                .find(|(name, _)| *name == cls)
+                .map(|(_, rate)| *rate)
+        })
+        .unwrap_or(platform_shared::constants::GPU_DEFAULT_HOURLY_RATE);
+    let hours = estimate_gpu_hours(base_model, pair_count, mode, epochs);
+    (hours * gpu_rate * 100.0).round() / 100.0
 }
 
 #[cfg(test)]

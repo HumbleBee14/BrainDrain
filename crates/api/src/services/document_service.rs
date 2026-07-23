@@ -186,12 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn image_formats_are_supported() {
+    fn image_formats_are_not_supported() {
+        // Image/scanned formats are rejected — there is no OCR path, so they
+        // would parse to empty text.
         for filename in ["photo.png", "img.jpg", "scan.jpeg", "fax.tiff", "icon.bmp"] {
             let ext = extract_ext(filename);
             assert!(
-                SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
-                "Expected .{ext} to be supported",
+                !SUPPORTED_EXTENSIONS.contains(&ext.as_str()),
+                "Expected .{ext} to be rejected",
             );
         }
     }
