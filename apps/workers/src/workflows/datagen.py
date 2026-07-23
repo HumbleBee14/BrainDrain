@@ -15,6 +15,7 @@ exception still propagates so Temporal records the real failure.
 import uuid
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -44,7 +45,7 @@ async def _mark_failed(tenant_id: str, data_guide_id: str) -> None:
                 status="failed",
             ),
             start_to_close_timeout=timeouts.db_lookup(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
     except Exception:
         workflow.logger.exception(
@@ -79,7 +80,7 @@ class GenerateFacetsWorkflow:
                     existing=existing,
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -94,7 +95,7 @@ class GenerateFacetsWorkflow:
                 facets=result.facets,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
 
@@ -125,7 +126,7 @@ class GeneratePreviewWorkflow:
                     num_samples=num_samples,
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -140,7 +141,7 @@ class GeneratePreviewWorkflow:
                 preview_samples=result.preview_samples,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
 
@@ -168,7 +169,7 @@ class RefineGuidanceWorkflow:
                     rated=rated,
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -191,7 +192,7 @@ class RefineGuidanceWorkflow:
                 refinement_history_entry=history_entry,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
 
@@ -227,7 +228,7 @@ class GenerateDatasetWorkflow:
                     document_ids=document_ids,
                 ),
                 start_to_close_timeout=timeouts.chunk_activity(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+                retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
             dataset_id: str | None = None
@@ -246,7 +247,7 @@ class GenerateDatasetWorkflow:
                         facets=facets,
                     ),
                     start_to_close_timeout=timeouts.generate_pairs_activity(),
-                    retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
                     heartbeat_timeout=timeouts.generate_pairs_heartbeat(),
                 )
 
@@ -266,7 +267,7 @@ class GenerateDatasetWorkflow:
                             golden_storage_path=pairs_result.golden_storage_path,
                         ),
                         start_to_close_timeout=timeouts.build_dataset_activity(),
-                        retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
                     )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -281,7 +282,7 @@ class GenerateDatasetWorkflow:
                 dataset_id=dataset_id,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
         return dataset_result

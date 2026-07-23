@@ -7,6 +7,7 @@ Triggered after documents are parsed, or manually by the user.
 import uuid
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -43,7 +44,7 @@ class RefineWorkflow:
                 overlap=config.get("overlap", 200),
             ),
             start_to_close_timeout=timeouts.chunk_activity(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
         if chunk_result.chunk_count == 0:
@@ -65,7 +66,7 @@ class RefineWorkflow:
                 facet_subtopics=config.get("facet_subtopics", 3),
             ),
             start_to_close_timeout=timeouts.generate_pairs_activity(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            retry_policy=RetryPolicy(maximum_attempts=2),
             heartbeat_timeout=timeouts.generate_pairs_heartbeat(),
         )
 
@@ -86,7 +87,7 @@ class RefineWorkflow:
                 golden_storage_path=pairs_result.golden_storage_path,
             ),
             start_to_close_timeout=timeouts.build_dataset_activity(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
         return dataset_result

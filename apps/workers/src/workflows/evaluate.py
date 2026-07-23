@@ -4,6 +4,7 @@ Triggered automatically after training completes, or manually.
 """
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -50,7 +51,7 @@ class EvaluateWorkflow:
             task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.eval_activity(),
             heartbeat_timeout=timeouts.eval_heartbeat(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
         return result

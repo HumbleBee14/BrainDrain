@@ -9,6 +9,7 @@ split into two activities here without changing the dispatcher.
 """
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -51,7 +52,7 @@ class TrainAlignedWorkflow:
             task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.train_activity(),
             heartbeat_timeout=timeouts.train_heartbeat(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
         workflow.set_current_details("Aligned training complete")

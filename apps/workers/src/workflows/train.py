@@ -13,6 +13,7 @@ is transparent to upstream callers.
 from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -66,7 +67,7 @@ class TrainWorkflow:
                 task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timeouts.train_activity(),
                 heartbeat_timeout=timeouts.train_heartbeat(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
             )
 
         elif mode == "iterative":
@@ -99,7 +100,7 @@ class TrainWorkflow:
                 ),
                 task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timedelta(minutes=5),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+                retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
             return result

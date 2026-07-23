@@ -4,6 +4,7 @@ Triggered by POST /api/v1/models/{model_id}/exports.
 """
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -41,7 +42,7 @@ class ExportWorkflow:
             task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.export_activity(),
             heartbeat_timeout=timeouts.export_heartbeat(),
-            retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+            retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
         return result

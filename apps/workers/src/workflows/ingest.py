@@ -6,6 +6,7 @@ Handles partial failures — some docs can fail without killing the workflow.
 """
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
@@ -47,7 +48,7 @@ class IngestWorkflow:
                         mime_type=doc_info.mime_type,
                     ),
                     start_to_close_timeout=timeouts.parse_activity(),
-                    retry_policy=workflow.RetryPolicy(maximum_attempts=3),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
                     heartbeat_timeout=timeouts.parse_heartbeat(),
                 )
                 successes.append(doc_id)
