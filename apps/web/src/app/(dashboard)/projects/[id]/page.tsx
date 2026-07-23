@@ -20,7 +20,8 @@ import {
 } from "@/hooks/use-training";
 import type { CreateTrainingJobInput } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useModelCatalog } from "@/hooks/use-catalog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import {
@@ -133,12 +134,91 @@ export default function ProjectDetailPage() {
   const [showTrainForm, setShowTrainForm] = useState(false);
   const [trainForm, setTrainForm] = useState<CreateTrainingJobInput>({
     dataset_id: "",
-    base_model: "unsloth/Llama-3.2-1B-Instruct",
+    base_model: "",
     method: "qlora",
     mode: "quick",
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: costEstimate } = useEstimateTrainingCost(params.id, trainForm);
+  const {
+    data: catalogData,
+    isLoading: catalogLoading,
+    isError: catalogIsError,
+    error: catalogError,
+    refetch: refetchCatalog,
+  } = useModelCatalog();
+  const catalogModels = useMemo(
+    () => catalogData?.models ?? [],
+    [catalogData],
+  );
+
+  // Default the base model to the catalog's suggestion once it loads.
+  useEffect(() => {
+    if (!trainForm.base_model && catalogModels.length > 0) {
+      setTrainForm((prev) => ({
+        ...prev,
+        base_model: catalogData?.suggested ?? catalogModels[0].model_id,
+      }));
+    }
+  }, [catalogModels, catalogData?.suggested, trainForm.base_model]);
+
+  const selectedCatalogModel = useMemo(
+    () => catalogModels.find((m) => m.model_id === trainForm.base_model),
+    [catalogModels, trainForm.base_model],
+  );
+
+  const trainingPresets = useMemo(() => {
+    if (catalogModels.length === 0) return [];
+    const bySize = [...catalogModels].sort(
+      (a, b) => a.vram_4bit_gb - b.vram_4bit_gb,
+    );
+    const smallest = bySize[0];
+    const midRange =
+      catalogModels.find(
+        (m) => !m.gated && m.model_id !== smallest.model_id,
+      ) ?? bySize[Math.min(1, bySize.length - 1)];
+    const productionModel =
+      [...catalogModels]
+        .filter((m) => m.gated)
+        .sort((a, b) => b.vram_4bit_gb - a.vram_4bit_gb)[0] ??
+      bySize[bySize.length - 1];
+    const reasoningModel =
+      catalogModels.find((m) => m.recommended_for.includes("reasoning")) ??
+      productionModel;
+
+    return [
+      {
+        label: "Quick Experiment",
+        method: "qlora" as const,
+        mode: "quick" as const,
+        base_model: smallest.model_id,
+        desc: `Fastest, ${smallest.display_name}, QLoRA`,
+      },
+      {
+        label: "Balanced",
+        method: "qlora" as const,
+        mode: "aligned" as const,
+        base_model: midRange.model_id,
+        desc: `SFT + DPO, ${midRange.display_name}`,
+      },
+      {
+        label: "Production",
+        method: "lora" as const,
+        mode: "aligned" as const,
+        base_model: productionModel.model_id,
+        gpu_class: "a10g" as const,
+        desc: `${productionModel.display_name}, LoRA, A10G GPU`,
+      },
+      {
+        label: "Max Quality",
+        method: "lora" as const,
+        mode: "reasoning" as const,
+        base_model: reasoningModel.model_id,
+        gpu_class: "l40s" as const,
+        desc: `${reasoningModel.display_name}, GRPO reasoning, L40S`,
+      },
+    ];
+  }, [catalogModels]);
 
   // Search/filter state
   const [docSearch, setDocSearch] = useState("");
@@ -336,7 +416,10 @@ export default function ProjectDetailPage() {
               onClick={() =>
                 triggerFullPipeline.mutate({
                   task_type: project.task_type || "question_answering",
-                  base_model: "unsloth/Llama-3.2-1B-Instruct",
+                  base_model:
+                    catalogData?.suggested ??
+                    catalogModels[0]?.model_id ??
+                    "unsloth/Llama-3.2-1B-Instruct",
                   training_config: {
                     method: "qlora",
                     mode: "quick",
@@ -556,63 +639,34 @@ export default function ProjectDetailPage() {
         {showTrainForm && (
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4 space-y-3">
             {/* Hyperparameter presets */}
-            <div>
-              <label className="block text-xs text-zinc-500 mb-2">
-                Quick Presets
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  {
-                    label: "Quick Experiment",
-                    method: "qlora" as const,
-                    mode: "quick" as const,
-                    base_model: "unsloth/Llama-3.2-1B-Instruct",
-                    desc: "Fastest, smallest model, QLoRA",
-                  },
-                  {
-                    label: "Balanced",
-                    method: "qlora" as const,
-                    mode: "aligned" as const,
-                    base_model: "unsloth/Llama-3.2-3B-Instruct",
-                    desc: "SFT + DPO, 3B model",
-                  },
-                  {
-                    label: "Production",
-                    method: "lora" as const,
-                    mode: "aligned" as const,
-                    base_model: "unsloth/Meta-Llama-3.1-8B-Instruct",
-                    gpu_class: "a10g" as const,
-                    desc: "8B, LoRA, A10G GPU",
-                  },
-                  {
-                    label: "Max Quality",
-                    method: "lora" as const,
-                    mode: "reasoning" as const,
-                    base_model: "unsloth/Meta-Llama-3.1-8B-Instruct",
-                    gpu_class: "l40s" as const,
-                    desc: "8B, GRPO reasoning, L40S",
-                  },
-                ].map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() =>
-                      setTrainForm({
-                        ...trainForm,
-                        method: preset.method,
-                        mode: preset.mode,
-                        base_model: preset.base_model,
-                        gpu_class: preset.gpu_class,
-                      })
-                    }
-                    className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-500 hover:text-zinc-900 dark:hover:text-white transition"
-                    title={preset.desc}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
+            {trainingPresets.length > 0 && (
+              <div>
+                <label className="block text-xs text-zinc-500 mb-2">
+                  Quick Presets
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {trainingPresets.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() =>
+                        setTrainForm({
+                          ...trainForm,
+                          method: preset.method,
+                          mode: preset.mode,
+                          base_model: preset.base_model,
+                          gpu_class: preset.gpu_class,
+                        })
+                      }
+                      className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-500 hover:text-zinc-900 dark:hover:text-white transition"
+                      title={preset.desc}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
@@ -637,30 +691,58 @@ export default function ProjectDetailPage() {
                 <label className="block text-xs text-zinc-500 mb-1">
                   Base Model
                 </label>
-                <select
-                  value={trainForm.base_model}
-                  onChange={(e) =>
-                    setTrainForm({ ...trainForm, base_model: e.target.value })
-                  }
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                >
-                  <option value="unsloth/Llama-3.2-1B-Instruct">
-                    Llama 3.2 1B Instruct
-                  </option>
-                  <option value="unsloth/Llama-3.2-3B-Instruct">
-                    Llama 3.2 3B Instruct
-                  </option>
-                  <option value="unsloth/Meta-Llama-3.1-8B-Instruct">
-                    Llama 3.1 8B Instruct
-                  </option>
-                  <option value="unsloth/Qwen2.5-7B-Instruct">
-                    Qwen 2.5 7B Instruct
-                  </option>
-                  <option value="unsloth/Mistral-7B-Instruct-v0.3">
-                    Mistral 7B Instruct v0.3
-                  </option>
-                  <option value="unsloth/gemma-2-2b-it">Gemma 2 2B IT</option>
-                </select>
+                {catalogIsError ? (
+                  <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                    <p>
+                      Couldn&apos;t load the model catalog
+                      {catalogError instanceof Error
+                        ? `: ${catalogError.message}`
+                        : "."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => refetchCatalog()}
+                      className="mt-1 font-medium underline underline-offset-2 hover:no-underline"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={trainForm.base_model}
+                    onChange={(e) =>
+                      setTrainForm({
+                        ...trainForm,
+                        base_model: e.target.value,
+                      })
+                    }
+                    disabled={catalogLoading || catalogModels.length === 0}
+                    className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white disabled:opacity-50"
+                  >
+                    {catalogLoading ? (
+                      <option value="">Loading models...</option>
+                    ) : (
+                      <>
+                        <option value="" disabled>
+                          Select a base model...
+                        </option>
+                        {catalogModels.map((m) => (
+                          <option key={m.model_id} value={m.model_id}>
+                            {m.display_name} &mdash; {m.size}
+                            {m.gated ? " (gated)" : ""}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                )}
+                {selectedCatalogModel && (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {selectedCatalogModel.best_for.join(" · ")} &mdash; ~
+                    {selectedCatalogModel.vram_4bit_gb}GB VRAM (4-bit)
+                    {selectedCatalogModel.gated && " · requires HF token"}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs text-zinc-500 mb-1">
@@ -756,11 +838,15 @@ export default function ProjectDetailPage() {
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => {
-                  if (!trainForm.dataset_id) return;
+                  if (!trainForm.dataset_id || !trainForm.base_model) return;
                   createTrainingJob.mutate(trainForm);
                   setShowTrainForm(false);
                 }}
-                disabled={!trainForm.dataset_id || createTrainingJob.isPending}
+                disabled={
+                  !trainForm.dataset_id ||
+                  !trainForm.base_model ||
+                  createTrainingJob.isPending
+                }
                 className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50"
               >
                 {createTrainingJob.isPending
