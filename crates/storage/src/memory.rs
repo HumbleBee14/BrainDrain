@@ -1,4 +1,5 @@
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
+use futures::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -65,6 +66,25 @@ impl ObjectStorage for InMemoryStorage {
             },
         );
         Ok(())
+    }
+
+    async fn put_streaming<S>(
+        &self,
+        key: &str,
+        stream: S,
+        content_type: &str,
+    ) -> Result<u64, StorageError>
+    where
+        S: Stream<Item = Result<Bytes, StorageError>> + Send + 'static,
+    {
+        futures::pin_mut!(stream);
+        let mut buf = BytesMut::new();
+        while let Some(item) = stream.next().await {
+            buf.extend_from_slice(&item?);
+        }
+        let total = buf.len() as u64;
+        self.put(key, buf.freeze(), content_type).await?;
+        Ok(total)
     }
 
     async fn get(&self, key: &str) -> Result<Bytes, StorageError> {
@@ -203,6 +223,46 @@ mod tests {
         assert_eq!(store.len().await, 2);
         store.clear().await;
         assert!(store.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn put_streaming_concatenates_chunks() {
+        let store = InMemoryStorage::new();
+        let chunks: Vec<Result<Bytes, StorageError>> =
+            vec![Ok(Bytes::from("hel")), Ok(Bytes::from("lo "))];
+        let total = store
+            .put_streaming("k", futures::stream::iter(chunks), "text/plain")
+            .await
+            .unwrap();
+        assert_eq!(total, 6);
+        assert_eq!(store.get("k").await.unwrap(), Bytes::from("hello "));
+    }
+
+    #[tokio::test]
+    async fn put_streaming_empty_stream_writes_zero_bytes() {
+        let store = InMemoryStorage::new();
+        let empty: Vec<Result<Bytes, StorageError>> = vec![];
+        let total = store
+            .put_streaming("k", futures::stream::iter(empty), "text/plain")
+            .await
+            .unwrap();
+        assert_eq!(total, 0);
+        assert_eq!(store.get("k").await.unwrap(), Bytes::new());
+    }
+
+    #[tokio::test]
+    async fn put_streaming_propagates_stream_error() {
+        let store = InMemoryStorage::new();
+        let chunks: Vec<Result<Bytes, StorageError>> = vec![
+            Ok(Bytes::from("partial")),
+            Err(StorageError::UploadFailed("aborted".into())),
+        ];
+        let result = store
+            .put_streaming("k", futures::stream::iter(chunks), "text/plain")
+            .await;
+        assert!(matches!(result, Err(StorageError::UploadFailed(_))));
+        // Nothing committed on abort.
+        assert!(!store.exists("k").await.unwrap());
     }
 
     #[tokio::test]

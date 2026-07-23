@@ -1,9 +1,10 @@
 use bytes::Bytes;
+use futures::Stream;
 use uuid::Uuid;
 
 use platform_shared::constants::SUPPORTED_EXTENSIONS;
 use platform_shared::s3_paths;
-use platform_storage::ObjectStorage;
+use platform_storage::{ObjectStorage, StorageError};
 
 use crate::dto::common::PaginatedResponse;
 use crate::dto::document::{DocumentResponse, UploadResponse};
@@ -17,9 +18,16 @@ use crate::services::plan_service::PlanService;
 pub struct DocumentService;
 
 impl DocumentService {
-    /// Upload a document: validate → store in S3 → create DB record.
+    /// Upload a document by streaming it straight to object storage.
+    ///
+    /// The file is never held in memory in full — it is streamed to storage
+    /// (multipart for large objects), and only then is its final size known.
+    /// Validation follows a reservation pattern: the object is written first,
+    /// then the empty-file and plan-storage checks run against the real size;
+    /// if either fails, the just-written object is deleted so storage is never
+    /// left holding bytes with no document row pointing at them.
     #[allow(clippy::too_many_arguments)]
-    pub async fn upload(
+    pub async fn upload_streaming<S>(
         repo: &dyn DocumentRepository,
         tenant_repo: &dyn TenantRepository,
         storage: &impl ObjectStorage,
@@ -27,11 +35,14 @@ impl DocumentService {
         project_id: Uuid,
         filename: &str,
         content_type: &str,
-        data: Bytes,
-    ) -> AppResult<UploadResponse> {
-        // Validate file extension
+        stream: S,
+    ) -> AppResult<UploadResponse>
+    where
+        S: Stream<Item = Result<Bytes, StorageError>> + Send + 'static,
+    {
+        // Validate the extension before consuming the stream — an unsupported
+        // type is rejected without writing anything.
         let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
-
         if !SUPPORTED_EXTENSIONS.contains(&ext.as_str()) {
             return Err(AppError::BadRequest {
                 message: format!(
@@ -41,29 +52,32 @@ impl DocumentService {
             });
         }
 
-        let file_size = data.len() as i64;
+        let file_id = Uuid::now_v7();
+        let storage_path = s3_paths::upload_path(tenant_id, project_id, file_id, &ext);
+
+        let file_size = storage
+            .put_streaming(&storage_path, stream, content_type)
+            .await
+            .map_err(AppError::Storage)? as i64;
+
         if file_size == 0 {
+            let _ = storage.delete(&storage_path).await;
             return Err(AppError::BadRequest {
                 message: "File is empty".to_string(),
             });
         }
 
-        // Reject before touching S3 if this would exceed the plan's storage allowance.
+        // Enforce the plan storage allowance against the real size, rolling back
+        // the uploaded object if it would push the tenant over the limit.
         let current_bytes = repo.sum_storage_bytes(tenant_id).await?;
-        PlanService::check_storage_limit(tenant_repo, tenant_id, current_bytes, file_size).await?;
+        if let Err(e) =
+            PlanService::check_storage_limit(tenant_repo, tenant_id, current_bytes, file_size).await
+        {
+            let _ = storage.delete(&storage_path).await;
+            return Err(e);
+        }
 
-        // Generate file ID and S3 path
-        let file_id = Uuid::now_v7();
-        let storage_path = s3_paths::upload_path(tenant_id, project_id, file_id, &ext);
-
-        // Upload to S3
-        storage
-            .put(&storage_path, data, content_type)
-            .await
-            .map_err(AppError::Storage)?;
-
-        // Create DB record
-        let doc = repo
+        let doc = match repo
             .create(
                 tenant_id,
                 project_id,
@@ -72,7 +86,14 @@ impl DocumentService {
                 content_type,
                 &storage_path,
             )
-            .await?;
+            .await
+        {
+            Ok(doc) => doc,
+            Err(e) => {
+                let _ = storage.delete(&storage_path).await;
+                return Err(e);
+            }
+        };
 
         tracing::info!(
             document_id = %doc.id,

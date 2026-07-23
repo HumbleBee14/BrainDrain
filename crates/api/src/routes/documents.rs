@@ -3,11 +3,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use bytes::BytesMut;
+use bytes::Bytes;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use platform_shared::constants::MAX_UPLOAD_SIZE_BYTES;
 use platform_shared::enums::TeamRole;
+use platform_storage::StorageError;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
@@ -66,26 +68,54 @@ pub async fn upload_document(
             .map(|s| s.to_string())
             .unwrap_or_else(|| "application/octet-stream".to_string());
 
-        // Read file data into memory (with size limit)
-        let mut data = BytesMut::new();
         let mut field = field;
 
-        // Read chunks manually to enforce size limit
-        while let Some(chunk) = field.chunk().await.map_err(|e| AppError::BadRequest {
-            message: format!("Failed to read upload data: {e}"),
-        })? {
-            data.extend_from_slice(&chunk);
-            if data.len() as u64 > MAX_UPLOAD_SIZE_BYTES {
-                return Err(AppError::BadRequest {
-                    message: format!(
-                        "File exceeds maximum size of {} MB",
-                        MAX_UPLOAD_SIZE_BYTES / 1024 / 1024
-                    ),
-                });
-            }
-        }
+        // Stream the field straight to storage over a bounded channel: the
+        // producer reads chunks and enforces the size cap; the consumer
+        // (the service) writes them to object storage. Neither side buffers
+        // the whole file. The two run concurrently under one task via join!.
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, StorageError>>(4);
 
-        let result = DocumentService::upload(
+        let producer = async move {
+            let mut total: u64 = 0;
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        total += chunk.len() as u64;
+                        if total > MAX_UPLOAD_SIZE_BYTES {
+                            // Abort the storage write, then fail the request.
+                            let _ = tx
+                                .send(Err(StorageError::UploadFailed(
+                                    "upload exceeds size cap".to_string(),
+                                )))
+                                .await;
+                            return Err(AppError::BadRequest {
+                                message: format!(
+                                    "File exceeds maximum size of {} MB",
+                                    MAX_UPLOAD_SIZE_BYTES / 1024 / 1024
+                                ),
+                            });
+                        }
+                        if tx.send(Ok(chunk)).await.is_err() {
+                            // Consumer stopped early (storage error); stop reading.
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = tx
+                            .send(Err(StorageError::UploadFailed(format!("read error: {e}"))))
+                            .await;
+                        return Err(AppError::BadRequest {
+                            message: format!("Failed to read upload data: {e}"),
+                        });
+                    }
+                }
+            }
+            Ok::<(), AppError>(())
+        };
+
+        let consumer = DocumentService::upload_streaming(
             state.document_repo(),
             state.tenant_repo(),
             state.storage(),
@@ -93,11 +123,14 @@ pub async fn upload_document(
             project_id,
             &filename,
             &content_type,
-            data.freeze(),
-        )
-        .await?;
+            ReceiverStream::new(rx),
+        );
 
-        uploads.push(result);
+        let (producer_result, consumer_result) = tokio::join!(producer, consumer);
+        // A producer failure (size cap / read error) takes precedence — the
+        // consumer's error in that case is just the abort it was told to do.
+        producer_result?;
+        uploads.push(consumer_result?);
     }
 
     if uploads.is_empty() {
