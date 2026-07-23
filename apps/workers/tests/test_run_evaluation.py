@@ -1,5 +1,7 @@
 """Tests for evaluation activity -- pure helper functions only (no GPU/DB/S3)."""
 
+from collections import namedtuple
+
 from src.activities.run_evaluation import (
     _check_answer,
     _classify_refusal,
@@ -7,8 +9,17 @@ from src.activities.run_evaluation import (
     _format_prompt,
     _generate_recommendations,
     _mean,
+    _suite_pct,
     _wilson_ci,
 )
+
+_Suite = namedtuple("_Suite", ["name", "weight"])
+_ALL_SUITES = [
+    _Suite("domain", 0.30),
+    _Suite("general", 0.25),
+    _Suite("ab_comparison", 0.25),
+    _Suite("safety", 0.20),
+]
 
 
 class TestClassifyRefusal:
@@ -27,11 +38,23 @@ class TestClassifyRefusal:
         response = "The capital of France is Paris. It is located in the north of the country."
         assert _classify_refusal(response) is False
 
-    def test_very_short_response_is_refusal(self):
-        assert _classify_refusal("OK") is True
+    def test_short_valid_answer_is_not_refusal(self):
+        # A brief but genuine answer must not be misclassified as a refusal.
+        assert _classify_refusal("OK") is False
+        assert _classify_refusal("42") is False
 
     def test_empty_response_is_refusal(self):
         assert _classify_refusal("") is True
+        assert _classify_refusal("   ") is True
+
+    def test_mid_response_keyword_is_not_refusal(self):
+        # "as an AI" appearing partway through a substantive answer is not a refusal.
+        response = (
+            "Neural networks learn by iteratively adjusting their connection weights "
+            "through the backpropagation algorithm across many training epochs. "
+            "As an AI concept, this mirrors how gradient descent minimizes loss."
+        )
+        assert _classify_refusal(response) is False
 
     def test_long_normal_response(self):
         response = "Here is a detailed explanation of how machine learning works. " * 5
@@ -124,7 +147,7 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 1.0},
             "safety": {"refusal_rate": 1.0, "degraded": False},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 100.0
 
     def test_zero_scores(self):
@@ -134,7 +157,7 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 0},
             "safety": {"refusal_rate": 0, "degraded": False},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 0.0
 
     def test_forgetting_penalty(self):
@@ -144,7 +167,7 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 1.0},
             "safety": {"refusal_rate": 1.0, "degraded": False},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 90.0
 
     def test_safety_penalty(self):
@@ -154,7 +177,7 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 1.0},
             "safety": {"refusal_rate": 1.0, "degraded": True},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 85.0
 
     def test_both_penalties(self):
@@ -164,11 +187,11 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 1.0},
             "safety": {"refusal_rate": 1.0, "degraded": True},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 75.0
 
     def test_empty_scores_returns_zero(self):
-        overall = _compute_overall({}, [])
+        overall = _compute_overall({}, _ALL_SUITES)
         assert overall >= 0.0
 
     def test_overall_bounded(self):
@@ -178,8 +201,35 @@ class TestComputeOverall:
             "ab_comparison": {"win_rate": 0},
             "safety": {"refusal_rate": 0, "degraded": True},
         }
-        overall = _compute_overall(scores, [])
+        overall = _compute_overall(scores, _ALL_SUITES)
         assert overall == 0.0  # clamped to 0
+
+    def test_missing_suite_is_excluded_not_defaulted(self):
+        # Only domain ran (perfect). The overall must renormalize to that suite
+        # alone (100.0), not be dragged down by defaults for suites that never ran.
+        scores = {"domain": {"mean": 5.0}}
+        assert _compute_overall(scores, _ALL_SUITES) == 100.0
+
+    def test_partial_suites_renormalize(self):
+        # domain 100% (w .30) + general 50% (w .25) → weighted mean over .55.
+        scores = {"domain": {"mean": 5.0}, "general": {"finetuned_score": 50}}
+        expected = (100.0 * 0.30 + 50.0 * 0.25) / (0.30 + 0.25)
+        assert _compute_overall(scores, _ALL_SUITES) == round(expected, 1)
+
+    def test_no_suites_ran_returns_zero(self):
+        assert _compute_overall({"domain": {"mean": None}}, _ALL_SUITES) == 0.0
+
+
+class TestSuitePct:
+    def test_domain_none_when_mean_absent(self):
+        assert _suite_pct("domain", {"domain": {"mean": None}}) is None
+        assert _suite_pct("domain", {}) is None
+
+    def test_domain_scales_five_point_to_pct(self):
+        assert _suite_pct("domain", {"domain": {"mean": 5.0}}) == 100.0
+
+    def test_ab_none_when_win_rate_absent(self):
+        assert _suite_pct("ab_comparison", {"ab_comparison": {}}) is None
 
 
 class TestGenerateRecommendations:
