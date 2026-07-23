@@ -95,9 +95,9 @@ pub async fn create_invitation(
     state
         .notify(
             user.tenant_id,
-            "invitation",
+            platform_shared::events::notification::INVITATION,
             serde_json::json!({
-                "event": "invitation",
+                "event": platform_shared::events::notification::INVITATION,
                 "email": invitation.email,
                 "role": invitation.role.to_string(),
             }),
