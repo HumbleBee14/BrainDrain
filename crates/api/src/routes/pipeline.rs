@@ -31,7 +31,9 @@ pub fn router() -> Router<AppState> {
             "/projects/{project_id}/full-pipeline",
             post(trigger_full_pipeline),
         )
-        .route("/projects/{project_id}/status", get(get_status))
+        // NOTE: GET /projects/{id}/status is registered in routes/projects.rs
+        // alongside the PUT on the same path — axum panics at startup if two
+        // merged routers register the same path shape separately.
         .route(
             "/projects/{project_id}/status/stream",
             get(stream_pipeline_status),

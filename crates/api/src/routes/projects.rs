@@ -25,7 +25,13 @@ pub fn router() -> Router<AppState> {
         .route("/projects", get(list_projects))
         .route("/projects/{id}", get(get_project))
         .route("/projects/{id}", put(update_project))
-        .route("/projects/{id}/status", put(update_project_status))
+        // GET (pipeline status) and PUT (project state machine) share this
+        // path; both live here because two merged routers must not register
+        // the same path shape twice (axum panics at startup — see pipeline.rs).
+        .route(
+            "/projects/{id}/status",
+            put(update_project_status).get(crate::routes::pipeline::get_status),
+        )
         .route("/projects/{id}", delete(delete_project))
 }
 
