@@ -642,25 +642,36 @@ async def run_sft_round_core(
             load_in_4bit=load_in_4bit,
         )
 
-        target_modules = hp.get(
-            "target_modules",
-            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        )
-        model = engine.attach_adapter(
-            model,
-            r=hp.get("r", 16),
-            lora_alpha=hp.get("lora_alpha", 16),
-            lora_dropout=hp.get("lora_dropout", 0),
-            target_modules=target_modules,
-        )
-
-        # If resuming from a previous iteration, load adapter weights
         if input.adapter_path:
+            # Resuming from a previous iteration: load the saved adapter directly
+            # with PeftModel.from_pretrained(is_trainable=True) so its own config +
+            # weights are restored exactly and remain trainable for this round. Do
+            # NOT call attach_adapter here — the loaded PEFT model already carries
+            # the adapter. The old attach_adapter() + load_adapter("default")
+            # pattern created a fresh random "default" adapter and then failed to
+            # load the saved weights into it (state_dict mismatch); this is the
+            # same broken pattern run_evaluate_holdout_core documents and avoids.
             prev_adapter_dir = tmpdir_path / "prev_adapter"
             prev_adapter_dir.mkdir(parents=True)
             _download_adapter(input.adapter_path, prev_adapter_dir, s3, s3_bucket)
-            model.load_adapter(str(prev_adapter_dir), adapter_name="default")
+
+            from peft import PeftModel
+
+            model = PeftModel.from_pretrained(model, str(prev_adapter_dir), is_trainable=True)
             logger.info("Loaded adapter from previous iteration: %s", input.adapter_path)
+        else:
+            # First round: attach a fresh LoRA adapter to the base model.
+            target_modules = hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            )
+            model = engine.attach_adapter(
+                model,
+                r=hp.get("r", 16),
+                lora_alpha=hp.get("lora_alpha", 16),
+                lora_dropout=hp.get("lora_dropout", 0),
+                target_modules=target_modules,
+            )
 
         phase = f"iter_{iteration}"
         metrics = _train_sft(
