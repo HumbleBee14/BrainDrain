@@ -8,6 +8,7 @@ pub mod dashboard_service;
 pub mod data_guide_service;
 pub mod dataset_service;
 pub mod delivery_worker;
+pub mod deploy_gate;
 pub mod deployment_service;
 pub mod document_service;
 pub mod email_provider;

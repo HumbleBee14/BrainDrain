@@ -7,18 +7,52 @@ use crate::app_state::AppState;
 use crate::dto::model::ModelResponse;
 use crate::error::{AppError, AppResult};
 use crate::services::billing_outbox;
+use crate::services::deploy_gate::{self, DeployGatePolicy, GateDecision};
 use crate::services::feature_flags::{DEPLOYMENTS_MULTI_INSTANCE_ENABLED, FlagContext};
 use crate::services::inference_backend::AdapterHandle;
+
+/// Whether the deployment eval gate applies to a given deploy call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateMode {
+    /// Enforce the configured eval gate. Used by the normal deploy path: a new,
+    /// unproven model must clear the thresholds before it reaches production.
+    Enforce,
+    /// Bypass the gate. Used by rollbacks, which restore a *previously deployed*
+    /// version — that version was already vetted when it first shipped, and the
+    /// gate must never trap an operator on a broken current version by refusing
+    /// the rollback that would restore service.
+    Bypass,
+}
 
 /// Business logic for model deployment via pluggable inference backends.
 pub struct DeploymentService;
 
 impl DeploymentService {
-    /// Deploy a fine-tuned model by loading its LoRA adapter into the inference backend.
+    /// Deploy a fine-tuned model by loading its LoRA adapter into the inference
+    /// backend. Enforces the eval gate (see [`GateMode`]).
     pub async fn deploy(
         state: &AppState,
         tenant_id: Uuid,
         model_id: Uuid,
+    ) -> AppResult<ModelResponse> {
+        Self::deploy_with_gate(state, tenant_id, model_id, GateMode::Enforce).await
+    }
+
+    /// Deploy without applying the eval gate. Reserved for rollbacks to a
+    /// previously deployed version — see [`GateMode::Bypass`].
+    pub async fn deploy_bypassing_gate(
+        state: &AppState,
+        tenant_id: Uuid,
+        model_id: Uuid,
+    ) -> AppResult<ModelResponse> {
+        Self::deploy_with_gate(state, tenant_id, model_id, GateMode::Bypass).await
+    }
+
+    async fn deploy_with_gate(
+        state: &AppState,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        gate_mode: GateMode,
     ) -> AppResult<ModelResponse> {
         let model = state
             .model_repo()
@@ -36,6 +70,12 @@ impl DeploymentService {
             return Err(AppError::Conflict {
                 message: "Model is already deployed".to_string(),
             });
+        }
+
+        // Eval gate: applied once here so it guards BOTH the single-instance and
+        // multi-instance paths below. Rollbacks pass Bypass and skip it.
+        if gate_mode == GateMode::Enforce {
+            Self::enforce_eval_gate(state, tenant_id, model_id).await?;
         }
 
         let multi_instance_enabled = state
@@ -91,6 +131,48 @@ impl DeploymentService {
         {
             Ok(Some(guide)) => guide.system_prompt,
             _ => String::new(),
+        }
+    }
+
+    /// Enforce the configured deployment eval gate for `model_id`. Reads the
+    /// model's latest completed evaluation scores and blocks the deploy with a
+    /// typed [`AppError::Conflict`] (not a 500) when they fail the policy. A gate
+    /// with no thresholds configured is a no-op.
+    async fn enforce_eval_gate(state: &AppState, tenant_id: Uuid, model_id: Uuid) -> AppResult<()> {
+        let policy = DeployGatePolicy::from_thresholds(
+            state.config().deploy_min_ab_win_rate,
+            state.config().deploy_max_benchmark_regression,
+        );
+        if !policy.is_enabled() {
+            return Ok(());
+        }
+
+        // Absent scores (no completed eval) become an empty object; the policy
+        // then treats the required metrics as unavailable and blocks — the gate
+        // requires positive evidence, so an unevaluated model does not deploy.
+        let scores = state
+            .evaluation_repo()
+            .latest_completed_scores(tenant_id, model_id)
+            .await?
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        match policy.check(&scores) {
+            GateDecision::Blocked(violations) => {
+                let failed_metrics = violations
+                    .iter()
+                    .map(|v| v.metric.label())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let message = deploy_gate::format_block_message(&violations);
+                tracing::info!(
+                    model_id = %model_id,
+                    gate = "blocked",
+                    failed_metrics = %failed_metrics,
+                    "{message}"
+                );
+                Err(AppError::Conflict { message })
+            }
+            GateDecision::Passed | GateDecision::Disabled => Ok(()),
         }
     }
 
