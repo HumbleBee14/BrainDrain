@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { useTrainingJob } from "@/hooks/use-training";
+import { useModels } from "@/hooks/use-models";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import type { TrainingJob } from "@/lib/api-client";
+import { ErrorState } from "@/components/error-state";
+import type { Model, TrainingJob } from "@/lib/api-client";
 
 function ComparisonRow({
   label,
@@ -139,8 +142,10 @@ export default function TrainingComparisonPage() {
 
   const job1Query = useTrainingJob(jobIds[0] ?? "", jobIds.length >= 1);
   const job2Query = useTrainingJob(jobIds[1] ?? "", jobIds.length >= 2);
+  const modelsQuery = useModels(params.id, 0, 50);
 
   const isLoading = job1Query.isLoading || job2Query.isLoading;
+  const isError = job1Query.isError || job2Query.isError;
   const jobs = [job1Query.data, job2Query.data].filter(
     (j): j is TrainingJob => !!j,
   );
@@ -164,6 +169,20 @@ export default function TrainingComparisonPage() {
     );
   }
 
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load training jobs"
+        message="We couldn't reach the training service. Please try again."
+        onRetry={() => {
+          job1Query.refetch();
+          job2Query.refetch();
+        }}
+        isRetrying={job1Query.isFetching || job2Query.isFetching}
+      />
+    );
+  }
+
   if (jobs.length < 2) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -180,6 +199,15 @@ export default function TrainingComparisonPage() {
   const metrics = jobs.map(
     (j) => (j.metrics ?? {}) as Record<string, unknown>,
   );
+
+  // Training jobs and models are separate entities; a completed job produces
+  // a model, so join them client-side to surface eval scores per job.
+  const modelsByJob = new Map<string, Model>();
+  for (const m of modelsQuery.data?.data ?? []) {
+    modelsByJob.set(m.training_job_id, m);
+  }
+  const evalModels = jobs.map((j) => modelsByJob.get(j.id) ?? null);
+  const hasAnyEvalData = evalModels.some((m) => m?.eval_scores);
 
   return (
     <div>
@@ -414,6 +442,109 @@ export default function TrainingComparisonPage() {
           )}
           highlight="higher"
         />
+      </div>
+
+      {/* Evaluation Quality */}
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-6">
+        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-3 uppercase tracking-wider">
+          Evaluation Quality
+        </h3>
+        {modelsQuery.isError ? (
+          <ErrorState
+            compact
+            title="Couldn't load evaluation scores"
+            message="Model evaluation data is temporarily unavailable."
+            onRetry={() => modelsQuery.refetch()}
+            isRetrying={modelsQuery.isFetching}
+          />
+        ) : modelsQuery.isLoading ? (
+          <p className="text-sm text-zinc-500">Loading evaluation scores...</p>
+        ) : !hasAnyEvalData ? (
+          <p className="text-sm text-zinc-500">
+            No evaluation scores yet. Run an evaluation on each model to
+            compare quality.
+          </p>
+        ) : (
+          <>
+            <ComparisonRow
+              label="Overall Score"
+              values={evalModels.map((m) =>
+                m?.eval_scores?.overall != null
+                  ? String(m.eval_scores.overall)
+                  : null,
+              )}
+              highlight="higher"
+            />
+            <ComparisonRow
+              label="Domain Accuracy (mean)"
+              values={evalModels.map((m) =>
+                m?.eval_scores?.domain?.mean != null
+                  ? `${m.eval_scores.domain.mean.toFixed(2)}/5`
+                  : null,
+              )}
+              highlight="higher"
+            />
+            <ComparisonRow
+              label="General Capability"
+              values={evalModels.map((m) =>
+                m?.eval_scores?.general?.finetuned_score != null
+                  ? `${m.eval_scores.general.finetuned_score.toFixed(1)}%`
+                  : null,
+              )}
+              highlight="higher"
+            />
+            <ComparisonRow
+              label="Capability Delta vs Base"
+              values={evalModels.map((m) => {
+                const delta = m?.eval_scores?.general?.delta_pct;
+                if (delta == null) return null;
+                return `${delta > 0 ? "+" : ""}${delta.toFixed(1)}%${
+                  m?.eval_scores?.general?.forgetting_alert
+                    ? " (forgetting alert)"
+                    : ""
+                }`;
+              })}
+              highlight="higher"
+            />
+            <ComparisonRow
+              label="A/B Win Rate vs Base"
+              values={evalModels.map((m) =>
+                m?.eval_scores?.ab_comparison?.win_rate != null
+                  ? `${(m.eval_scores.ab_comparison.win_rate * 100).toFixed(1)}%`
+                  : null,
+              )}
+              highlight="higher"
+            />
+            <ComparisonRow
+              label="Safety Refusal Rate"
+              values={evalModels.map((m) => {
+                const safety = m?.eval_scores?.safety;
+                if (!safety) return null;
+                return `${(safety.refusal_rate * 100).toFixed(0)}%${
+                  safety.degraded ? " (degraded)" : ""
+                }`;
+              })}
+            />
+            <div className="grid grid-cols-1 md:grid-cols-[200px,1fr,1fr] gap-1 md:gap-4 pt-3 mt-1 border-t border-zinc-200/50 dark:border-zinc-800/50">
+              <div />
+              {evalModels.map((m, i) =>
+                m ? (
+                  <Link
+                    key={m.id}
+                    href={`/projects/${params.id}/models/${m.id}/evaluation`}
+                    className="text-xs text-violet-600 dark:text-violet-400 hover:underline"
+                  >
+                    View full evaluation &rarr;
+                  </Link>
+                ) : (
+                  <span key={jobs[i].id} className="text-xs text-zinc-400 dark:text-zinc-600">
+                    No model produced for this job
+                  </span>
+                ),
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
