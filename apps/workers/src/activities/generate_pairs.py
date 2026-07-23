@@ -32,6 +32,16 @@ logger = logging.getLogger("platform.generate")
 # the pair generator and must propagate (fail loud), not be swallowed here.
 TRANSIENT_GENERATION_ERRORS = (httpx.HTTPError, TimeoutError, CircuitBreakerOpen)
 
+# pairs_per_chunk multiplies into one LLM call per chunk; bound it so a stray
+# large value can't fan out into a runaway number of generations.
+MIN_PAIRS_PER_CHUNK = 1
+MAX_PAIRS_PER_CHUNK = 50
+
+
+def clamp_pairs_per_chunk(value: int) -> int:
+    """Bound pairs_per_chunk to a sane range to cap generation fan-out."""
+    return max(MIN_PAIRS_PER_CHUNK, min(value, MAX_PAIRS_PER_CHUNK))
+
 
 @dataclass
 class GenerateSyntheticPairsInput:
@@ -216,13 +226,14 @@ class GeneratePairsActivity:
             )
             scorer = get_faithfulness_scorer(settings, make_llm_call(settings.judge_temperature))
 
+            pairs_per_chunk = clamp_pairs_per_chunk(input.pairs_per_chunk)
             generated, pair_meta, failed_chunks = await generate_pairs_for_chunks(
                 chunks,
                 facets,
                 pair_generator,
                 task_type=input.task_type,
                 guidance=input.guidance,
-                pairs_per_chunk=input.pairs_per_chunk,
+                pairs_per_chunk=pairs_per_chunk,
             )
 
         kept, dropped_unfaithful = await apply_faithfulness_gate(

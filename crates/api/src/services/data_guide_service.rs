@@ -20,6 +20,26 @@ use crate::temporal::{TraceContext, WorkflowOrchestrator};
 const DEFAULT_NUM_FACETS: u32 = 8;
 /// Default number of preview samples generated when the caller doesn't specify one.
 const DEFAULT_NUM_SAMPLES: u32 = 5;
+/// Bounds on caller-supplied counts. These fan out into LLM calls (and cost),
+/// so an unbounded request must not be passed through to the workers.
+const MIN_NUM_FACETS: u32 = 1;
+const MAX_NUM_FACETS: u32 = 50;
+const MIN_NUM_SAMPLES: u32 = 1;
+const MAX_NUM_SAMPLES: u32 = 50;
+
+/// Resolve the requested facet count to a sane, bounded value.
+fn resolve_num_facets(requested: Option<u32>) -> u32 {
+    requested
+        .unwrap_or(DEFAULT_NUM_FACETS)
+        .clamp(MIN_NUM_FACETS, MAX_NUM_FACETS)
+}
+
+/// Resolve the requested preview-sample count to a sane, bounded value.
+fn resolve_num_samples(requested: Option<u32>) -> u32 {
+    requested
+        .unwrap_or(DEFAULT_NUM_SAMPLES)
+        .clamp(MIN_NUM_SAMPLES, MAX_NUM_SAMPLES)
+}
 
 /// Business logic for the guided synthetic-data session (data guide).
 ///
@@ -106,7 +126,7 @@ impl DataGuideService {
             });
         }
 
-        let num_facets = req.num_facets.unwrap_or(DEFAULT_NUM_FACETS);
+        let num_facets = resolve_num_facets(req.num_facets);
 
         let result = orchestrator
             .start_generate_facets(
@@ -196,7 +216,7 @@ impl DataGuideService {
             });
         }
 
-        let num_samples = req.num_samples.unwrap_or(DEFAULT_NUM_SAMPLES);
+        let num_samples = resolve_num_samples(req.num_samples);
 
         let result = orchestrator
             .start_generate_preview(
@@ -497,6 +517,21 @@ fn is_valid_transition(from: DataGuideStatus, to: DataGuideStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn count_resolution_applies_defaults_and_bounds() {
+        // Unspecified → default.
+        assert_eq!(resolve_num_facets(None), DEFAULT_NUM_FACETS);
+        assert_eq!(resolve_num_samples(None), DEFAULT_NUM_SAMPLES);
+        // In-range values pass through.
+        assert_eq!(resolve_num_facets(Some(12)), 12);
+        assert_eq!(resolve_num_samples(Some(3)), 3);
+        // Over/under the bounds are clamped, not passed through.
+        assert_eq!(resolve_num_facets(Some(1_000_000)), MAX_NUM_FACETS);
+        assert_eq!(resolve_num_facets(Some(0)), MIN_NUM_FACETS);
+        assert_eq!(resolve_num_samples(Some(1_000_000)), MAX_NUM_SAMPLES);
+        assert_eq!(resolve_num_samples(Some(0)), MIN_NUM_SAMPLES);
+    }
 
     #[test]
     fn transition_rules() {

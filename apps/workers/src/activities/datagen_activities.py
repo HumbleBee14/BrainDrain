@@ -195,7 +195,9 @@ class GeneratePreviewInput:
     task_type: str
     guidance: str = ""
     facets: list[dict] | None = None
-    num_samples: int = 6
+    # Fallback only — the API resolves and clamps this before dispatch. Kept in
+    # sync with the Rust DEFAULT_NUM_SAMPLES so the two agree if ever defaulted.
+    num_samples: int = 5
 
 
 @dataclass
