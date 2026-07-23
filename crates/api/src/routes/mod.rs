@@ -388,3 +388,23 @@ pub fn docs_router(config: &Config) -> Option<Router<AppState>> {
 
     Some(Router::new().merge(swagger_ui))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Axum panics at ROUTE-REGISTRATION time on a path-shape conflict between
+    /// merged routers or on invalid segment syntax (e.g. pre-0.8 `:id`). Both
+    /// classes shipped as boot blockers once (#94) because nothing constructed
+    /// the full router in CI. This composes the exact same route tree as
+    /// `router()` minus the state-bound middleware layers, so any registration
+    /// panic fails this test instead of production startup.
+    #[test]
+    fn full_route_tree_composes_without_panicking() {
+        let _app: Router<AppState> = Router::new()
+            .nest("/api/v1", v1_router())
+            .merge(health::router())
+            .merge(inference::router())
+            .merge(stripe_webhooks::router());
+    }
+}
