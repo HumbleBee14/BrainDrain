@@ -190,6 +190,30 @@ export interface InferenceUsageDay {
   cost_usd: number;
 }
 
+// Mirrors crates/api/src/routes/catalog.rs. Not ts-rs generated — those DTOs
+// only derive utoipa::ToSchema (for OpenAPI docs), not TS. If they gain a
+// `#[derive(TS)]`, switch these to `export type { ... } from "./generated"`
+// and run `make typegen`.
+export interface CatalogModel {
+  model_id: string;
+  display_name: string;
+  size: string;
+  vram_4bit_gb: number;
+  vram_full_gb: number;
+  best_for: string[];
+  recommended_for: string[];
+  gated: boolean;
+  default_mode: string;
+  est_hours_1k_pairs: number;
+  est_cost_1k_pairs: number;
+}
+
+export interface CatalogResponse {
+  models: CatalogModel[];
+  suggested: string | null;
+  suggested_mode: string | null;
+}
+
 // ── API client infrastructure ──
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -347,6 +371,19 @@ async function uploadRequest(
 }
 
 export const api = {
+  catalog: {
+    // Public endpoint — no auth token required.
+    get: (taskType?: string, pairCount?: number) => {
+      const qs = new URLSearchParams();
+      if (taskType) qs.set("task_type", taskType);
+      if (pairCount !== undefined) qs.set("pair_count", String(pairCount));
+      const query = qs.toString();
+      return request<CatalogResponse>(
+        `/api/v1/models/catalog${query ? `?${query}` : ""}`,
+      );
+    },
+  },
+
   projects: {
     list: (token: string, offset = 0, limit = 20) =>
       request<PaginatedResponse<ProjectResponse>>(
