@@ -8,14 +8,21 @@
 use uuid::Uuid;
 
 use crate::dto::common::PaginatedResponse;
-use crate::dto::feedback::InferenceSampleResponse;
+use crate::dto::feedback::{
+    InferenceSampleResponse, PromoteSamplesRequest, PromoteSamplesResponse,
+};
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::{InferenceSampleRepository, ModelRepository};
+use crate::repositories::traits::{DatasetRepository, InferenceSampleRepository, ModelRepository};
+use crate::services::dataset_service::DatasetService;
 use platform_shared::enums::FeedbackRating;
+use platform_storage::ObjectStorage;
 
 /// Captures larger than this are skipped (not truncated — a cut JSON body is
 /// worthless as a training example). Generous for chat traffic.
 pub const MAX_CAPTURE_BYTES: usize = 256 * 1024;
+
+/// Cap per promote call — a dataset is created synchronously in the request.
+pub const MAX_PROMOTE_SAMPLES: usize = 500;
 
 pub struct InferenceSampleService;
 
@@ -124,6 +131,104 @@ impl InferenceSampleService {
         Self::submit_feedback(repo, tenant_id, sample_id, rating, comment).await
     }
 
+    /// Promote captured samples into a new `review_pending` training dataset
+    /// in the model's project (stage 2 of the flywheel).
+    ///
+    /// A negative-rated sample must carry a corrected response — promoting a
+    /// response the user flagged as bad would poison the training set. The
+    /// captured response is used as the assistant turn otherwise.
+    pub async fn promote(
+        sample_repo: &dyn InferenceSampleRepository,
+        model_repo: &dyn ModelRepository,
+        dataset_repo: &dyn DatasetRepository,
+        storage: &impl ObjectStorage,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        req: PromoteSamplesRequest,
+    ) -> AppResult<PromoteSamplesResponse> {
+        if req.samples.is_empty() {
+            return Err(AppError::BadRequest {
+                message: "No samples selected".to_string(),
+            });
+        }
+        if req.samples.len() > MAX_PROMOTE_SAMPLES {
+            return Err(AppError::BadRequest {
+                message: format!("At most {MAX_PROMOTE_SAMPLES} samples per promotion"),
+            });
+        }
+
+        let model = model_repo
+            .get_by_id(tenant_id, model_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Model not found".to_string(),
+            })?;
+
+        let mut records = Vec::with_capacity(req.samples.len());
+        let mut sample_ids = Vec::with_capacity(req.samples.len());
+        for item in &req.samples {
+            let sample_id: Uuid = item.sample_id.parse().map_err(|_| AppError::BadRequest {
+                message: format!("sample_id '{}' is not a UUID", item.sample_id),
+            })?;
+            let sample = sample_repo
+                .get_by_id(tenant_id, sample_id)
+                .await?
+                .filter(|s| s.model_id == model_id)
+                .ok_or(AppError::NotFound {
+                    message: format!("Sample {sample_id} not found"),
+                })?;
+            if sample.promoted_at.is_some() {
+                return Err(AppError::BadRequest {
+                    message: format!("Sample {sample_id} was already promoted"),
+                });
+            }
+            let correction = item
+                .corrected_response
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            if sample.rating.as_deref() == Some("negative") && correction.is_none() {
+                return Err(AppError::BadRequest {
+                    message: format!(
+                        "Sample {sample_id} is rated negative — provide a corrected response before promoting"
+                    ),
+                });
+            }
+            let response_text = correction.unwrap_or(&sample.response);
+            records.push(sample_to_record(&sample.messages, response_text, sample_id));
+            sample_ids.push(sample_id);
+        }
+
+        let default_name = format!("Production Feedback — {}", model.name);
+        let name = req
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&default_name);
+
+        let dataset = DatasetService::store_records_as_dataset(
+            dataset_repo,
+            storage,
+            tenant_id,
+            model.project_id,
+            name,
+            &records,
+            serde_json::json!({
+                "source": "production_feedback",
+                "model_id": model_id.to_string(),
+            }),
+        )
+        .await?;
+
+        let promoted = sample_repo.mark_promoted(tenant_id, &sample_ids).await?;
+
+        Ok(PromoteSamplesResponse {
+            dataset: dataset.into(),
+            promoted_count: promoted as u32,
+        })
+    }
+
     pub async fn set_capture(
         model_repo: &dyn ModelRepository,
         tenant_id: Uuid,
@@ -140,6 +245,22 @@ impl InferenceSampleService {
         }
         Ok(())
     }
+}
+
+/// Build a training record from a captured sample: the captured conversation
+/// plus the (possibly corrected) response as the final assistant turn, in the
+/// same internal shape as imported/generated dataset records.
+pub fn sample_to_record(
+    messages: &serde_json::Value,
+    response_text: &str,
+    sample_id: Uuid,
+) -> serde_json::Value {
+    let mut msgs = messages.as_array().cloned().unwrap_or_default();
+    msgs.push(serde_json::json!({"role": "assistant", "content": response_text}));
+    serde_json::json!({
+        "messages": msgs,
+        "metadata": {"source": "production_feedback", "sample_id": sample_id.to_string()},
+    })
 }
 
 /// Extract the assistant completion text from a non-streaming
@@ -167,6 +288,22 @@ pub fn append_stream_content(acc: &mut String, chunk_text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_record_appends_assistant_turn() {
+        let messages = serde_json::json!([
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "What is the refund window?"}
+        ]);
+        let id = Uuid::nil();
+        let record = sample_to_record(&messages, "30 days.", id);
+        let msgs = record["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[2]["role"], "assistant");
+        assert_eq!(msgs[2]["content"], "30 days.");
+        assert_eq!(record["metadata"]["source"], "production_feedback");
+        assert_eq!(record["metadata"]["sample_id"], id.to_string());
+    }
 
     #[test]
     fn extracts_completion_from_openai_response() {

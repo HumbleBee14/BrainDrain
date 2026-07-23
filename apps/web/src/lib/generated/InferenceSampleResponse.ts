@@ -5,4 +5,4 @@ import type { SampleMessage } from "./SampleMessage";
 /**
  * A captured production inference request/response pair (data flywheel).
  */
-export type InferenceSampleResponse = { id: string, model_id: string, messages: Array<SampleMessage>, response: string, rating: FeedbackRating | null, rating_comment: string | null, created_at: string, };
+export type InferenceSampleResponse = { id: string, model_id: string, messages: Array<SampleMessage>, response: string, rating: FeedbackRating | null, rating_comment: string | null, promoted_at: string | null, created_at: string, };

@@ -12,7 +12,8 @@ use crate::auth::AuthenticatedUser;
 use crate::auth_api_key::ApiKeyAuth;
 use crate::dto::common::{PaginatedResponse, PaginationParams};
 use crate::dto::feedback::{
-    ApiFeedbackRequest, InferenceSampleResponse, SetCaptureRequest, SubmitFeedbackRequest,
+    ApiFeedbackRequest, InferenceSampleResponse, PromoteSamplesRequest, PromoteSamplesResponse,
+    SetCaptureRequest, SubmitFeedbackRequest,
 };
 use crate::error::{AppError, AppResult};
 use crate::rbac::require_role;
@@ -22,6 +23,7 @@ use crate::services::inference_sample_service::InferenceSampleService;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/models/{model_id}/samples", get(list_samples))
+        .route("/models/{model_id}/samples/promote", post(promote_samples))
         .route("/models/{model_id}/capture", put(set_capture))
         .route("/samples/{id}/feedback", post(submit_feedback))
 }
@@ -89,6 +91,41 @@ pub async fn list_samples(
     )
     .await?;
     Ok(Json(result))
+}
+
+/// POST /api/v1/models/:model_id/samples/promote
+#[utoipa::path(
+    post,
+    path = "/api/v1/models/{model_id}/samples/promote",
+    tag = "Feedback",
+    params(("model_id" = Uuid, Path, description = "Model ID")),
+    request_body = PromoteSamplesRequest,
+    responses(
+        (status = 201, description = "Training dataset created from samples", body = PromoteSamplesResponse),
+        (status = 400, description = "Invalid selection (e.g. negative sample without correction)"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Model or sample not found"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn promote_samples(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(model_id): Path<Uuid>,
+    Json(body): Json<PromoteSamplesRequest>,
+) -> AppResult<(StatusCode, Json<PromoteSamplesResponse>)> {
+    require_role(&user, TeamRole::Member)?;
+    let result = InferenceSampleService::promote(
+        state.inference_sample_repo(),
+        state.model_repo(),
+        state.dataset_repo(),
+        state.storage(),
+        user.tenant_id,
+        model_id,
+        body,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
 }
 
 /// PUT /api/v1/models/:model_id/capture
