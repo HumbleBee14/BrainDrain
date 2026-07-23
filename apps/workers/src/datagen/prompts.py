@@ -1,9 +1,5 @@
-# Prompt wording in this file is adapted from the Kiln AI data-gen prompts
-# (https://github.com/Kiln-AI/Kiln, MIT), which themselves adapted the
-# promptwright library (https://github.com/StacklokLabs/promptwright), which
-# adapted the pluto library (https://github.com/redotvideo/pluto).
-# promptwright and pluto are licensed under the Apache License 2.0. Any
-# modifications here are licensed under this project's license.
+# Portions of the prompt wording in this file are adapted from third-party
+# sources — see THIRD_PARTY_NOTICES.md at the repository root.
 """Central library of LLM prompts for the synthetic data-generation pipeline.
 
 Prompts live ONLY here — never inline them at call sites — so wording,
