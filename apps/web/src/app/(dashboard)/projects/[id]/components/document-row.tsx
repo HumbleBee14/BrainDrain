@@ -20,6 +20,9 @@ export function DocumentRow({ doc }: { doc: Document }) {
             {doc.language && ` \u00b7 ${doc.language}`}
             {doc.page_count && ` \u00b7 ${doc.page_count} pages`}
           </p>
+          {doc.status === "failed" && doc.error_message && (
+            <p className="text-xs text-red-500 mt-1">{doc.error_message}</p>
+          )}
         </div>
       </div>
       <div className="flex items-center gap-3 shrink-0">

@@ -290,7 +290,8 @@ async fn authorize_channel(
     state: &AppState,
     user: &AuthenticatedUser,
 ) -> Result<String, String> {
-    let job_id = parse_training_channel(channel).ok_or_else(|| "Unsupported channel".to_string())?;
+    let job_id =
+        parse_training_channel(channel).ok_or_else(|| "Unsupported channel".to_string())?;
 
     match state
         .training_job_repo()

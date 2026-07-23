@@ -19,6 +19,7 @@ pub struct DocumentResponse {
     pub page_count: Option<i32>,
     pub language: Option<String>,
     pub domain: Option<String>,
+    pub error_message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -36,6 +37,7 @@ impl From<platform_db::models::Document> for DocumentResponse {
             page_count: d.page_count,
             language: d.language,
             domain: d.domain,
+            error_message: d.error_message,
             created_at: d.created_at,
             updated_at: d.updated_at,
         }

@@ -26,11 +26,9 @@ pub const MAX_UPLOAD_SIZE_BYTES: u64 = 500 * 1024 * 1024;
 /// Default max batch upload size: 10 GB.
 pub const MAX_BATCH_UPLOAD_SIZE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
-/// Supported file extensions for document upload.
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "pdf", "docx", "doc", "txt", "html", "htm", "epub", "md", "csv", "png", "jpg", "jpeg", "tiff",
-    "bmp",
-];
+/// Supported file extensions for document upload. Every entry must have a real
+/// text-extracting parser — no image/scanned formats, since there is no OCR path.
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["pdf", "docx", "txt", "html", "htm", "md", "csv"];
 
 /// Maximum pages for document parsing before chunking.
 pub const DEFAULT_CHUNK_SIZE_TOKENS: usize = 1500;

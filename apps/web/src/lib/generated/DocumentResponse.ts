@@ -4,4 +4,4 @@ import type { DocumentStatus } from "./DocumentStatus";
 /**
  * API response for a document.
  */
-export type DocumentResponse = { id: string, project_id: string, filename: string, file_size: number, mime_type: string, status: DocumentStatus, parse_quality: number | null, page_count: number | null, language: string | null, domain: string | null, created_at: string, updated_at: string, };
+export type DocumentResponse = { id: string, project_id: string, filename: string, file_size: number, mime_type: string, status: DocumentStatus, parse_quality: number | null, page_count: number | null, language: string | null, domain: string | null, error_message: string | null, created_at: string, updated_at: string, };
