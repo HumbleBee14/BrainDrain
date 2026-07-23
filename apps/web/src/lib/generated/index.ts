@@ -93,6 +93,13 @@ export type { GenerateDatasetRequest } from "./GenerateDatasetRequest";
 export type { CatalogModel } from "./CatalogModel";
 export type { CatalogResponse } from "./CatalogResponse";
 
+// Feedback / data flywheel (from crates/api/src/dto/feedback.rs)
+export type { FeedbackRating } from "./FeedbackRating";
+export type { SampleMessage } from "./SampleMessage";
+export type { InferenceSampleResponse } from "./InferenceSampleResponse";
+export type { SubmitFeedbackRequest } from "./SubmitFeedbackRequest";
+export type { SetCaptureRequest } from "./SetCaptureRequest";
+
 // Generic wrapper — manually defined (ts-rs doesn't export generics directly)
 export interface PaginatedResponse<T> {
   data: T[];

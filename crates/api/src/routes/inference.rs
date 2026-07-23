@@ -15,9 +15,17 @@ use crate::error::{AppError, AppResult};
 use crate::services::billing_outbox;
 use crate::services::inference_backend::InferenceBackend;
 use crate::services::inference_instance_service::InferenceInstanceService;
+use crate::services::inference_sample_service::{
+    InferenceSampleService, append_stream_content, extract_completion_text,
+};
 use crate::services::plan_service::PlanService;
 use crate::services::token_estimator;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+
+/// Response header carrying the captured sample id, so API callers can submit
+/// feedback on this specific completion via `POST /v1/feedback`.
+const SAMPLE_ID_HEADER: &str = "x-sample-id";
 
 /// Maximum number of items in a single batch request.
 const MAX_BATCH_SIZE: usize = 50;
@@ -207,6 +215,11 @@ pub async fn chat_completions(
             .unwrap_or(""),
     );
 
+    // Data flywheel: when capture is enabled the sample id is minted up front
+    // so it can be returned in the response headers before the body/stream.
+    let sample_id = model.capture_traffic.then(Uuid::new_v4);
+    let capture_messages = sample_id.map(|_| serde_json::json!(&messages));
+
     // Build the inference request via the backend (handles adapter selection correctly)
     let mut inference_request = backend.build_inference_body(
         &adapter_name,
@@ -259,6 +272,12 @@ pub async fn chat_completions(
         // Tee the stream: forward bytes to client AND capture usage from final chunk
         let (usage_tx, mut usage_rx) = tokio::sync::mpsc::channel::<(i64, i64)>(1);
 
+        // Flywheel capture: accumulate assistant deltas as chunks pass through.
+        // The usage chunk is the last data chunk, so by the time the finalizer
+        // below wakes up the accumulator holds the complete response.
+        let capture_acc = sample_id.map(|_| Arc::new(Mutex::new(String::new())));
+        let acc_for_stream = capture_acc.clone();
+
         let forwarded_stream =
             vllm_stream.map(move |chunk_result: Result<bytes::Bytes, reqwest::Error>| {
                 match chunk_result {
@@ -266,6 +285,11 @@ pub async fn chat_completions(
                         // Scan for usage in the final SSE chunk
                         // OpenAI-compat SSE: data: {"usage":{"prompt_tokens":N,"completion_tokens":N}}
                         let text = String::from_utf8_lossy(&bytes);
+                        if let Some(acc) = &acc_for_stream
+                            && let Ok(mut guard) = acc.lock()
+                        {
+                            append_stream_content(&mut guard, &text);
+                        }
                         for line in text.lines() {
                             if let Some(data) = line.strip_prefix("data: ")
                                 && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
@@ -316,18 +340,40 @@ pub async fn chat_completions(
         let batcher_state = state.clone();
         let db = state.db().clone();
         let capped_max_tokens = max_tokens;
+        let capture_repo = sample_id.map(|_| state.inference_sample_repo_arc());
         tokio::spawn(async move {
-            let (tokens_in, tokens_out) = match usage_rx.recv().await {
-                Some(usage) => usage,
+            let (tokens_in, tokens_out, completed) = match usage_rx.recv().await {
+                Some((tokens_in, tokens_out)) => (tokens_in, tokens_out, true),
                 None => {
                     // Client disconnected before usage chunk — bill conservatively
                     tracing::warn!(
                         model_id = %model_id,
                         "Client disconnected before usage chunk; billing estimate"
                     );
-                    (estimated_prompt_tokens, capped_max_tokens)
+                    (estimated_prompt_tokens, capped_max_tokens, false)
                 }
             };
+
+            // Capture only completed responses — a partial answer cut off by a
+            // client disconnect is not a usable training example.
+            if completed
+                && let (Some(id), Some(repo), Some(msgs), Some(acc)) =
+                    (sample_id, capture_repo, capture_messages, capture_acc)
+            {
+                let response_text = acc.lock().map(|g| g.clone()).unwrap_or_default();
+                if !response_text.is_empty() {
+                    InferenceSampleService::capture_best_effort(
+                        &*repo,
+                        tenant_id,
+                        id,
+                        model_id,
+                        Some(key_id),
+                        msgs,
+                        &response_text,
+                    )
+                    .await;
+                }
+            }
 
             let cost = token_estimator::estimate_inference_cost(tokens_in, tokens_out);
             if let Some(row_id) = pending_billing_row {
@@ -361,13 +407,15 @@ pub async fn chat_completions(
 
         let body = Body::from_stream(forwarded_stream);
 
-        let resp = Response::builder()
+        let mut builder = Response::builder()
             .header(CONTENT_TYPE, "text/event-stream")
-            .header(CACHE_CONTROL, "no-cache")
-            .body(body)
-            .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("Failed to build SSE response: {e}"))
-            })?;
+            .header(CACHE_CONTROL, "no-cache");
+        if let Some(id) = sample_id {
+            builder = builder.header(SAMPLE_ID_HEADER, id.to_string());
+        }
+        let resp = builder.body(body).map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("Failed to build SSE response: {e}"))
+        })?;
         Ok(resp.into_response())
     } else {
         // Non-streaming: parse JSON response and bill
@@ -394,7 +442,28 @@ pub async fn chat_completions(
                 .await?;
         }
 
-        Ok(Json(response).into_response())
+        if let (Some(id), Some(msgs)) = (sample_id, capture_messages)
+            && let Some(completion) = extract_completion_text(&response)
+        {
+            InferenceSampleService::capture_best_effort(
+                state.inference_sample_repo(),
+                api_key.tenant_id,
+                id,
+                api_key.model_id,
+                Some(api_key.key_id),
+                msgs,
+                &completion,
+            )
+            .await;
+        }
+
+        let mut resp = Json(response).into_response();
+        if let Some(id) = sample_id
+            && let Ok(value) = axum::http::HeaderValue::from_str(&id.to_string())
+        {
+            resp.headers_mut().insert(SAMPLE_ID_HEADER, value);
+        }
+        Ok(resp)
     }
 }
 

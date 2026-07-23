@@ -5,4 +5,4 @@ import type { EvaluationScores } from "./EvaluationScores";
 /**
  * Model information returned by API.
  */
-export type ModelResponse = { id: string, project_id: string, training_job_id: string, name: string, base_model: string, deployment_status: DeploymentStatus, eval_scores: EvaluationScores | null, version: number, created_at: string, updated_at: string, };
+export type ModelResponse = { id: string, project_id: string, training_job_id: string, name: string, base_model: string, deployment_status: DeploymentStatus, eval_scores: EvaluationScores | null, version: number, capture_traffic: boolean, created_at: string, updated_at: string, };

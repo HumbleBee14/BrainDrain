@@ -18,6 +18,7 @@ pub struct ModelResponse {
     pub deployment_status: DeploymentStatus,
     pub eval_scores: Option<EvaluationScores>,
     pub version: i32,
+    pub capture_traffic: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -44,6 +45,7 @@ impl From<Model> for ModelResponse {
                 .unwrap_or(DeploymentStatus::Undeployed),
             eval_scores: serde_json::from_value(m.eval_scores).ok(),
             version: m.version,
+            capture_traffic: m.capture_traffic,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }
