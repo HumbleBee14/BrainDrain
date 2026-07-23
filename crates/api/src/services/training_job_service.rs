@@ -391,7 +391,7 @@ impl TrainingJobService {
                 if let (Some(orch), Some(wf)) =
                     (orchestrator, cancelled.temporal_workflow_id.as_deref())
                 {
-                    let _ = orch.terminate_workflow(wf, "Cancelled by user").await;
+                    let _ = orch.cancel_workflow(wf, "Cancelled by user").await;
                 }
 
                 tracing::info!(training_job_id = %job_id, "Training job cancelled");
@@ -409,13 +409,17 @@ impl TrainingJobService {
                             message: "Running job has no workflow to terminate".to_string(),
                         })?;
 
-                // Terminate first so the GPU stops before we commit terminal
-                // state — if this fails we leave the job running rather than
-                // marking it cancelled while it burns GPU.
-                orch.terminate_workflow(workflow_id, "Cancelled by user")
+                // Request cancellation first so the GPU stops before we commit
+                // terminal state — if this fails we leave the job running rather
+                // than marking it cancelled while it burns GPU. Unlike terminate,
+                // cancel is *delivered* to the running activity, which cancels the
+                // in-flight remote GPU call on its next heartbeat (~poll interval)
+                // instead of leaving it for the orphan sweep to catch minutes
+                // later. The orphan sweep remains the backstop if delivery fails.
+                orch.cancel_workflow(workflow_id, "Cancelled by user")
                     .await
                     .map_err(|e| {
-                        AppError::Internal(anyhow::anyhow!("Failed to terminate workflow: {e}"))
+                        AppError::Internal(anyhow::anyhow!("Failed to cancel workflow: {e}"))
                     })?;
 
                 let (gpu_seconds, actual_cost) =
