@@ -34,6 +34,14 @@ class FullPipelineWorkflow:
         base_model: str,
         training_config: dict,
     ) -> dict:
+        # Downstream activities persist these ids as UUID primary keys (training
+        # jobs, models, evaluations) and route the deploy call by model id, so
+        # they must be real UUIDs — not fabricated "<project>-job" strings.
+        # workflow.uuid4() is the Temporal-deterministic UUID generator.
+        training_job_id = str(workflow.uuid4())
+        model_id = str(workflow.uuid4())
+        evaluation_id = str(workflow.uuid4())
+
         # Stage 1: Ingest — parse uploaded documents
         ingest_result = await workflow.execute_child_workflow(
             IngestWorkflow.run,
@@ -54,11 +62,13 @@ class FullPipelineWorkflow:
             TrainWorkflow.run,
             args=[
                 tenant_id,
-                f"{project_id}-job",
+                training_job_id,
                 refine_result.storage_path,
                 base_model,
                 training_config.get("method", "qlora"),
-                training_config.get("mode", "sft"),
+                # TrainWorkflow accepts modes quick/iterative/aligned/reasoning.
+                # "sft" is not a valid mode; default to "quick".
+                training_config.get("mode", "quick"),
                 training_config.get("hyperparams", {}),
                 training_config.get("gpu_class"),
             ],
@@ -70,8 +80,8 @@ class FullPipelineWorkflow:
             EvaluateWorkflow.run,
             args=[
                 tenant_id,
-                f"{project_id}-model",
-                f"{project_id}-eval",
+                model_id,
+                evaluation_id,
                 train_result.adapter_path,
                 base_model,
                 refine_result.storage_path,
@@ -89,11 +99,15 @@ class FullPipelineWorkflow:
                 "deploy_model",
                 DeployModelInput(
                     tenant_id=tenant_id,
-                    model_id=f"{project_id}-model",
+                    model_id=model_id,
                     adapter_path=train_result.adapter_path,
                     base_model=base_model,
                     deployment_config=training_config.get("deployment", {}),
                 ),
+                # DeployModelActivity is registered on the GPU worker
+                # (ml-pipeline-gpu). Without this the activity is scheduled on the
+                # workflow's own queue, where it is not registered, and never runs.
+                task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timedelta(minutes=10),
             )
 

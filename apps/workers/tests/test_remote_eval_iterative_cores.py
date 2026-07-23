@@ -160,3 +160,123 @@ async def test_holdout_core_runs_without_db(monkeypatch):
     assert out.eval_loss == 0.5
     assert out.metrics["eval_loss"] == 0.5
     assert out.metrics["iteration"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sft_round_resume_uses_peftmodel_from_pretrained(monkeypatch):
+    """Resuming a round (adapter_path set) must load the prior adapter via
+    PeftModel.from_pretrained(is_trainable=True) — NOT attach_adapter +
+    load_adapter("default"), which builds a fresh random adapter and drops the
+    saved weights. Round 2+ therefore has to bypass attach_adapter entirely.
+    """
+    import sys
+    import types
+
+    import src.activities.train_model as tm
+
+    class _NoAttachEngine(_FakeEngine):
+        def attach_adapter(self, model, **k):  # pragma: no cover - must not run
+            raise AssertionError("attach_adapter must not be called when resuming")
+
+    monkeypatch.setattr(tm, "get_engine", lambda s: _NoAttachEngine())
+    monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
+    monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
+    monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: None)
+    monkeypatch.setattr(tm, "_get_metrics_collector", lambda s: None)
+    monkeypatch.setattr(
+        tm, "_train_sft", lambda *a, **k: {"iter_1_train_loss": 0.9, "iter_1_train_runtime": 2.0}
+    )
+    monkeypatch.setattr(tm, "_upload_adapter", lambda *a, **k: 4242)
+
+    calls = {}
+
+    def _from_pretrained(model, path, **kwargs):
+        calls["path"] = path
+        calls["kwargs"] = kwargs
+        return model
+
+    fake_peft = types.ModuleType("peft")
+    fake_peft.PeftModel = types.SimpleNamespace(from_pretrained=_from_pretrained)
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    inp = TrainSftRoundInput(
+        tenant_id="tenant-1",
+        training_job_id="job-1",
+        dataset_path="datasets/x.jsonl",
+        base_model="m",
+        method="lora",
+        hyperparams={},
+        iteration=1,
+        adapter_path="checkpoints/tenant-1/job-1/iter-0/",
+        gpu_class="A10G",
+    )
+
+    out = await tm.run_sft_round_core(inp, s3=object(), s3_bucket="b", settings=object())
+
+    # from_pretrained was used, and the adapter is loaded as trainable.
+    assert "path" in calls, "PeftModel.from_pretrained was not called on resume"
+    assert calls["kwargs"].get("is_trainable") is True
+    assert out.adapter_path.endswith("iter-1/")
+    assert out.adapter_size_bytes == 4242
+
+
+@pytest.mark.asyncio
+async def test_sft_round_core_resume_uses_peft_from_pretrained(monkeypatch):
+    """Round 2+ must load the prior adapter with PeftModel.from_pretrained(is_trainable=True)
+    and must NOT call attach_adapter (the old broken fresh-adapter + load_adapter pattern)."""
+    import sys
+    import types
+
+    import src.activities.train_model as tm
+
+    attach_called = {"n": 0}
+
+    class _Engine(_FakeEngine):
+        def attach_adapter(self, model, **k):
+            attach_called["n"] += 1
+            return model
+
+    from_pretrained_calls = []
+
+    def _from_pretrained(model, path, **kwargs):
+        from_pretrained_calls.append({"path": path, "kwargs": kwargs})
+        return "peft-model"
+
+    fake_peft = types.ModuleType("peft")
+    fake_peft.PeftModel = types.SimpleNamespace(from_pretrained=_from_pretrained)
+    monkeypatch.setitem(sys.modules, "peft", fake_peft)
+
+    trained_with = {}
+
+    def _fake_train_sft(model, *a, **k):
+        trained_with["model"] = model
+        return {"iter_1_train_loss": 0.2, "iter_1_train_runtime": 1.0}
+
+    monkeypatch.setattr(tm, "get_engine", lambda s: _Engine())
+    monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
+    monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
+    monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: None)
+    monkeypatch.setattr(tm, "_get_metrics_collector", lambda s: None)
+    monkeypatch.setattr(tm, "_train_sft", _fake_train_sft)
+    monkeypatch.setattr(tm, "_upload_adapter", lambda *a, **k: 4242)
+
+    inp = TrainSftRoundInput(
+        tenant_id="tenant-1",
+        training_job_id="job-1",
+        dataset_path="datasets/x.jsonl",
+        base_model="m",
+        method="lora",
+        hyperparams={},
+        iteration=1,
+        adapter_path="checkpoints/tenant-1/job-1/iter-0/",
+        gpu_class="A10G",
+    )
+    out = await tm.run_sft_round_core(inp, s3=object(), s3_bucket="b", settings=object())
+
+    # Resume path: the prior adapter is loaded (trainable) and NOT re-attached fresh.
+    assert attach_called["n"] == 0
+    assert len(from_pretrained_calls) == 1
+    assert from_pretrained_calls[0]["kwargs"].get("is_trainable") is True
+    # The loaded PEFT model — not the bare base — is what gets trained.
+    assert trained_with["model"] == "peft-model"
+    assert out.adapter_size_bytes == 4242
