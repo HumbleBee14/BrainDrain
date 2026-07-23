@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from src import s3_paths
 from src.activities.llm_judge import OpenAICompatibleJudge
@@ -53,6 +54,34 @@ class StartTrainingActivity:
         self.infra = infra
         self.gpu_provider = gpu_provider
 
+    @staticmethod
+    async def _existing_result_if_completed(db, job_id: str) -> StartTrainingOutput | None:
+        """Reconstruct the output of an already-completed job, or None.
+
+        Used to make the activity idempotent: a Temporal retry after a successful
+        first attempt returns the persisted result instead of re-running training
+        or inserting a duplicate model row.
+        """
+        row = await db.fetchrow(
+            """SELECT j.status, j.metrics, m.adapter_path, m.adapter_size_bytes
+            FROM training_jobs j
+            LEFT JOIN models m ON m.training_job_id = j.id
+            WHERE j.id = $1""",
+            job_id,
+        )
+        if row is None or row["status"] != TrainingJobStatus.COMPLETED:
+            return None
+        if row["adapter_path"] is None:
+            return None
+        metrics = row["metrics"]
+        if isinstance(metrics, str):
+            metrics = json.loads(metrics)
+        return StartTrainingOutput(
+            adapter_path=row["adapter_path"],
+            adapter_size_bytes=row["adapter_size_bytes"] or 0,
+            metrics=metrics or {},
+        )
+
     @activity.defn(name="start_training")
     async def run(self, input: StartTrainingInput) -> StartTrainingOutput:
         """Run a fine-tuning job. Called by TrainWorkflow.
@@ -64,11 +93,35 @@ class StartTrainingActivity:
         job_id = input.training_job_id
 
         try:
-            await db.execute(
-                "UPDATE training_jobs SET status = $1, started_at = NOW() WHERE id = $2",
+            # Claim the job for training only if it is still runnable. 'training'
+            # is included so a retry after a crash mid-run (start_training has
+            # maximum_attempts=2, and the first attempt already moved the job to
+            # 'training' before dying) legitimately re-runs. A job that finished
+            # (completed) or was cancelled/failed is NOT re-run: it falls out of
+            # this set and is handled below. Double-billing from a rare zombie
+            # double-run is prevented by the status-guarded completion UPDATE,
+            # not by excluding 'training' here.
+            started_id = await db.fetchval(
+                """UPDATE training_jobs SET status = $1, started_at = NOW()
+                WHERE id = $2 AND status IN ('pending', 'provisioning', 'training')
+                RETURNING id""",
                 TrainingJobStatus.TRAINING,
                 job_id,
             )
+            if started_id is None:
+                existing = await self._existing_result_if_completed(db, job_id)
+                if existing is not None:
+                    logger.info(
+                        "Job %s already completed; returning existing result "
+                        "(idempotent activity retry)",
+                        job_id,
+                    )
+                    return existing
+                # Cancelled/failed before we could start — do not run training.
+                raise ApplicationError(
+                    f"Training job {job_id} is no longer runnable",
+                    non_retryable=True,
+                )
 
             from dataclasses import asdict
 
@@ -108,18 +161,33 @@ class StartTrainingActivity:
 
             async with db.acquire() as conn:
                 async with conn.transaction():
-                    await conn.execute(
+                    # Guard the terminal transition: only a job still in a runnable
+                    # state may be completed. If it was cancelled or reaped while this
+                    # activity was running (Temporal termination does not preempt an
+                    # executing activity), the UPDATE matches 0 rows and we must NOT
+                    # insert a model / enqueue billing / notify — doing so would
+                    # resurrect a cancelled job and double-bill the tenant.
+                    completed_id = await conn.fetchval(
                         """UPDATE training_jobs
                         SET status = $1,
                             metrics = $3,
                             actual_cost = $4,
                             completed_at = NOW()
-                        WHERE id = $2""",
+                        WHERE id = $2 AND status IN ('training', 'provisioning')
+                        RETURNING id""",
                         TrainingJobStatus.COMPLETED,
                         job_id,
                         json.dumps(result.metrics),
                         actual_cost,
                     )
+
+                    if completed_id is None:
+                        logger.warning(
+                            "Job %s not in a runnable state at completion; "
+                            "skipping model insert, billing and notification",
+                            job_id,
+                        )
+                        return result
 
                     project_id = await _get_project_id(conn, job_id)
 
@@ -188,14 +256,26 @@ class StartTrainingActivity:
             logger.exception("Training failed for job %s", job_id)
             async with db.acquire() as conn:
                 async with conn.transaction():
-                    await conn.execute(
+                    # Only mark FAILED (and bill the failed run) if the job was
+                    # actually running. A job cancelled/reaped concurrently must not
+                    # be flipped to failed or billed a second time.
+                    failed_id = await conn.fetchval(
                         """UPDATE training_jobs
                         SET status = $1, error_message = $3, completed_at = NOW()
-                        WHERE id = $2""",
+                        WHERE id = $2 AND status IN ('training', 'provisioning', 'pending')
+                        RETURNING id""",
                         TrainingJobStatus.FAILED,
                         job_id,
                         str(e)[:2000],
                     )
+
+                    if failed_id is None:
+                        logger.warning(
+                            "Job %s not in a runnable state at failure; "
+                            "skipping failed-billing and notification",
+                            job_id,
+                        )
+                        raise
 
                     await _finalize_failed_training_billing(
                         conn,
