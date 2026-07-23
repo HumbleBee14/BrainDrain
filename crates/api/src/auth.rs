@@ -492,6 +492,33 @@ pub async fn auth_middleware(
     next.run(request).await
 }
 
+/// Event types a new tenant is opted into by email so it hears about the core
+/// pipeline milestones without any setup.
+const DEFAULT_NOTIFICATION_EVENTS: &[&str] = &[
+    "training_complete",
+    "evaluation_complete",
+    "deployment_status",
+    "invitation",
+];
+
+/// Seed default email notification preferences for a freshly bootstrapped owner.
+/// Best-effort — a failure here never blocks sign-in.
+async fn seed_default_notification_prefs(state: &AppState, user: &AuthenticatedUser) {
+    let Some(email) = user.email.as_deref().filter(|e| !e.is_empty()) else {
+        return;
+    };
+    let config = serde_json::json!({ "address": email });
+    for event_type in DEFAULT_NOTIFICATION_EVENTS {
+        if let Err(e) = state
+            .notification_repo()
+            .upsert_preference(user.tenant_id, "email", event_type, true, config.clone())
+            .await
+        {
+            tracing::warn!(error = %e, event_type, "Failed to seed default notification preference");
+        }
+    }
+}
+
 /// Resolve the user's role from `team_members` and auto-bootstrap the first
 /// user as Owner if the tenant has no members yet.
 ///
@@ -546,6 +573,7 @@ pub async fn resolve_role_and_bootstrap(
                     Ok(member) => {
                         if member.user_id == user.user_id {
                             user.role = member.role.parse().unwrap_or(TeamRole::Owner);
+                            seed_default_notification_prefs(state, user).await;
                         } else {
                             return Err(AppError::Forbidden {
                                 message: "You are not a member of this team. Ask an admin for an invitation.".to_string(),

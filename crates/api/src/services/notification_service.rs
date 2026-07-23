@@ -86,13 +86,12 @@ async fn is_safe_webhook_url(url: &str) -> bool {
 pub struct NotificationService;
 
 impl NotificationService {
-    /// Fire-and-forget notification dispatch (same pattern as AuditLogger).
-    ///
-    /// Best-effort: failures are logged but never fail the primary operation.
-    #[allow(dead_code)]
+    /// Emit a notification by durably enqueuing a delivery row per enabled
+    /// preference. The background delivery worker dispatches them (webhook,
+    /// email); in-app rows are read directly by the client. Best-effort: a
+    /// failure is logged and never fails the primary operation.
     pub async fn notify(
         repo: &dyn NotificationRepository,
-        http_client: &reqwest::Client,
         tenant_id: Uuid,
         event_type: &str,
         payload: serde_json::Value,
@@ -106,82 +105,22 @@ impl NotificationService {
         };
 
         for pref in prefs {
-            match pref.channel.as_str() {
-                "webhook" => {
-                    if let Some(url) = pref.config.get("url").and_then(|v| v.as_str()) {
-                        if !is_safe_webhook_url(url).await {
-                            tracing::warn!(
-                                tenant_id = %tenant_id,
-                                url,
-                                "Webhook URL rejected — targets private/internal network"
-                            );
-                            continue;
-                        }
-                        let delivery = repo
-                            .create_delivery(
-                                tenant_id,
-                                pref.id,
-                                event_type,
-                                "webhook",
-                                payload.clone(),
-                            )
-                            .await;
-
-                        if let Ok(delivery) = delivery {
-                            let result = http_client
-                                .post(url)
-                                .json(&payload)
-                                .timeout(std::time::Duration::from_secs(10))
-                                .send()
-                                .await;
-
-                            match result {
-                                Ok(res) if res.status().is_success() => {
-                                    let _ = repo
-                                        .update_delivery_status(
-                                            tenant_id,
-                                            delivery.id,
-                                            "sent",
-                                            None,
-                                        )
-                                        .await;
-                                }
-                                Ok(res) => {
-                                    let _ = repo
-                                        .update_delivery_status(
-                                            tenant_id,
-                                            delivery.id,
-                                            "failed",
-                                            Some(&format!("HTTP {}", res.status())),
-                                        )
-                                        .await;
-                                }
-                                Err(e) => {
-                                    let _ = repo
-                                        .update_delivery_status(
-                                            tenant_id,
-                                            delivery.id,
-                                            "failed",
-                                            Some(&e.to_string()),
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                }
-                "email" => {
-                    // Intentional stub: email delivery requires an external provider
-                    // (Resend, SendGrid, SES) behind an EmailSender trait. Preferences
-                    // can be saved now; delivery will activate when a provider is wired in.
-                    // See: services/billing_provider.rs for the trait pattern to follow.
-                    tracing::info!(
-                        tenant_id = %tenant_id,
-                        event_type,
-                        "Email notification skipped — no email provider configured"
-                    );
-                }
-                _ => {}
+            if let Err(e) = repo
+                .create_delivery(
+                    tenant_id,
+                    pref.id,
+                    event_type,
+                    &pref.channel,
+                    payload.clone(),
+                )
+                .await
+            {
+                tracing::warn!(
+                    tenant_id = %tenant_id,
+                    channel = %pref.channel,
+                    error = %e,
+                    "Failed to enqueue notification delivery"
+                );
             }
         }
     }

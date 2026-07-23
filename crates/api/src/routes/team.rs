@@ -92,6 +92,18 @@ pub async fn create_invitation(
     )
     .await;
 
+    state
+        .notify(
+            user.tenant_id,
+            "invitation",
+            serde_json::json!({
+                "event": "invitation",
+                "email": invitation.email,
+                "role": invitation.role.to_string(),
+            }),
+        )
+        .await;
+
     Ok((StatusCode::CREATED, Json(invitation)))
 }
 

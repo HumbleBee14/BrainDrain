@@ -548,6 +548,22 @@ impl AppState {
         &*self.inner.notification_repo
     }
 
+    /// Best-effort emit of a platform notification for `event_type`.
+    pub async fn notify(
+        &self,
+        tenant_id: uuid::Uuid,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        crate::services::notification_service::NotificationService::notify(
+            self.notification_repo(),
+            tenant_id,
+            event_type,
+            payload,
+        )
+        .await;
+    }
+
     pub fn tenant_repo(&self) -> &dyn TenantRepository {
         &*self.inner.tenant_repo
     }
