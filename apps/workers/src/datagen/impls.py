@@ -139,6 +139,49 @@ class LlmFacetExtractor:
         return facets
 
 
+class LlmFacetExpander:
+    """Default FacetExpander: breaks one facet into grounded subtopics."""
+
+    def __init__(self, llm_call: LlmCall):
+        self.llm_call = llm_call
+
+    async def expand(
+        self,
+        *,
+        facet: Facet,
+        doc_sample: str,
+        task_type: str,
+        guidance: str,
+        num_subtopics: int,
+    ) -> list[str]:
+        prompt = PromptLibrary.subtopic_prompt(task_type, guidance, num_subtopics)
+        message = f"""{prompt}
+
+## Facet To Expand
+<facet>
+{xml_escape(facet.label)}
+</facet>
+
+## Document Excerpt
+<document_text>
+{xml_escape(doc_sample)}
+</document_text>
+"""
+        raw = await self.llm_call(message)
+        data = _parse_json_object(raw, required_keys=("subtopics",))
+        subtopics = data["subtopics"]
+        if not isinstance(subtopics, list):
+            raise ValueError(f"'subtopics' was not a list: {raw!r}")
+        labels: list[str] = []
+        for label in subtopics:
+            if not isinstance(label, str):
+                raise ValueError(f"Malformed subtopic label: {label!r}")
+            if label.strip():
+                labels.append(label.strip())
+        # The prompt allows returning fewer; never accept more than asked for.
+        return labels[:num_subtopics]
+
+
 class LlmGuidanceRefiner:
     """Default GuidanceRefiner: renders the metaprompter prompt and parses the update."""
 

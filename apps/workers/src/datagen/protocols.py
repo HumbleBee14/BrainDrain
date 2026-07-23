@@ -45,6 +45,19 @@ class FacetExtractor(Protocol):
 
 
 @runtime_checkable
+class FacetExpander(Protocol):
+    async def expand(
+        self,
+        *,
+        facet: Facet,
+        doc_sample: str,
+        task_type: str,
+        guidance: str,
+        num_subtopics: int,
+    ) -> list[str]: ...
+
+
+@runtime_checkable
 class PairGenerator(Protocol):
     async def generate(
         self,

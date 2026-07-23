@@ -22,7 +22,7 @@ from src.activities.pair_checkpoint import Checkpoint, NullCheckpoint, PairCheck
 from src.backends.llm_provider import get as get_llm_provider
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, PairGenerator
-from src.datagen.registry import get_faithfulness_scorer, get_pair_generator
+from src.datagen.registry import get_facet_expander, get_faithfulness_scorer, get_pair_generator
 from src.infra import InfraContainer
 from src.tenant_config import get_tenant_llm_config
 
@@ -50,6 +50,12 @@ MAX_HOLDOUT_RATIO = 0.25
 # per held-out chunk suffice, independent of the training fan-out setting.
 GOLDEN_PAIRS_PER_CHUNK = 3
 
+# Facet-subtopic expansion: bound the fan-out so a stray config value cannot
+# multiply the angle list (and prompt size) unreasonably.
+MAX_SUBTOPICS_PER_FACET = 6
+# How much sampled document text grounds each facet's subtopic expansion.
+SUBTOPIC_DOC_SAMPLE_CHARS = 4000
+
 
 def clamp_pairs_per_chunk(value: int) -> int:
     """Bound pairs_per_chunk to a sane range to cap generation fan-out."""
@@ -65,6 +71,54 @@ def _chunk_fingerprint(index: int, chunk: dict) -> str:
     else:
         raw = f"{index}:{chunk.get('text', '')[:200]}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def facets_to_angles(facets: list[Facet], subtopics_by_facet: dict[str, list[str]]) -> list[Facet]:
+    """Flatten facets and their subtopics into the rotation list ("angles").
+
+    Every facet contributes itself first (so a facet with no subtopics — or a
+    failed expansion — still steers generation exactly as before), followed by
+    one angle per subtopic labeled "facet — subtopic". Angle ids extend the
+    parent facet id, so provenance stays traceable. Rotating chunks across this
+    longer list spreads samples over facet×subtopic cells instead of clustering
+    on each facet's most obvious phrasing.
+    """
+    angles: list[Facet] = []
+    for facet in facets:
+        angles.append(facet)
+        for n, sub in enumerate(subtopics_by_facet.get(facet.id, [])):
+            angles.append(
+                Facet(
+                    id=f"{facet.id}.{n}",
+                    label=f"{facet.label} — {sub}",
+                    source_doc_id=facet.source_doc_id,
+                    keep=True,
+                )
+            )
+    return angles
+
+
+def doc_sample_for_expansion(chunks: list[dict], limit: int = SUBTOPIC_DOC_SAMPLE_CHARS) -> str:
+    """Sample text spread across the document to ground subtopic expansion.
+
+    Takes evenly spaced chunks (not just the first ones) so the excerpt
+    reflects the whole document's coverage, up to `limit` characters.
+    """
+    if not chunks:
+        return ""
+    parts: list[str] = []
+    total = 0
+    step = max(1, len(chunks) // 8)
+    for chunk in chunks[::step]:
+        text = chunk.get("text", "").strip()
+        if not text:
+            continue
+        take = text[: max(0, limit - total)]
+        if not take:
+            break
+        parts.append(take)
+        total += len(take)
+    return "\n\n".join(parts)
 
 
 def select_holdout_chunks(chunks: list[dict], ratio: float) -> tuple[list[dict], list[dict]]:
@@ -106,6 +160,10 @@ class GenerateSyntheticPairsInput:
     # Fraction of chunks reserved for the golden (document-grounded) eval set.
     # 0 disables the holdout entirely.
     golden_holdout_ratio: float = 0.1
+    # Subtopics to expand each facet into for generation diversity (rotating
+    # chunks across facet×subtopic angles instead of the flat facet list).
+    # 0 disables expansion.
+    facet_subtopics: int = 3
 
 
 @dataclass
@@ -327,10 +385,47 @@ class GeneratePairsActivity:
             )
             scorer = get_faithfulness_scorer(settings, make_llm_call(settings.judge_temperature))
 
+            # Expand facets into facet×subtopic angles for generation diversity.
+            # One LLM call per facet — negligible next to the per-chunk calls.
+            # Best-effort by design: expansion only ADDS rotation angles, so any
+            # failure (transient or malformed output) falls back to the base
+            # facet and generation proceeds exactly as without expansion — a
+            # diversity enhancer must never fail a dataset. Skipped when the
+            # chunk count doesn't outnumber the facets (rotation never repeats
+            # a facet in that case, so expansion buys nothing).
+            angles = facets
+            if facets and input.facet_subtopics > 0 and len(training_chunks) > len(facets):
+                expander = get_facet_expander(
+                    settings, make_llm_call(settings.generation_temperature)
+                )
+                num_subtopics = min(input.facet_subtopics, MAX_SUBTOPICS_PER_FACET)
+                doc_sample = doc_sample_for_expansion(training_chunks)
+                subtopics_by_facet: dict[str, list[str]] = {}
+                for facet in facets:
+                    activity.heartbeat()
+                    try:
+                        subtopics_by_facet[facet.id] = await expander.expand(
+                            facet=facet,
+                            doc_sample=doc_sample,
+                            task_type=input.task_type,
+                            guidance=input.guidance,
+                            num_subtopics=num_subtopics,
+                        )
+                    except (*TRANSIENT_GENERATION_ERRORS, ValueError) as exc:
+                        activity.logger.warning(
+                            "Subtopic expansion failed for facet %r; using it unexpanded: %s",
+                            facet.label,
+                            exc,
+                        )
+                angles = facets_to_angles(facets, subtopics_by_facet)
+                activity.logger.info(
+                    "Facet expansion: %d facets -> %d angles", len(facets), len(angles)
+                )
+
             pairs_per_chunk = clamp_pairs_per_chunk(input.pairs_per_chunk)
             records, dropped_unfaithful, failed_chunks = await generate_pairs_with_checkpoint(
                 training_chunks,
-                facets,
+                angles,
                 pair_generator,
                 scorer,
                 checkpoint,

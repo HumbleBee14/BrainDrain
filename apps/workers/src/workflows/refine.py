@@ -62,6 +62,7 @@ class RefineWorkflow:
                 guidance=config.get("guidance", ""),
                 facets=config.get("facets"),
                 golden_holdout_ratio=config.get("golden_holdout_ratio", 0.1),
+                facet_subtopics=config.get("facet_subtopics", 3),
             ),
             start_to_close_timeout=timeouts.generate_pairs_activity(),
             retry_policy=workflow.RetryPolicy(maximum_attempts=2),
