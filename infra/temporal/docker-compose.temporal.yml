@@ -16,7 +16,11 @@ services:
       retries: 5
 
   temporal:
-    image: temporalio/auto-setup:latest
+    # Pinned (not :latest): newer auto-setup images stopped bundling the
+    # dynamic-config file referenced below, so :latest drifted into exiting on
+    # startup. We both pin a known-good tag AND mount our own config so startup
+    # never depends on a file baked into the image.
+    image: temporalio/auto-setup:1.29.3
     ports:
       - "7233:7233"
     environment:
@@ -28,6 +32,10 @@ services:
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_CLI_ADDRESS: temporal:7233
+    volumes:
+      # Path is relative to the image workdir (/etc/temporal), matching
+      # DYNAMIC_CONFIG_FILE_PATH above.
+      - ./dynamicconfig/development-sql.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml:ro
     depends_on:
       temporal-postgres:
         condition: service_healthy
@@ -39,7 +47,7 @@ services:
       start_period: 30s
 
   temporal-ui:
-    image: temporalio/ui:latest
+    image: temporalio/ui:2.34.0
     ports:
       - "8088:8080"
     environment:
