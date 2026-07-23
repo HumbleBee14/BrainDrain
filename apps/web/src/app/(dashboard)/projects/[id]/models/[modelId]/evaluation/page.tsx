@@ -102,7 +102,8 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
               Evaluation in progress...
             </p>
             <p className="text-zinc-500 text-sm mt-2">
-              Running 4 test suites: Domain, General, A/B Comparison, Safety
+              Running 5 test suites: Domain, Document Knowledge, General, A/B
+              Comparison, Safety
             </p>
           </div>
         </div>
@@ -149,12 +150,59 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
               <div className="flex justify-between text-sm">
                 <span className="text-zinc-500">Mean</span>
                 <span className="text-zinc-900 dark:text-white font-medium">
-                  {scores.domain.mean.toFixed(2)}/5
+                  {typeof scores.domain.mean === "number"
+                    ? `${scores.domain.mean.toFixed(2)}/5`
+                    : "—"}
                 </span>
               </div>
             </div>
           </div>
         )}
+
+        {/* Document Knowledge (golden holdout) */}
+        {scores.doc_knowledge &&
+          typeof scores.doc_knowledge.mean === "number" &&
+          typeof scores.doc_knowledge.base_mean === "number" &&
+          typeof scores.doc_knowledge.knowledge_lift === "number" && (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-1">
+                Document Knowledge
+              </h3>
+              <p className="text-xs text-zinc-500 mb-4">
+                Measured on held-out document content never seen in training
+              </p>
+              <div className="text-center mb-4">
+                <p
+                  className={`text-3xl font-bold ${
+                    scores.doc_knowledge.knowledge_lift > 0
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {scores.doc_knowledge.knowledge_lift > 0 ? "+" : ""}
+                  {scores.doc_knowledge.knowledge_lift.toFixed(2)}
+                </p>
+                <p className="text-zinc-500 text-xs mt-1">
+                  knowledge lift over base model
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <ScoreCard
+                  label="Base Model"
+                  value={`${scores.doc_knowledge.base_mean.toFixed(2)}/5`}
+                />
+                <ScoreCard
+                  label="Fine-tuned"
+                  value={`${scores.doc_knowledge.mean.toFixed(2)}/5`}
+                />
+              </div>
+              {scores.doc_knowledge.num_samples && (
+                <p className="text-xs text-zinc-500 mt-3 text-center">
+                  {scores.doc_knowledge.num_samples} held-out questions
+                </p>
+              )}
+            </div>
+          )}
 
         {/* General Capability */}
         {scores.general && (
@@ -208,8 +256,8 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
           </div>
         )}
 
-        {/* A/B Comparison */}
-        {scores.ab_comparison && (
+        {/* A/B Comparison — win_rate is null when the suite was skipped */}
+        {scores.ab_comparison && typeof scores.ab_comparison.win_rate === "number" && (
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5">
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-white mb-4">
               A/B Comparison

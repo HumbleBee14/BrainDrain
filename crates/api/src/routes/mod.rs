@@ -322,6 +322,7 @@ fn v1_router() -> Router<AppState> {
         platform_shared::types::GeneralScores,
         platform_shared::types::ABComparisonScores,
         platform_shared::types::SafetyScores,
+        platform_shared::types::DocKnowledgeScores,
         platform_shared::types::DeploymentConfig,
     )),
     tags(

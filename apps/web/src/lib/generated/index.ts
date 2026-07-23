@@ -25,6 +25,7 @@ export type { EvaluationScores } from "./EvaluationScores";
 export type { GeneralScores } from "./GeneralScores";
 export type { Hyperparams } from "./Hyperparams";
 export type { SafetyScores } from "./SafetyScores";
+export type { DocKnowledgeScores } from "./DocKnowledgeScores";
 export type { TrainingMetrics } from "./TrainingMetrics";
 
 // API responses (from crates/api/src/dto/)
