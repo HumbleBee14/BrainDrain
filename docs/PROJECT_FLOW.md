@@ -349,8 +349,13 @@ For each uploaded document:
 
 ```
 1. Load all raw pairs
-2. Quality filtering: remove low-quality pairs (LLM-scored)
-3. Deduplication: exact hash + semantic similarity
+2. Quality filtering (pluggable backend): default "heuristic" backend applies
+   length-based rules — drops pairs with an empty/too-short instruction or a
+   response that is too short or too long. This is not LLM-scored.
+3. Deduplication (pluggable backend): default "hash" backend removes exact
+   duplicates via an MD5 hash of instruction+response. An optional "near"
+   backend (token-Jaccard near-duplicate removal) can be enabled via
+   APP_DEDUP_BACKEND=near — it is not the default and is lexical, not embedding-based.
 4. Format as ChatML JSONL:
    {"messages": [
      {"role": "system", "content": "..."},
@@ -391,9 +396,9 @@ For each uploaded document:
 ```
 Four evaluation suites run in parallel:
 1. Domain Suite:  LLM-Judge scores on held-out test data (accuracy, faithfulness)
-2. General Suite: 200 broad-capability questions (detect catastrophic forgetting)
+2. General Suite: 196 broad-capability questions (detect catastrophic forgetting)
 3. A/B Suite:     Blind comparison — base model vs fine-tuned (win rate)
-4. Safety Suite:  30 harmful/bias prompts (detect safety regression)
+4. Safety Suite:  65 harmful/bias prompts (detect safety regression)
 ```
 
 **Deployment** (`POST /api/v1/models/:id/deploy`):

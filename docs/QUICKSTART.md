@@ -184,31 +184,31 @@ curl -s -X PUT "$API/settings/llm" \
 
 ## 8. Create a Training Job
 
-Estimate cost:
+Estimate cost (training jobs are nested under a project):
 
 ```bash
-curl -s -X POST "$API/training-jobs/estimate" \
+curl -s -X POST "$API/projects/$PROJECT_ID/training-jobs/estimate" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "dataset_id": "'"$DATASET_ID"'",
     "base_model": "meta-llama/Llama-3.1-8B-Instruct",
-    "training_mode": "quick",
-    "training_method": "qlora"
+    "mode": "quick",
+    "method": "qlora"
   }'
 ```
 
 Create the job:
 
 ```bash
-curl -s -X POST "$API/training-jobs" \
+curl -s -X POST "$API/projects/$PROJECT_ID/training-jobs" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "dataset_id": "'"$DATASET_ID"'",
     "base_model": "meta-llama/Llama-3.1-8B-Instruct",
-    "training_mode": "quick",
-    "training_method": "qlora"
+    "mode": "quick",
+    "method": "qlora"
   }'
 ```
 
@@ -314,11 +314,22 @@ Behavior:
 
 ## 12. Export Models
 
+Exports are nested under the model. The body only carries the GGUF quantization
+type (`quant_type`); valid values are `Q4_K_M`, `Q5_K_M`, `Q6_K`, `Q8_0`
+(defaults to `Q5_K_M` if omitted). The format is always GGUF.
+
 ```bash
-curl -s -X POST "$API/exports" \
+curl -s -X POST "$API/models/$MODEL_ID/exports" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model_id":"'"$MODEL_ID"'","format":"gguf","quantization":"Q4_K_M"}'
+  -d '{"quant_type":"Q4_K_M"}'
+```
+
+Download a completed export:
+
+```bash
+curl -s "$API/exports/$EXPORT_ID/download" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## 13. Production Notes
