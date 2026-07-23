@@ -176,11 +176,17 @@ sustained production traffic yet.
 ```text
 API key request
   -> resolve deployed model
+  -> inject the model's trained system prompt as default if the caller sent none
   -> resolve assigned inference instance if present
   -> build or reuse backend for that instance
   -> call backend OpenAI-compatible API
   -> meter usage via durable billing path
 ```
+
+The default-system-prompt step reuses the optional per-guide `system_prompt`
+the model was trained under (stored in `deployment_config` at deploy time), so
+training and serving stay on the same chat template. A caller-supplied `system`
+message always takes precedence. See `docs/DATA_PIPELINE.md` for the full path.
 
 ## 6. Production Hardening That Now Exists
 
