@@ -19,6 +19,7 @@ import type {
   TriggerRefineResponse,
   PaginatedResponse,
   LlmSettingsResponse,
+  LlmTestResponse,
   UpdateLlmSettingsRequest,
   AdminConfigResponse,
   UpdateAdminConfigRequest,
@@ -81,6 +82,7 @@ export type { CreateApiKeyRequest as CreateApiKeyInput } from "./generated";
 // Settings types
 export type {
   LlmSettingsResponse,
+  LlmTestResponse,
   UpdateLlmSettingsRequest,
   AdminConfigResponse,
   UpdateAdminConfigRequest,
@@ -912,6 +914,12 @@ export const api = {
   settings: {
     getLlm: (token: string) =>
       request<LlmSettingsResponse>("/api/v1/settings/llm", { token }),
+
+    testLlm: (token: string) =>
+      request<LlmTestResponse>("/api/v1/settings/llm/test", {
+        token,
+        method: "POST",
+      }),
 
     updateLlm: (token: string, data: UpdateLlmSettingsRequest) =>
       request<LlmSettingsResponse>("/api/v1/settings/llm", {

@@ -7,6 +7,7 @@ import {
   useLlmSettings,
   useUpdateLlmSettings,
   useDeleteLlmSettings,
+  useTestLlmSettings,
 } from "@/hooks/use-settings";
 import { ErrorState } from "@/components/error-state";
 
@@ -84,6 +85,7 @@ export default function LlmSettingsPage() {
     useLlmSettings();
   const updateSettings = useUpdateLlmSettings();
   const deleteSettings = useDeleteLlmSettings();
+  const testConnection = useTestLlmSettings();
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -127,12 +129,14 @@ export default function LlmSettingsPage() {
       model: provider?.models[0] ?? prev.model,
     }));
     setHasChanges(true);
+    testConnection.reset();
   };
 
   const updateField = (field: keyof FormState, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     setHasChanges(true);
     setFormErrors({});
+    testConnection.reset();
   };
 
   const handleSave = () => {
@@ -416,6 +420,19 @@ export default function LlmSettingsPage() {
               </button>
 
               {settings?.is_configured && (
+                <button
+                  onClick={() => testConnection.mutate()}
+                  disabled={testConnection.isPending || hasChanges}
+                  title={
+                    hasChanges ? "Save your changes before testing" : undefined
+                  }
+                  className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {testConnection.isPending ? "Testing…" : "Test connection"}
+                </button>
+              )}
+
+              {settings?.is_configured && (
                 <>
                   {showDeleteConfirm ? (
                     <div className="flex items-center gap-2">
@@ -459,6 +476,22 @@ export default function LlmSettingsPage() {
               )}
               {updateSettings.isSuccess && !hasChanges && (
                 <p className="text-emerald-400 text-sm">Saved.</p>
+              )}
+              {testConnection.data && (
+                <p
+                  className={`text-sm ${
+                    testConnection.data.success
+                      ? "text-emerald-500"
+                      : "text-red-500"
+                  }`}
+                >
+                  {testConnection.data.message}
+                </p>
+              )}
+              {testConnection.isError && (
+                <p className="text-red-400 text-sm">
+                  {testConnection.error.message}
+                </p>
               )}
             </div>
           </div>

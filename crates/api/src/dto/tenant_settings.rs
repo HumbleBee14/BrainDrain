@@ -39,6 +39,16 @@ pub struct LlmSettingsResponse {
     pub is_configured: bool,
 }
 
+/// Result of a live connectivity check against the configured LLM provider.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct LlmTestResponse {
+    pub success: bool,
+    pub message: String,
+    /// HTTP status the provider returned, when the request completed.
+    pub status_code: Option<u16>,
+}
+
 /// Request to update tenant admin configuration.
 ///
 /// All fields are optional — only provided fields are updated (merge semantics).

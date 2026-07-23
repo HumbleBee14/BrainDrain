@@ -37,6 +37,13 @@ export function useDeleteLlmSettings() {
   });
 }
 
+export function useTestLlmSettings() {
+  return useAuthedMutation({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    mutationFn: (token: string, _data: void) => api.settings.testLlm(token),
+  });
+}
+
 export function useAdminConfig() {
   return useAuthedQuery({
     queryKey: ["settings", "admin"],

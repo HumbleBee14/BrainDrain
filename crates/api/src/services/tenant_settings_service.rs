@@ -1,8 +1,8 @@
 use uuid::Uuid;
 
 use crate::dto::tenant_settings::{
-    AdminConfigResponse, LlmSettingsResponse, UpdateAdminConfigRequest, UpdateLlmSettingsRequest,
-    mask_api_key,
+    AdminConfigResponse, LlmSettingsResponse, LlmTestResponse, UpdateAdminConfigRequest,
+    UpdateLlmSettingsRequest, mask_api_key,
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::TenantRepository;
@@ -47,6 +47,107 @@ impl TenantSettingsService {
                 max_tokens: None,
                 is_configured: false,
             }),
+        }
+    }
+
+    /// Live connectivity/auth check against the tenant's configured LLM
+    /// provider. Issues a minimal `GET {base}/models` with a short timeout and
+    /// no redirect following. The API key and provider response body are never
+    /// returned to the caller — only a coarse pass/fail and the HTTP status.
+    pub async fn test_llm_connection(
+        tenant_repo: &dyn TenantRepository,
+        tenant_id: Uuid,
+    ) -> AppResult<LlmTestResponse> {
+        let settings = tenant_repo.get_settings(tenant_id).await?;
+        let llm = match settings.get("llm") {
+            Some(v) if !v.is_null() => v.clone(),
+            _ => {
+                return Ok(LlmTestResponse {
+                    success: false,
+                    message: "No custom provider configured — the platform default is used."
+                        .to_string(),
+                    status_code: None,
+                });
+            }
+        };
+
+        let base_url = json_str(&llm, "api_base_url").unwrap_or_default();
+        let api_key = llm
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        if base_url.is_empty() {
+            return Ok(LlmTestResponse {
+                success: false,
+                message: "No API base URL is configured.".to_string(),
+                status_code: None,
+            });
+        }
+        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+            return Ok(LlmTestResponse {
+                success: false,
+                message: "API base URL must start with http:// or https://.".to_string(),
+                status_code: None,
+            });
+        }
+
+        let url = format!("{}/models", base_url.trim_end_matches('/'));
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+
+        let mut req = client.get(&url);
+        if !api_key.is_empty() {
+            req = req.bearer_auth(&api_key);
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                let (success, message) = if resp.status().is_success() {
+                    (
+                        true,
+                        "Connection successful — the provider is reachable and the API key is valid."
+                            .to_string(),
+                    )
+                } else if code == 401 || code == 403 {
+                    (
+                        false,
+                        "Authentication failed — check your API key.".to_string(),
+                    )
+                } else if code == 404 {
+                    (
+                        false,
+                        "Endpoint reachable, but /models was not found — verify the base URL is OpenAI-compatible."
+                            .to_string(),
+                    )
+                } else {
+                    (false, format!("Provider returned HTTP {code}."))
+                };
+                Ok(LlmTestResponse {
+                    success,
+                    message,
+                    status_code: Some(code),
+                })
+            }
+            Err(e) => {
+                let message = if e.is_timeout() {
+                    "Connection timed out — the endpoint did not respond in time.".to_string()
+                } else if e.is_connect() {
+                    "Could not connect to the endpoint — check the base URL.".to_string()
+                } else {
+                    "Request failed — check the base URL and try again.".to_string()
+                };
+                Ok(LlmTestResponse {
+                    success: false,
+                    message,
+                    status_code: None,
+                })
+            }
         }
     }
 
