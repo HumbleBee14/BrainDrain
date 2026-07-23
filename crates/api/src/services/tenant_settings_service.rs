@@ -92,6 +92,16 @@ impl TenantSettingsService {
                 status_code: None,
             });
         }
+        // SSRF guard: the server itself issues this request, so a private/internal
+        // target must be rejected. Without it, the returned status/timing could be
+        // used to port-scan or fingerprint the internal network (e.g. cloud metadata).
+        if !crate::services::url_guard::is_safe_public_url(&base_url).await {
+            return Ok(LlmTestResponse {
+                success: false,
+                message: "API base URL must be a public endpoint.".to_string(),
+                status_code: None,
+            });
+        }
 
         let url = format!("{}/models", base_url.trim_end_matches('/'));
         let client = reqwest::Client::builder()
@@ -161,13 +171,19 @@ impl TenantSettingsService {
         request: UpdateLlmSettingsRequest,
     ) -> AppResult<LlmSettingsResponse> {
         // Validate URL if provided
-        if let Some(ref url) = request.api_base_url
-            && !url.starts_with("http://")
-            && !url.starts_with("https://")
-        {
-            return Err(AppError::BadRequest {
-                message: "api_base_url must start with http:// or https://".into(),
-            });
+        if let Some(ref url) = request.api_base_url {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(AppError::BadRequest {
+                    message: "api_base_url must start with http:// or https://".into(),
+                });
+            }
+            // SSRF guard: workers will later fetch this URL, so reject private/
+            // internal/metadata targets at save time.
+            if !crate::services::url_guard::is_safe_public_url(url).await {
+                return Err(AppError::BadRequest {
+                    message: "api_base_url must be a public endpoint".into(),
+                });
+            }
         }
 
         // Fetch existing settings and merge

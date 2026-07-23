@@ -1,5 +1,5 @@
 use axum::extract::multipart::Multipart;
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -23,7 +23,16 @@ use crate::services::document_service::DocumentService;
 /// Document routes nested under projects.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/projects/{project_id}/documents", post(upload_document))
+        // Raise the request-body limit for uploads ONLY. Axum's default 2 MB limit
+        // would otherwise abort any file over 2 MB inside the Multipart extractor —
+        // well below the advertised MAX_UPLOAD_SIZE_BYTES — surfacing as a confusing
+        // "invalid multipart data" error. The handler still enforces the real cap
+        // while streaming, before buffering. The layer is scoped to this POST method
+        // router, so JSON routes keep the small default limit.
+        .route(
+            "/projects/{project_id}/documents",
+            post(upload_document).layer(DefaultBodyLimit::max(MAX_UPLOAD_SIZE_BYTES as usize)),
+        )
         .route("/projects/{project_id}/documents", get(list_documents))
         .route("/documents/{id}", get(get_document))
 }

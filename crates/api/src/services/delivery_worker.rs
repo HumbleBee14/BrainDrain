@@ -1,4 +1,3 @@
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -234,7 +233,7 @@ async fn dispatch_webhook(
     };
 
     // SSRF protection — re-validate on every attempt (DNS can change)
-    if !is_safe_webhook_url(url).await {
+    if !crate::services::url_guard::is_safe_public_url(url).await {
         tracing::warn!(
             delivery_id = %delivery.id,
             url,
@@ -381,92 +380,8 @@ async fn dispatch_email(
     }
 }
 
-/// Returns `true` if the IP address is in a private, reserved, or internal range.
-fn is_private_ip(ip: &IpAddr) -> bool {
-    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
-        return true;
-    }
-    match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            octets[0] == 10
-                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                || (octets[0] == 192 && octets[1] == 168)
-                || (octets[0] == 169 && octets[1] == 254)
-        }
-        IpAddr::V6(v6) => {
-            let segments = v6.segments();
-            (segments[0] & 0xfe00) == 0xfc00
-                || (segments[0] & 0xffc0) == 0xfe80
-                || v6.is_loopback()
-                || segments[0..5] == [0, 0, 0, 0, 0]
-                    && segments[5] == 0xffff
-                    && is_private_ip(&IpAddr::V4(std::net::Ipv4Addr::new(
-                        (segments[6] >> 8) as u8,
-                        segments[6] as u8,
-                        (segments[7] >> 8) as u8,
-                        segments[7] as u8,
-                    )))
-        }
-    }
-}
-
-/// Reject webhook URLs that point to private/internal networks (SSRF protection).
-async fn is_safe_webhook_url(url: &str) -> bool {
-    let parsed = match reqwest::Url::parse(url) {
-        Ok(u) => u,
-        Err(_) => return false,
-    };
-
-    if parsed.scheme() != "https" && parsed.scheme() != "http" {
-        return false;
-    }
-
-    let host = match parsed.host_str() {
-        Some(h) => h,
-        None => return false,
-    };
-
-    let port = parsed
-        .port()
-        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-    let addrs = match tokio::net::lookup_host(format!("{host}:{port}")).await {
-        Ok(a) => a,
-        Err(_) => return false,
-    };
-
-    let mut found_any = false;
-    for addr in addrs {
-        found_any = true;
-        if is_private_ip(&addr.ip()) {
-            return false;
-        }
-    }
-
-    found_any
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn private_ips_detected() {
-        assert!(is_private_ip(&"127.0.0.1".parse().unwrap()));
-        assert!(is_private_ip(&"10.0.0.1".parse().unwrap()));
-        assert!(is_private_ip(&"172.16.0.1".parse().unwrap()));
-        assert!(is_private_ip(&"192.168.1.1".parse().unwrap()));
-        assert!(is_private_ip(&"169.254.0.1".parse().unwrap()));
-        assert!(is_private_ip(&"::1".parse().unwrap()));
-    }
-
-    #[test]
-    fn public_ips_allowed() {
-        assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
-        assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
-        assert!(!is_private_ip(&"203.0.113.1".parse().unwrap()));
-    }
-
     #[test]
     fn exponential_backoff_capped() {
         // attempt 0 → 10s, attempt 1 → 20s, attempt 2 → 30s (capped), attempt 3 → 30s (capped)
