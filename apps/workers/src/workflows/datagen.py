@@ -263,6 +263,7 @@ class GenerateDatasetWorkflow:
                             dataset_id=dataset_id,
                             pairs_storage_path=pairs_result.storage_path,
                             system_prompt=system_prompt,
+                            golden_storage_path=pairs_result.golden_storage_path,
                         ),
                         start_to_close_timeout=timeouts.build_dataset_activity(),
                         retry_policy=workflow.RetryPolicy(maximum_attempts=2),

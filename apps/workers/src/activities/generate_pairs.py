@@ -7,6 +7,7 @@ per-tenant from the database at execution time. Structured generation
 quality-gate (FaithfulnessScorer) are provided via src.datagen.registry.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -39,10 +40,58 @@ TRANSIENT_GENERATION_ERRORS = (httpx.HTTPError, TimeoutError, CircuitBreakerOpen
 MIN_PAIRS_PER_CHUNK = 1
 MAX_PAIRS_PER_CHUNK = 50
 
+# Golden holdout: a slice of chunks reserved for the document-grounded eval set.
+# Below the chunk floor no holdout is taken — tiny documents need every chunk
+# for training signal. The ratio is capped so a stray config value can never
+# starve training of the majority of its source material.
+MIN_CHUNKS_FOR_HOLDOUT = 10
+MAX_HOLDOUT_RATIO = 0.25
+# The golden set measures knowledge, not volume — a few well-grounded questions
+# per held-out chunk suffice, independent of the training fan-out setting.
+GOLDEN_PAIRS_PER_CHUNK = 3
+
 
 def clamp_pairs_per_chunk(value: int) -> int:
     """Bound pairs_per_chunk to a sane range to cap generation fan-out."""
     return max(MIN_PAIRS_PER_CHUNK, min(value, MAX_PAIRS_PER_CHUNK))
+
+
+def _chunk_fingerprint(index: int, chunk: dict) -> str:
+    """Stable identity for holdout selection: ids when present, else content."""
+    doc_id = chunk.get("doc_id") or ""
+    chunk_id = chunk.get("chunk_id") or ""
+    if doc_id or chunk_id:
+        raw = f"{doc_id}:{chunk_id}"
+    else:
+        raw = f"{index}:{chunk.get('text', '')[:200]}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def select_holdout_chunks(chunks: list[dict], ratio: float) -> tuple[list[dict], list[dict]]:
+    """Partition chunks into ``(training_chunks, holdout_chunks)`` deterministically.
+
+    The holdout feeds the golden eval set: questions generated from chunks the
+    model NEVER trains on, so evaluation measures document knowledge rather than
+    memorization of training pairs. Selection is content-addressed (chunks sorted
+    by fingerprint hash, top-N held out) — no RNG state — so retries, checkpoint
+    resumes, and re-runs over the same chunk file always agree on the partition.
+
+    No holdout is taken when the ratio is non-positive or there are fewer than
+    ``MIN_CHUNKS_FOR_HOLDOUT`` chunks; the ratio is capped at
+    ``MAX_HOLDOUT_RATIO``.
+    """
+    if ratio <= 0 or len(chunks) < MIN_CHUNKS_FOR_HOLDOUT:
+        return chunks, []
+
+    ratio = min(ratio, MAX_HOLDOUT_RATIO)
+    holdout_count = max(1, round(len(chunks) * ratio))
+
+    ranked = sorted(range(len(chunks)), key=lambda i: _chunk_fingerprint(i, chunks[i]))
+    holdout_indices = set(ranked[:holdout_count])
+
+    training = [c for i, c in enumerate(chunks) if i not in holdout_indices]
+    holdout = [c for i, c in enumerate(chunks) if i in holdout_indices]
+    return training, holdout
 
 
 @dataclass
@@ -54,12 +103,17 @@ class GenerateSyntheticPairsInput:
     pairs_per_chunk: int = 5
     guidance: str = ""
     facets: list[dict] | None = None
+    # Fraction of chunks reserved for the golden (document-grounded) eval set.
+    # 0 disables the holdout entirely.
+    golden_holdout_ratio: float = 0.1
 
 
 @dataclass
 class GenerateSyntheticPairsOutput:
     pair_count: int
     storage_path: str
+    golden_pair_count: int = 0
+    golden_storage_path: str = ""
 
 
 async def apply_faithfulness_gate(
@@ -242,6 +296,10 @@ class GeneratePairsActivity:
         # defaults to kept (matches the DTO default on the Rust side).
         facets = [Facet(**f) for f in input.facets if f.get("keep", True)] if input.facets else []
 
+        # Reserve a deterministic slice of chunks for the golden eval set —
+        # questions the model will be evaluated on but never trained on.
+        training_chunks, holdout_chunks = select_holdout_chunks(chunks, input.golden_holdout_ratio)
+
         run_key = self._run_key()
         checkpoint = self._build_checkpoint(input, run_key)
 
@@ -271,7 +329,7 @@ class GeneratePairsActivity:
 
             pairs_per_chunk = clamp_pairs_per_chunk(input.pairs_per_chunk)
             records, dropped_unfaithful, failed_chunks = await generate_pairs_with_checkpoint(
-                chunks,
+                training_chunks,
                 facets,
                 pair_generator,
                 scorer,
@@ -282,16 +340,59 @@ class GeneratePairsActivity:
                 faithfulness_enabled=settings.faithfulness_gate_enabled,
             )
 
+            golden_records: list[dict] = []
+            golden_checkpoint: Checkpoint = NullCheckpoint()
+            if holdout_chunks and records:
+                # Golden pass: eval questions from the held-out chunks. Always
+                # faithfulness-gated (it IS the measuring stick), and best-effort
+                # overall — a transiently failed golden pass must never discard a
+                # successful training dataset.
+                golden_checkpoint = self._build_checkpoint(
+                    input, f"{run_key}-golden" if run_key else ""
+                )
+                try:
+                    (
+                        golden_records,
+                        golden_dropped,
+                        golden_failed,
+                    ) = await generate_pairs_with_checkpoint(
+                        holdout_chunks,
+                        facets,
+                        pair_generator,
+                        scorer,
+                        golden_checkpoint,
+                        task_type=input.task_type,
+                        guidance=input.guidance,
+                        pairs_per_chunk=min(GOLDEN_PAIRS_PER_CHUNK, pairs_per_chunk),
+                        faithfulness_enabled=True,
+                    )
+                except RuntimeError as exc:
+                    activity.logger.warning(
+                        "Golden eval-set generation failed; dataset proceeds without one: %s",
+                        exc,
+                    )
+                else:
+                    activity.logger.info(
+                        "Golden set: kept=%d dropped_unfaithful=%d failed_chunks=%d holdout=%d",
+                        len(golden_records),
+                        golden_dropped,
+                        golden_failed,
+                        len(holdout_chunks),
+                    )
+
         activity.logger.info(
-            "Pair generation: kept=%d dropped_unfaithful=%d failed_chunks=%d chunks=%d",
+            "Pair generation: kept=%d dropped_unfaithful=%d failed_chunks=%d "
+            "training_chunks=%d holdout_chunks=%d",
             len(records),
             dropped_unfaithful,
             failed_chunks,
-            len(chunks),
+            len(training_chunks),
+            len(holdout_chunks),
         )
 
         if not records:
             self._clear_checkpoint(checkpoint)
+            self._clear_checkpoint(golden_checkpoint)
             return GenerateSyntheticPairsOutput(pair_count=0, storage_path="")
 
         # A stable batch id makes the final write idempotent: a crash after the
@@ -307,8 +408,27 @@ class GeneratePairsActivity:
             ContentType="application/jsonl",
         )
 
+        golden_key = ""
+        if golden_records:
+            golden_key = s3_paths.pairs_path(
+                input.tenant_id, input.project_id, f"{batch_id}-golden"
+            )
+            golden_lines = [json.dumps(p, ensure_ascii=False) for p in golden_records]
+            s3.put_object(
+                Bucket=bucket,
+                Key=golden_key,
+                Body="\n".join(golden_lines).encode("utf-8"),
+                ContentType="application/jsonl",
+            )
+
         self._clear_checkpoint(checkpoint)
-        return GenerateSyntheticPairsOutput(pair_count=len(records), storage_path=pairs_key)
+        self._clear_checkpoint(golden_checkpoint)
+        return GenerateSyntheticPairsOutput(
+            pair_count=len(records),
+            storage_path=pairs_key,
+            golden_pair_count=len(golden_records),
+            golden_storage_path=golden_key,
+        )
 
     def _run_key(self) -> str:
         """Stable-across-retries, unique-across-executions key for this run.
