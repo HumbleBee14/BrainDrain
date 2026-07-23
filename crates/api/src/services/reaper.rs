@@ -14,9 +14,15 @@
 //! instance's models, retire the instance). Tearing down the underlying GPU box
 //! remains the operator's/provider's responsibility — instances are registered
 //! externally, so the reaper cannot recreate one it destroys.
+//!
+//! The orphaned-object sweep reclaims object storage: a document that ends in
+//! `failed` keeps its uploaded source object forever otherwise, since parsing
+//! never reads a failed source again. After a grace period the object is
+//! deleted and the row's `storage_path` cleared.
 
 use std::collections::HashMap;
 
+use platform_storage::{ObjectStorage, StorageError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -245,6 +251,64 @@ async fn retire_idle_instance(db: &PgPool, instance_id: Uuid) -> Result<bool, sq
     Ok(true)
 }
 
+/// Whether the orphaned-object sweep is enabled (a positive grace period).
+fn orphan_sweep_enabled(older_than_secs: i64) -> bool {
+    older_than_secs > 0
+}
+
+/// Delete the uploaded source object of documents that have been `failed`
+/// longer than the grace period, then clear their `storage_path` so they are
+/// not re-swept. Returns the number of objects reclaimed. Disabled when
+/// `older_than_secs <= 0`.
+///
+/// Ordering is delete-then-clear: if the process dies after the object delete
+/// but before the DB update, the next pass re-deletes (a missing object is
+/// treated as success) and clears the path — no leak, no lost pointer.
+pub async fn sweep_orphaned_document_objects(
+    db: &PgPool,
+    storage: &impl ObjectStorage,
+    older_than_secs: i64,
+) -> Result<usize, sqlx::Error> {
+    if !orphan_sweep_enabled(older_than_secs) {
+        return Ok(0);
+    }
+
+    let candidates: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, storage_path \
+         FROM documents \
+         WHERE status = 'failed' AND storage_path <> '' \
+           AND updated_at < NOW() - make_interval(secs => $1)",
+    )
+    .bind(older_than_secs as f64)
+    .fetch_all(db)
+    .await?;
+
+    let mut swept = 0;
+    for (id, storage_path) in candidates {
+        match storage.delete(&storage_path).await {
+            Ok(()) | Err(StorageError::NotFound { .. }) => {}
+            Err(e) => {
+                tracing::warn!(document_id = %id, error = %e, "Failed to delete orphaned document object");
+                continue;
+            }
+        }
+
+        let cleared = sqlx::query(
+            "UPDATE documents SET storage_path = '', updated_at = NOW() \
+             WHERE id = $1 AND status = 'failed'",
+        )
+        .bind(id)
+        .execute(db)
+        .await?;
+
+        if cleared.rows_affected() > 0 {
+            swept += 1;
+            tracing::info!(document_id = %id, "Reclaimed orphaned document object");
+        }
+    }
+    Ok(swept)
+}
+
 /// Fail documents stuck in `parsing` past the threshold. Returns the count.
 pub async fn reap_stuck_parsing_documents(
     db: &PgPool,
@@ -267,7 +331,7 @@ pub async fn reap_stuck_parsing_documents(
 
 #[cfg(test)]
 mod tests {
-    use super::{idle_reaping_enabled, status_indicates_running};
+    use super::{idle_reaping_enabled, orphan_sweep_enabled, status_indicates_running};
 
     #[test]
     fn idle_reaping_disabled_by_default() {
@@ -275,6 +339,14 @@ mod tests {
         assert!(!idle_reaping_enabled(-1));
         assert!(idle_reaping_enabled(1));
         assert!(idle_reaping_enabled(1800));
+    }
+
+    #[test]
+    fn orphan_sweep_toggles_on_positive_grace() {
+        assert!(!orphan_sweep_enabled(0));
+        assert!(!orphan_sweep_enabled(-1));
+        assert!(orphan_sweep_enabled(1));
+        assert!(orphan_sweep_enabled(604_800));
     }
 
     #[test]
