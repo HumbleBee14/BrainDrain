@@ -731,6 +731,25 @@ def _deduplicate(pairs):
     return unique
 ```
 
+#### System Prompt (train/serve consistency)
+
+A data guide carries an optional `system_prompt` (an advanced, optional field
+in Data Studio; empty by default). It is threaded end-to-end so a model is
+served under the same system prompt it was trained on:
+
+- **Train:** the guide's `system_prompt` flows through `start_generate_dataset`
+  → `GenerateDatasetWorkflow` → `build_dataset`, which places it in the
+  `system` role of every ChatML example. Empty falls back to the neutral
+  `"You are a helpful assistant."` default (no behavior change).
+- **Serve:** at deploy time it is recovered (model → training job → dataset →
+  guide) and stored in the model's `deployment_config`. `POST
+  /v1/chat/completions` (single and batch) prepends it as the default `system`
+  message **only when the caller sends none** — a caller-supplied system
+  message always wins.
+
+This keeps the training chat template and the inference chat template aligned;
+a mismatch between them is a common silent cause of quality regression.
+
 This is **exact match** deduplication. Near-duplicate or semantically similar pairs are NOT caught (flagged as a future improvement — see IMPROVEMENTS.md).
 
 #### ChatML Output Format
