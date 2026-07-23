@@ -51,6 +51,18 @@ impl PlanLimits {
             }
         }
     }
+
+    /// Whether adding `additional_bytes` to the tenant's `current_bytes` would
+    /// exceed the plan's storage allowance.
+    pub fn storage_would_exceed(&self, current_bytes: i64, additional_bytes: i64) -> bool {
+        let max_bytes = self.max_storage_gb.saturating_mul(BYTES_PER_GB);
+        current_bytes.saturating_add(additional_bytes) > max_bytes
+    }
+
+    /// Whether the tenant has already reached its training-pair allowance.
+    pub fn training_pairs_exhausted(&self, current_pairs: i64) -> bool {
+        current_pairs >= self.max_training_pairs
+    }
 }
 
 pub struct PlanService;
@@ -119,5 +131,79 @@ impl PlanService {
             })?;
 
         Ok(PlanLimits::for_plan(&tenant.plan))
+    }
+
+    /// Reject an upload that would push the tenant's stored bytes over its plan
+    /// storage allowance.
+    pub async fn check_storage_limit(
+        tenant_repo: &dyn TenantRepository,
+        tenant_id: Uuid,
+        current_bytes: i64,
+        additional_bytes: i64,
+    ) -> AppResult<()> {
+        let limits = Self::get_limits(tenant_repo, tenant_id).await?;
+        if limits.storage_would_exceed(current_bytes, additional_bytes) {
+            return Err(AppError::Forbidden {
+                message: format!(
+                    "Storage limit reached: your plan allows up to {} GB. Upgrade or delete files to add more.",
+                    limits.max_storage_gb
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Reject dataset generation once the tenant has reached its plan's total
+    /// training-pair allowance.
+    pub async fn check_training_pairs_limit(
+        tenant_repo: &dyn TenantRepository,
+        tenant_id: Uuid,
+        current_pairs: i64,
+    ) -> AppResult<()> {
+        let limits = Self::get_limits(tenant_repo, tenant_id).await?;
+        if limits.training_pairs_exhausted(current_pairs) {
+            return Err(AppError::Forbidden {
+                message: format!(
+                    "Training-pair limit reached: your plan allows up to {} training pairs. Upgrade to generate more.",
+                    limits.max_training_pairs
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+const BYTES_PER_GB: i64 = 1024 * 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_limit_boundary() {
+        let free = PlanLimits::for_plan("free");
+        let cap = free.max_storage_gb * BYTES_PER_GB;
+        // Exactly at the cap is allowed; one byte over is not.
+        assert!(!free.storage_would_exceed(cap - 100, 100));
+        assert!(free.storage_would_exceed(cap - 100, 101));
+        assert!(!free.storage_would_exceed(0, 0));
+    }
+
+    #[test]
+    fn storage_limit_scales_with_plan() {
+        let free = PlanLimits::for_plan("free");
+        let pro = PlanLimits::for_plan("pro");
+        let ten_gb = 10 * BYTES_PER_GB;
+        // 10 GB exceeds the 5 GB free tier but fits the pro tier.
+        assert!(free.storage_would_exceed(0, ten_gb));
+        assert!(!pro.storage_would_exceed(0, ten_gb));
+    }
+
+    #[test]
+    fn training_pairs_exhaustion() {
+        let free = PlanLimits::for_plan("free");
+        assert!(!free.training_pairs_exhausted(free.max_training_pairs - 1));
+        assert!(free.training_pairs_exhausted(free.max_training_pairs));
+        assert!(free.training_pairs_exhausted(free.max_training_pairs + 1));
     }
 }

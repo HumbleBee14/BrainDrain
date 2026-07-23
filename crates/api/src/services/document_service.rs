@@ -8,7 +8,8 @@ use platform_storage::ObjectStorage;
 use crate::dto::common::PaginatedResponse;
 use crate::dto::document::{DocumentResponse, UploadResponse};
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::DocumentRepository;
+use crate::repositories::traits::{DocumentRepository, TenantRepository};
+use crate::services::plan_service::PlanService;
 
 /// Business logic for document operations.
 ///
@@ -17,8 +18,10 @@ pub struct DocumentService;
 
 impl DocumentService {
     /// Upload a document: validate → store in S3 → create DB record.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload(
         repo: &dyn DocumentRepository,
+        tenant_repo: &dyn TenantRepository,
         storage: &impl ObjectStorage,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -44,6 +47,10 @@ impl DocumentService {
                 message: "File is empty".to_string(),
             });
         }
+
+        // Reject before touching S3 if this would exceed the plan's storage allowance.
+        let current_bytes = repo.sum_storage_bytes(tenant_id).await?;
+        PlanService::check_storage_limit(tenant_repo, tenant_id, current_bytes, file_size).await?;
 
         // Generate file ID and S3 path
         let file_id = Uuid::now_v7();

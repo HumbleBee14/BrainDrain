@@ -10,7 +10,10 @@ use crate::dto::datagen::{
     UpdateGuidanceRequest,
 };
 use crate::error::{AppError, AppResult};
-use crate::repositories::traits::{DataGuideRepository, DocumentRepository};
+use crate::repositories::traits::{
+    DataGuideRepository, DatasetRepository, DocumentRepository, TenantRepository,
+};
+use crate::services::plan_service::PlanService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 
 /// Default number of candidate facets generated when the caller doesn't specify one.
@@ -379,9 +382,12 @@ impl DataGuideService {
 
     /// Start full dataset generation from the finalized guidance and facets.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn generate_dataset(
         repo: &dyn DataGuideRepository,
         doc_repo: &dyn DocumentRepository,
+        dataset_repo: &dyn DatasetRepository,
+        tenant_repo: &dyn TenantRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
@@ -401,6 +407,9 @@ impl DataGuideService {
                 message: format!("Cannot generate dataset from {current} state"),
             });
         }
+
+        let current_pairs = dataset_repo.sum_pair_count(tenant_id).await?;
+        PlanService::check_training_pairs_limit(tenant_repo, tenant_id, current_pairs).await?;
 
         let parsed_docs = doc_repo
             .list_by_status(tenant_id, project_id, DocumentStatus::Parsed)

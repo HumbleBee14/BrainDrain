@@ -131,6 +131,9 @@ pub trait DocumentRepository: Send + Sync {
 
     /// Count all documents across all projects for a tenant.
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Sum of uploaded document bytes for a tenant (storage-quota accounting).
+    fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for dataset database operations.
@@ -157,6 +160,9 @@ pub trait DatasetRepository: Send + Sync {
         project_id: Uuid,
         status: DatasetStatus,
     ) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Sum of generated training pairs across a tenant's datasets (pair-quota accounting).
+    fn sum_pair_count(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     fn update_status(
         &self,
