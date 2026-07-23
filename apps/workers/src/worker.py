@@ -18,7 +18,7 @@ from temporalio.client import Client, Interceptor
 from temporalio.worker import Worker
 
 from src.config import WorkerSettings
-from src.infra import init_container
+from src.infra import InfraContainer, init_container
 from src.workflows.datagen import (
     GenerateDatasetWorkflow,
     GenerateFacetsWorkflow,
@@ -114,6 +114,64 @@ def init_otel(settings: WorkerSettings) -> Sequence[Interceptor]:
         return []
 
 
+def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[list, list]:
+    """Build the (cpu, gpu) activity callables registered with the Temporal worker.
+
+    Temporal registers activities by their ``@activity.defn``-decorated callable —
+    the bound ``run`` method, not the holder instance. Passing the instance raises
+    ``TypeError: Activity <unknown> missing attributes`` at ``Worker(...)`` construction,
+    so this is exercised by a startup smoke test.
+
+    ML-heavy activity modules are imported lazily so importing this module (and running
+    fast unit tests) does not pull in torch/transformers.
+    """
+    from src.activities.build_dataset import BuildDatasetActivity
+    from src.activities.chunk_text import ChunkTextActivity
+    from src.activities.datagen_activities import (
+        GenerateFacetsActivity,
+        GeneratePreviewActivity,
+        RefineGuidanceActivity,
+        UpdateDataGuideActivity,
+    )
+    from src.activities.export_gguf import ExportGgufActivity
+    from src.activities.generate_pairs import GeneratePairsActivity
+    from src.activities.parse_document import ParseDocumentActivity
+    from src.activities.run_evaluation import RunEvaluationActivity
+    from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
+    from src.activities.train_model import (
+        EvaluateHoldoutActivity,
+        FinalizeIterativeTrainingActivity,
+        StartTrainingActivity,
+        TrainSftRoundActivity,
+    )
+
+    # CPU-bound activities (parsing, data generation, dataset building)
+    cpu_activities = [
+        ParseDocumentActivity(infra).run,
+        GeneratePairsActivity(infra).run,
+        ChunkTextActivity(infra).run,
+        BuildDatasetActivity(infra).run,
+        GetDocumentInfoActivity(infra).run,
+        GenerateFacetsActivity(infra).run,
+        GeneratePreviewActivity(infra).run,
+        RefineGuidanceActivity(infra).run,
+        UpdateDataGuideActivity(infra).run,
+    ]
+
+    # GPU-bound activities (training, evaluation)
+    gpu_activities = [
+        StartTrainingActivity(infra, gpu_provider=gpu_provider).run,
+        TrainSftRoundActivity(infra, gpu_provider=gpu_provider).run,
+        EvaluateHoldoutActivity(infra, gpu_provider=gpu_provider).run,
+        FinalizeIterativeTrainingActivity(infra).run,
+        RunEvaluationActivity(infra, gpu_provider=gpu_provider).run,
+        DeployModelActivity(infra).run,
+        ExportGgufActivity(infra).run,
+    ]
+
+    return cpu_activities, gpu_activities
+
+
 async def main() -> None:
     settings = WorkerSettings()
 
@@ -144,50 +202,7 @@ async def main() -> None:
 
     gpu_provider = create_gpu_provider(infra, settings.gpu_provider)
 
-    # Import and instantiate activity classes with injected infrastructure
-    from src.activities.build_dataset import BuildDatasetActivity
-    from src.activities.chunk_text import ChunkTextActivity
-    from src.activities.datagen_activities import (
-        GenerateFacetsActivity,
-        GeneratePreviewActivity,
-        RefineGuidanceActivity,
-        UpdateDataGuideActivity,
-    )
-    from src.activities.export_gguf import ExportGgufActivity
-    from src.activities.generate_pairs import GeneratePairsActivity
-    from src.activities.parse_document import ParseDocumentActivity
-    from src.activities.run_evaluation import RunEvaluationActivity
-    from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
-    from src.activities.train_model import (
-        EvaluateHoldoutActivity,
-        FinalizeIterativeTrainingActivity,
-        StartTrainingActivity,
-        TrainSftRoundActivity,
-    )
-
-    # CPU-bound activities (parsing, data generation, dataset building)
-    cpu_activities = [
-        ParseDocumentActivity(infra),
-        GeneratePairsActivity(infra),
-        ChunkTextActivity(infra),
-        BuildDatasetActivity(infra),
-        GetDocumentInfoActivity(infra),
-        GenerateFacetsActivity(infra),
-        GeneratePreviewActivity(infra),
-        RefineGuidanceActivity(infra),
-        UpdateDataGuideActivity(infra),
-    ]
-
-    # GPU-bound activities (training, evaluation)
-    gpu_activities = [
-        StartTrainingActivity(infra, gpu_provider=gpu_provider),
-        TrainSftRoundActivity(infra, gpu_provider=gpu_provider),
-        EvaluateHoldoutActivity(infra, gpu_provider=gpu_provider),
-        FinalizeIterativeTrainingActivity(infra),
-        RunEvaluationActivity(infra, gpu_provider=gpu_provider),
-        DeployModelActivity(infra),
-        ExportGgufActivity(infra),
-    ]
+    cpu_activities, gpu_activities = build_activity_lists(infra, gpu_provider)
 
     # All workflows (registered on every worker mode)
     all_workflows = [
