@@ -2,6 +2,12 @@
 
 > Fine-tune LLMs on your data — no technical knowledge required.
 
+> **Historical phase-by-phase build log.** Some tech-stack details below (e.g.
+> the Language Split table) describe the plan at the time a phase shipped and
+> have since changed in practice — see [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md),
+> [PROJECT_FLOW.md](./PROJECT_FLOW.md), and [CLOUD_GPU_TRAINING.md](./CLOUD_GPU_TRAINING.md)
+> for the current, verified state of each subsystem.
+
 ---
 
 ## Table of Contents
@@ -240,8 +246,8 @@ Platform/
 | S3/storage | **Rust (aws-sdk-rust)** | Official AWS SDK, streaming support |
 | Auth (Clerk JWT) | **Rust (jsonwebtoken)** | JWT verification, JWKS fetching |
 | ML training | **Python (Unsloth/TRL)** | ML ecosystem is Python-only |
-| Synthetic data gen | **Python (distilabel)** | ML pipeline, LLM API calls |
-| Document parsing | **Python (MinerU)** | PDF/DOCX parsing libraries |
+| Synthetic data gen | **Python (raw LLM API calls)** | httpx calls to any OpenAI-compatible endpoint |
+| Document parsing | **Python (PyMuPDF/Docling)** | PDF/DOCX parsing libraries |
 | Workflow orchestration | **Python (Temporal SDK)** | ML workers are Python anyway |
 | Frontend | **TypeScript (Next.js 15)** | React ecosystem |
 
@@ -282,7 +288,7 @@ Platform/
 │      │  - Idempotent, individually retryable            │
 │      │  - Does the actual ML work                       │
 │      ▼                                                  │
-│  ML Libraries (Unsloth, distilabel, MinerU, vLLM)      │
+│  ML Libraries (Unsloth, TRL, PyMuPDF/Docling, vLLM)    │
 └─────────────────────────────────────────────────────────┘
 ```
 

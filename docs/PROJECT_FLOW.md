@@ -33,17 +33,24 @@ BrainDrain is an **end-to-end, multi-tenant LLM fine-tuning and serving platform
 
 The ML ecosystem is highly fragmented. ML engineers currently spend a majority of their time manually gluing together:
 - Document parsers (PyMuPDF, Docling)
-- Data synthesizers (distilabel, custom LLM pipelines)
+- Data synthesizers (raw LLM API calls, custom pipelines)
 - Training frameworks (Unsloth, TRL, PEFT)
 - Workflow orchestrators (Temporal, Airflow)
-- Inference engines (vLLM, TGI)
+- Inference engines (vLLM, TGI, SGLang)
 - Billing and metering systems
 
-BrainDrain abstracts all of this into a single cohesive product. It is an open-source alternative to OpenAI's Fine-Tuning API, designed for open-weight models (Llama 3, Qwen, Mistral, etc.).
+BrainDrain abstracts all of this into a single cohesive product for fine-tuning open-weight models (Llama 3, Qwen, Mistral, etc.).
 
-### The Competitive Edge
+### Serving Design
 
-It leverages **vLLM + S-LoRA (Serverless LoRA)** to solve the hardest problem in LLM SaaS economics: hosting thousands of custom customer models without needing thousands of dedicated GPUs. A single H100 can serve 2,000+ LoRA adapters by hot-swapping them in and out of VRAM per request.
+Deployed models are served through a pluggable backend abstraction over vLLM,
+TGI, or SGLang, with a multi-instance control plane that can bind a model to
+whichever registered instance has capacity. vLLM's multi-LoRA support (hot-
+loading adapters from S3 into a single running server) is the primary path;
+exact per-GPU adapter-capacity numbers depend on adapter rank, base model
+size, and hardware, and have not been benchmarked on this platform — treat
+any specific adapter-count figure as a vLLM capability, not a measured
+platform guarantee.
 
 ---
 
@@ -84,7 +91,7 @@ It is a **monorepo with three independently deployable services**:
 │   │ • SQLx + Postgres │  │ • Clerk Auth     │  │ • PyMuPDF        │ │
 │   │ • S3 Client       │  │ • React Query    │  │ • Unsloth / TRL  │ │
 │   │ • Redis           │  │ • TailwindCSS    │  │ • vLLM Client    │ │
-│   │ • Temporal Client │  │ • SSE Streaming  │  │ • distilabel     │ │
+│   │ • Temporal Client │  │ • SSE Streaming  │  │ • httpx (LLM)    │ │
 │   │                   │  │                  │  │                  │ │
 │   │ ~20MB Docker      │  │ ~50MB Docker     │  │ ~500MB+ Docker   │ │
 │   └────────┬──────────┘  └────────┬─────────┘  └───────┬──────────┘ │
@@ -698,14 +705,14 @@ Dashboard Request → Check Redis → Cache Hit?
 | Dev token auth (no Clerk needed) | ✅ | — | — | Ready |
 | Project CRUD | ✅ | ✅ | — | Ready |
 | Document upload (multipart → S3) | ✅ | ✅ | — | Ready |
-| Document parsing | ✅ | ✅ | ✅ | Ready |
+| Document parsing | ✅ | ✅ | ✅ | Ready (PyMuPDF/Docling text extraction — no OCR path for scanned/image-only PDFs) |
 | Text chunking | ✅ | — | ✅ | Ready |
 | Per-tenant LLM provider settings | ✅ | — | ✅ | Ready |
 | Synthetic data generation | ✅ | — | ✅ | Ready (needs LLM API key via settings or env var) |
 | Dataset building + preview | ✅ | ✅ | ✅ | Ready |
-| Training (4 modes) | ✅ | ✅ | ✅ | Ready (needs GPU) |
+| Training (4 modes) | ✅ | ✅ | ✅ | Ready (needs GPU — local attached GPU is the proven path; Modal cloud GPU is validated for smoke-test/deploy, full train→S3 on cloud is not yet proven end-to-end; no RunPod integration) |
 | Evaluation (4 suites) | ✅ | ✅ | ✅ | Ready (needs GPU + LLM key via settings or env var) |
-| Model deployment to vLLM | ✅ | ✅ | ✅ | Ready (needs vLLM running) |
+| Model deployment to vLLM | ✅ | ✅ | ✅ | Ready (needs vLLM running; TGI/SGLang also implemented via the backend abstraction but less exercised than vLLM; the serving + automated-CD path is present in code but not proven against sustained production traffic) |
 | API key management | ✅ | ✅ | — | Ready |
 | Inference proxy (circuit breaker) | ✅ | — | — | Ready (needs vLLM) |
 | SSE streaming playground | ✅ | ✅ | — | Ready (needs vLLM) |

@@ -198,8 +198,16 @@ APP_GPU_PROVIDER=modal
 MODAL_TOKEN_ID=ak-xxxxx      # From https://modal.com/settings
 MODAL_TOKEN_SECRET=as-xxxxx
 
-# 3. That's it — training jobs will auto-provision GPUs on Modal
+# 3. Deploy the training function: make modal-deploy
 ```
+
+**Status:** the Modal path is validated for deploy and smoke-test training
+runs (spawn/poll/reservation, adapter landing in S3). A full train→S3 run on
+cloud infrastructure has a documented runbook but is not yet proven
+end-to-end in this repo — see [CLOUD_GPU_TRAINING.md](./CLOUD_GPU_TRAINING.md#9-cheap-end-to-end-runbook-30-budget)
+for the exact steps and known crash-window caveats. There is no RunPod (or
+other third-party GPU marketplace) integration — `LocalGpuProvider` and
+`ModalGpuProvider` are the only two implementations today.
 
 ### GPU types (Modal)
 
@@ -285,6 +293,7 @@ now tracks instances explicitly and routes via an assigned instance binding.
 | Clerk production keys | SETUP | Create production instance |
 | Stripe configuration | SETUP | Products, prices, webhook URL |
 | Domain + DNS + TLS | SETUP | Register, point, configure |
-| GPU provider | DONE | Trait-based: Local (default) + Modal (serverless) |
+| GPU provider | DONE (Modal cloud path partially proven) | Trait-based: Local (default, fully exercised) + Modal (serverless, validated for deploy/smoke — full cloud train→S3 e2e not yet proven; no RunPod) |
+| Model serving (vLLM/TGI/SGLang) + automated CD | CODE COMPLETE, NOT PROVEN E2E | Backend abstraction and CI build/validate pipeline exist; not yet exercised against sustained production traffic or a real automated deploy |
 
-**Bottom line:** All code and configuration is done. The remaining items are account creation and credential setup — things that require human decisions and credit cards.
+**Bottom line:** The code and configuration for every stage above is written and unit-tested. Two areas — the Modal cloud-GPU path and the vLLM/TGI/SGLang serving + CD path — are implemented but not yet proven end-to-end against real production traffic; treat those as "ready to validate," not "battle-tested." The remaining setup items are account creation and credential setup — things that require human decisions and credit cards.

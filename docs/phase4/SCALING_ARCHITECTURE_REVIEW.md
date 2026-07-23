@@ -16,7 +16,7 @@ BrainDrain is an end-to-end, multi-tenant LLM fine-tuning and serving platform. 
 The ML ecosystem is highly fragmented. ML engineers currently spend a majority of their time gluing together document parsers (PyMuPDF), data synthesizers, training frameworks (Unsloth/TRL), workflow orchestrators, and inference engines (vLLM). BrainDrain abstracts all of this into a single cohesive SaaS product.
 
 **The Edge:**
-By successfully utilizing **vLLM + S-LoRA (Serverless LoRA)**, this project solves the hardest problem in LLM SaaS economics: how to host thousands of custom customer models without needing thousands of dedicated GPUs. Enterprises desire this because they want to own their model weights (adapters) and keep their training data private, but they often lack the in-house ML infra team to orchestrate a complex pipeline like Unsloth + Temporal + vLLM. This project functions as an open-source competitor to OpenAI's Fine-Tuning API dashboard, designed for open-weight models (Llama 3, etc.).
+By successfully utilizing **vLLM + S-LoRA (Serverless LoRA)**, this project solves the hardest problem in LLM SaaS economics: how to host thousands of custom customer models without needing thousands of dedicated GPUs. Enterprises desire this because they want to own their model weights (adapters) and keep their training data private, but they often lack the in-house ML infra team to orchestrate a complex pipeline like Unsloth + Temporal + vLLM. This project is an open-source, self-hostable fine-tuning platform designed for open-weight models (Llama 3, etc.).
 
 ---
 

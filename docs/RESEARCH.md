@@ -1,5 +1,14 @@
 # Platform — Deep Research & Technical Notes (February 2026)
 
+> **This is landscape/market research compiled at project inception
+> (February 2026) to inform design decisions** — it surveys third-party
+> tools and providers (MinerU, distilabel, RunPod, etc.) that were evaluated,
+> not all of which were ultimately adopted. It is not a description of what
+> was built. For the as-built stack, see
+> [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md),
+> [PROJECT_FLOW.md](./PROJECT_FLOW.md), and
+> [CLOUD_GPU_TRAINING.md](./CLOUD_GPU_TRAINING.md).
+
 ## Project Goal
 A learning project to explore the full pipeline of fine-tuning LLMs end-to-end — from raw document ingestion through data curation, training, evaluation, and deployment. The goal is to deeply understand each stage by building it: Rust for infrastructure, Python for ML, and everything in between.
 
