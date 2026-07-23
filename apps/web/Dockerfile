@@ -27,9 +27,11 @@ COPY apps/web/ apps/web/
 COPY packages/shared-types/ packages/shared-types/
 
 # Clerk requires NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY at build time for page prerendering.
-# Pass the real key via --build-arg for production builds.
-# The placeholder allows CI validation builds to succeed without secrets.
-ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_placeholder
+# Pass the real key via --build-arg for production builds. The default must be a
+# format-valid Clerk test key (decodes to a host ending in `$`) — ClerkProvider
+# rejects a malformed key during prerender. This dummy points at no real instance
+# and is only for keyless CI validation builds.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 
 RUN pnpm --filter web build

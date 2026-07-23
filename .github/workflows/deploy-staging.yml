@@ -54,8 +54,11 @@ jobs:
           file: ./apps/web/Dockerfile
           push: false
           tags: platform-web:${{ github.sha }}
+          # Build verification only (no deploy). ClerkProvider validates the key
+          # format while prerendering, so pass a format-valid placeholder. The real
+          # key is injected at deploy time, not baked into the image.
           build-args: |
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
