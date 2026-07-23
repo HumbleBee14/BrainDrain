@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use tokio::sync::oneshot;
 
 use crate::repositories::traits::NotificationRepository;
@@ -13,6 +15,34 @@ const MAX_DELIVERY_ATTEMPTS: i32 = 5;
 
 /// Number of deliveries to fetch per poll cycle.
 const BATCH_SIZE: i64 = 50;
+
+/// How long a claimed delivery is leased to this worker. Longer than the
+/// longest per-attempt dispatch timeout so an in-flight delivery is never
+/// re-claimed; a crashed worker's rows become eligible again after this.
+const CLAIM_LEASE_SECS: i64 = 120;
+
+/// Record a failed delivery and dead-letter (log loudly) when it has exhausted
+/// its retry budget.
+async fn mark_failed(
+    repo: &dyn NotificationRepository,
+    delivery: &platform_db::models::NotificationDelivery,
+    error: &str,
+) {
+    let _ = repo
+        .update_delivery_status(delivery.tenant_id, delivery.id, "failed", Some(error))
+        .await;
+    if delivery.attempts + 1 >= MAX_DELIVERY_ATTEMPTS {
+        tracing::error!(
+            delivery_id = %delivery.id,
+            tenant_id = %delivery.tenant_id,
+            event_type = %delivery.event_type,
+            channel = %delivery.channel,
+            attempts = delivery.attempts + 1,
+            error,
+            "Notification delivery exhausted retries — dead-lettered"
+        );
+    }
+}
 
 /// Background worker that polls for pending notification deliveries and dispatches them.
 ///
@@ -120,7 +150,7 @@ async fn process_pending(
     email_provider: &dyn EmailProvider,
 ) {
     let deliveries = match repo
-        .list_pending_deliveries(MAX_DELIVERY_ATTEMPTS, BATCH_SIZE)
+        .claim_pending_deliveries(MAX_DELIVERY_ATTEMPTS, BATCH_SIZE, CLAIM_LEASE_SECS)
         .await
     {
         Ok(d) => d,
@@ -149,14 +179,7 @@ async fn process_pending(
                     preference_id = %delivery.preference_id,
                     "Preference not found — marking delivery as failed"
                 );
-                let _ = repo
-                    .update_delivery_status(
-                        delivery.tenant_id,
-                        delivery.id,
-                        "failed",
-                        Some("Notification preference deleted"),
-                    )
-                    .await;
+                mark_failed(repo, &delivery, "Notification preference deleted").await;
                 continue;
             }
             Err(e) => {
@@ -189,14 +212,7 @@ async fn process_pending(
                     channel = other,
                     "Unknown delivery channel — marking as failed"
                 );
-                let _ = repo
-                    .update_delivery_status(
-                        delivery.tenant_id,
-                        delivery.id,
-                        "failed",
-                        Some(&format!("Unknown channel: {other}")),
-                    )
-                    .await;
+                mark_failed(repo, &delivery, &format!("Unknown channel: {other}")).await;
             }
         }
     }
@@ -212,14 +228,7 @@ async fn dispatch_webhook(
     let url = match pref.config.get("url").and_then(|v| v.as_str()) {
         Some(u) => u,
         None => {
-            let _ = repo
-                .update_delivery_status(
-                    delivery.tenant_id,
-                    delivery.id,
-                    "failed",
-                    Some("No webhook URL configured"),
-                )
-                .await;
+            mark_failed(repo, delivery, "No webhook URL configured").await;
             return;
         }
     };
@@ -231,26 +240,46 @@ async fn dispatch_webhook(
             url,
             "Webhook URL targets private/internal network — marking as failed"
         );
-        let _ = repo
-            .update_delivery_status(
-                delivery.tenant_id,
-                delivery.id,
-                "failed",
-                Some("Webhook URL targets a private or internal network"),
-            )
-            .await;
+        mark_failed(
+            repo,
+            delivery,
+            "Webhook URL targets a private or internal network",
+        )
+        .await;
         return;
     }
 
     // Exponential backoff timeout: 10s base, capped at 30s
     let timeout_secs = std::cmp::min(10 * 2u64.pow(delivery.attempts as u32), 30);
 
-    let result = http_client
+    // Serialize once so the signature covers the exact bytes sent.
+    let body = match serde_json::to_vec(&delivery.payload) {
+        Ok(b) => b,
+        Err(e) => {
+            mark_failed(
+                repo,
+                delivery,
+                &format!("Payload serialization failed: {e}"),
+            )
+            .await;
+            return;
+        }
+    };
+
+    let mut request = http_client
         .post(url)
-        .json(&delivery.payload)
-        .timeout(Duration::from_secs(timeout_secs))
-        .send()
-        .await;
+        .header("content-type", "application/json")
+        .timeout(Duration::from_secs(timeout_secs));
+
+    // Optional HMAC-SHA256 signature so receivers can verify authenticity when a
+    // shared secret is configured on the webhook preference.
+    if let Some(secret) = pref.config.get("secret").and_then(|v| v.as_str())
+        && let Some(signature) = sign_payload(secret, &body)
+    {
+        request = request.header("x-webhook-signature", format!("sha256={signature}"));
+    }
+
+    let result = request.body(body).send().await;
 
     match result {
         Ok(res) if res.status().is_success() => {
@@ -264,22 +293,17 @@ async fn dispatch_webhook(
             );
         }
         Ok(res) => {
-            let msg = format!("HTTP {}", res.status());
-            let _ = repo
-                .update_delivery_status(delivery.tenant_id, delivery.id, "failed", Some(&msg))
-                .await;
+            let status = res.status();
+            mark_failed(repo, delivery, &format!("HTTP {status}")).await;
             tracing::debug!(
                 delivery_id = %delivery.id,
-                status = %res.status(),
+                status = %status,
                 attempt = delivery.attempts + 1,
                 "Webhook delivery failed"
             );
         }
         Err(e) => {
-            let msg = e.to_string();
-            let _ = repo
-                .update_delivery_status(delivery.tenant_id, delivery.id, "failed", Some(&msg))
-                .await;
+            mark_failed(repo, delivery, &e.to_string()).await;
             tracing::debug!(
                 delivery_id = %delivery.id,
                 error = %e,
@@ -288,6 +312,15 @@ async fn dispatch_webhook(
             );
         }
     }
+}
+
+/// Hex-encoded HMAC-SHA256 of `body` keyed by `secret`, or `None` if the key is
+/// unusable.
+fn sign_payload(secret: &str, body: &[u8]) -> Option<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(body);
+    let bytes = mac.finalize().into_bytes();
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Send one email delivery through the provider and record the outcome.
@@ -300,14 +333,7 @@ async fn dispatch_email(
     let address = match pref.config.get("address").and_then(|v| v.as_str()) {
         Some(a) if !a.is_empty() => a.to_string(),
         _ => {
-            let _ = repo
-                .update_delivery_status(
-                    delivery.tenant_id,
-                    delivery.id,
-                    "failed",
-                    Some("No email address configured"),
-                )
-                .await;
+            mark_failed(repo, delivery, "No email address configured").await;
             return;
         }
     };
@@ -344,9 +370,7 @@ async fn dispatch_email(
         }
         Err(e) => {
             let msg = e.to_string();
-            let _ = repo
-                .update_delivery_status(delivery.tenant_id, delivery.id, "failed", Some(&msg))
-                .await;
+            mark_failed(repo, delivery, &msg).await;
             tracing::debug!(
                 delivery_id = %delivery.id,
                 error = %msg,
