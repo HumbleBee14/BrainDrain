@@ -58,6 +58,7 @@ export type { UploadResponse } from "./UploadResponse";
 
 // Settings (from crates/api/src/dto/tenant_settings.rs)
 export type { LlmSettingsResponse } from "./LlmSettingsResponse";
+export type { LlmTestResponse } from "./LlmTestResponse";
 export type { UpdateLlmSettingsRequest } from "./UpdateLlmSettingsRequest";
 export type { AdminConfigResponse } from "./AdminConfigResponse";
 export type { UpdateAdminConfigRequest } from "./UpdateAdminConfigRequest";

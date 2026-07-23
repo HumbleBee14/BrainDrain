@@ -182,6 +182,7 @@ fn v1_router() -> Router<AppState> {
         audit_logs::list_audit_logs,
         // Settings
         tenant_settings::get_llm_settings,
+        tenant_settings::test_llm_settings,
         tenant_settings::update_llm_settings,
         tenant_settings::delete_llm_settings,
         // Inference
@@ -312,6 +313,7 @@ fn v1_router() -> Router<AppState> {
         // Tenant Settings
         crate::dto::tenant_settings::UpdateLlmSettingsRequest,
         crate::dto::tenant_settings::LlmSettingsResponse,
+        crate::dto::tenant_settings::LlmTestResponse,
         // Shared types
         platform_shared::types::Hyperparams,
         platform_shared::types::TrainingMetrics,

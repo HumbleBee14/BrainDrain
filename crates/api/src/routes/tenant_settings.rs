@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use platform_shared::enums::TeamRole;
@@ -7,7 +7,8 @@ use platform_shared::enums::TeamRole;
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
 use crate::dto::tenant_settings::{
-    AdminConfigResponse, LlmSettingsResponse, UpdateAdminConfigRequest, UpdateLlmSettingsRequest,
+    AdminConfigResponse, LlmSettingsResponse, LlmTestResponse, UpdateAdminConfigRequest,
+    UpdateLlmSettingsRequest,
 };
 use crate::error::AppResult;
 use crate::rbac::require_role;
@@ -23,6 +24,7 @@ pub fn router() -> Router<AppState> {
                 .put(update_llm_settings)
                 .delete(delete_llm_settings),
         )
+        .route("/settings/llm/test", post(test_llm_settings))
         .route(
             "/settings/admin",
             get(get_admin_config)
@@ -53,6 +55,30 @@ pub async fn get_llm_settings(
         TenantSettingsService::get_llm_settings(state.tenant_repo(), user.tenant_id).await?;
 
     Ok(Json(settings))
+}
+
+/// POST /api/v1/settings/llm/test
+#[utoipa::path(
+    post,
+    path = "/api/v1/settings/llm/test",
+    tag = "Settings",
+    responses(
+        (status = 200, description = "Connection test result", body = LlmTestResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden — admin required"),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn test_llm_settings(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+) -> AppResult<Json<LlmTestResponse>> {
+    require_role(&user, TeamRole::Admin)?;
+
+    let result =
+        TenantSettingsService::test_llm_connection(state.tenant_repo(), user.tenant_id).await?;
+
+    Ok(Json(result))
 }
 
 /// PUT /api/v1/settings/llm
