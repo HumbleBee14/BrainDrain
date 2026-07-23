@@ -148,6 +148,15 @@ impl AppState {
                 pool
             }
             None => {
+                // The RLS second layer is mandatory in production. Falling back to
+                // the owner connection there would silently disable tenant isolation
+                // defense-in-depth, so refuse to start instead.
+                if config.environment == "production" {
+                    return Err(anyhow::anyhow!(
+                        "DATABASE_RLS_URL must be set in production (app_rls role) — \
+                         refusing to start on the RLS-exempt owner connection"
+                    ));
+                }
                 tracing::warn!(
                     "DATABASE_RLS_URL not set — tenant queries run on the owner connection and \
                      the RLS second layer is INACTIVE (isolation relies on WHERE tenant_id only). \

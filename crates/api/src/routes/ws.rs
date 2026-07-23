@@ -14,6 +14,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::auth::AuthenticatedUser;
@@ -117,22 +118,31 @@ async fn handle_socket(socket: WebSocket, user: AuthenticatedUser, state: AppSta
                                 let _ = sender.send(Message::Text(pong.into())).await;
                             }
                             Ok(WsMessage::Subscribe { channel }) => {
-                                handle_subscribe(
+                                match handle_subscribe(
                                     &channel,
                                     &mut subscriptions,
                                     tx.clone(),
-                                    state.redis(),
+                                    &state,
                                     &user,
                                 )
-                                .await;
-
-                                // Acknowledge
-                                let ack = serde_json::to_string(&WsMessage::Update {
-                                    channel: channel.clone(),
-                                    payload: serde_json::json!({"subscribed": true}),
-                                })
-                                .unwrap_or_default();
-                                let _ = sender.send(Message::Text(ack.into())).await;
+                                .await
+                                {
+                                    Ok(()) => {
+                                        let ack = serde_json::to_string(&WsMessage::Update {
+                                            channel: channel.clone(),
+                                            payload: serde_json::json!({"subscribed": true}),
+                                        })
+                                        .unwrap_or_default();
+                                        let _ = sender.send(Message::Text(ack.into())).await;
+                                    }
+                                    Err(message) => {
+                                        let err = serde_json::to_string(&WsMessage::Error {
+                                            message,
+                                        })
+                                        .unwrap_or_default();
+                                        let _ = sender.send(Message::Text(err.into())).await;
+                                    }
+                                }
                             }
                             Ok(WsMessage::Unsubscribe { channel }) => {
                                 if let Some(handle) = subscriptions.remove(&channel) {
@@ -168,27 +178,35 @@ async fn handle_socket(socket: WebSocket, user: AuthenticatedUser, state: AppSta
     tracing::info!(user_id = %user.user_id, "WebSocket disconnected");
 }
 
-/// Spawn a task that tails a Redis Stream and forwards entries to `tx`.
+/// Authorize a subscription and, on success, spawn a task that tails the
+/// corresponding Redis Stream and forwards entries to `tx`.
 ///
 /// Channel format: `training:{job_id}`
 /// Redis Stream key: `training:metrics:{job_id}`
 ///
-/// Uses `XREAD BLOCK COUNT` in a loop — never misses an entry, handles
-/// reconnects gracefully, and exits cleanly when the task is aborted.
+/// Returns `Err(message)` if the channel is unsupported or the resource does
+/// not belong to the caller's tenant. Uses `XREAD BLOCK COUNT` in a loop —
+/// never misses an entry, handles reconnects gracefully, and exits cleanly
+/// when the task is aborted.
 async fn handle_subscribe(
     channel: &str,
     subscriptions: &mut HashMap<String, JoinHandle<()>>,
     tx: mpsc::Sender<String>,
-    mut redis: redis::aio::ConnectionManager,
+    state: &AppState,
     user: &AuthenticatedUser,
-) {
+) -> Result<(), String> {
     // Already subscribed — no-op
     if subscriptions.contains_key(channel) {
-        return;
+        return Ok(());
     }
 
-    let stream_key = channel_to_stream_key(channel);
+    // Authorize before tailing any stream: the client-supplied channel must map
+    // to a resource owned by the caller's tenant. Unknown channel shapes are
+    // denied so a client can never point a subscription at an arbitrary Redis key.
+    let stream_key = authorize_channel(channel, state, user).await?;
+
     let channel_owned = channel.to_string();
+    let mut redis = state.redis();
 
     tracing::debug!(
         user_id = %user.user_id,
@@ -258,15 +276,60 @@ async fn handle_subscribe(
     });
 
     subscriptions.insert(channel.to_string(), handle);
+    Ok(())
 }
 
-/// Map a WS channel name to the corresponding Redis stream key.
+/// Validate that `user` may subscribe to `channel` and return the Redis stream
+/// key to tail.
 ///
-/// `training:{job_id}` → `training:metrics:{job_id}`
-/// Everything else passes through as-is (future extensibility).
-fn channel_to_stream_key(channel: &str) -> String {
-    if let Some(job_id) = channel.strip_prefix("training:") {
-        return format!("training:metrics:{job_id}");
+/// Only `training:{job_id}` channels are supported, and the job must belong to
+/// the caller's tenant — this is the authorization gate for the live metrics
+/// stream. Any other channel shape is rejected.
+async fn authorize_channel(
+    channel: &str,
+    state: &AppState,
+    user: &AuthenticatedUser,
+) -> Result<String, String> {
+    let job_id = parse_training_channel(channel).ok_or_else(|| "Unsupported channel".to_string())?;
+
+    match state
+        .training_job_repo()
+        .get_by_id(user.tenant_id, job_id)
+        .await
+    {
+        Ok(Some(_)) => Ok(format!("training:metrics:{job_id}")),
+        Ok(None) => Err("Resource not found".to_string()),
+        Err(e) => {
+            tracing::error!(error = %e, "WS subscribe authorization lookup failed");
+            Err("Authorization check failed".to_string())
+        }
     }
-    channel.to_string()
+}
+
+/// Parse a `training:{job_id}` channel into its job UUID. Returns `None` for any
+/// other channel shape or a malformed UUID, so only well-formed training
+/// channels are ever authorized.
+fn parse_training_channel(channel: &str) -> Option<Uuid> {
+    let job_id = channel.strip_prefix("training:")?;
+    Uuid::parse_str(job_id).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_training_channel() {
+        let id = Uuid::new_v4();
+        assert_eq!(parse_training_channel(&format!("training:{id}")), Some(id));
+    }
+
+    #[test]
+    fn rejects_unknown_prefix_and_malformed_uuid() {
+        assert_eq!(parse_training_channel("billing:events"), None);
+        assert_eq!(parse_training_channel("training:not-a-uuid"), None);
+        assert_eq!(parse_training_channel("training:"), None);
+        // No prefix at all must never map onto a raw Redis key.
+        assert_eq!(parse_training_channel("training:metrics:secret"), None);
+    }
 }
