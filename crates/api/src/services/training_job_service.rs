@@ -477,7 +477,7 @@ const MIN_BILLABLE_SECONDS: i64 = 300;
 
 /// GPU seconds and dollar cost for a run of `elapsed_seconds` at `rate` $/hr.
 /// Runs shorter than the minimum billable window are voided.
-fn billable_gpu_cost(elapsed_seconds: i64, rate: f64) -> (i32, f64) {
+pub(crate) fn billable_gpu_cost(elapsed_seconds: i64, rate: f64) -> (i32, f64) {
     let seconds = elapsed_seconds.max(0);
     if seconds < MIN_BILLABLE_SECONDS {
         return (seconds as i32, 0.0);
@@ -557,7 +557,10 @@ fn estimate_gpu_hours(
 
 /// Resolve the hourly rate for a GPU class, preferring the tenant's configured
 /// rates and falling back to the platform defaults for unset classes.
-fn resolve_gpu_rate(gpu_rates: &std::collections::HashMap<String, f64>, gpu_class: &str) -> f64 {
+pub(crate) fn resolve_gpu_rate(
+    gpu_rates: &std::collections::HashMap<String, f64>,
+    gpu_class: &str,
+) -> f64 {
     gpu_rates
         .get(gpu_class)
         .copied()

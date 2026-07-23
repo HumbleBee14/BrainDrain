@@ -305,19 +305,39 @@ the platform's `gpu_class` values (also used for cost estimation via
 `GPU_HOURLY_RATES`) into the GPU type string Modal expects in
 `.with_options(gpu=...)`:
 
-| `gpu_class` | Modal GPU string |
+| `gpu_class` (canonical, lowercase) | Modal GPU string |
 |---|---|
-| `A10G` | `A10` |
-| `A10` | `A10` |
-| `A100` | `A100` |
-| `A100-80GB` | `A100-80GB` |
-| `H100` | `H100` |
-| `L4` | `L4` |
-| `T4` | `T4` |
+| `t4` | `T4` |
+| `a10g` | `A10G` |
+| `l40s` | `L40S` |
+| `a10040gb` | `A100` |
+| `a10080gb` | `A100-80GB` |
+| `h100` | `H100` |
 
-Anything not in the map falls back to `MODAL_DEFAULT_GPU` (`A10`). A single
-deployed function (`train`) serves every GPU class — the GPU type is chosen
-per-call via `.with_options(gpu=...)`, not baked into the deployed app.
+Keys are the canonical lowercase `gpu_class` values (matched
+case-insensitively). Anything not in the map falls back to
+`MODAL_DEFAULT_GPU` (`T4`). A single deployed function (`train`) serves every
+GPU class — the GPU type is chosen per-call via `.with_options(gpu=...)`, not
+baked into the deployed app.
+
+### 6.1 Live training metrics on the cloud path
+
+By default the Modal path forces `APP_METRICS_BACKEND=log` (set in
+`modal_app.py` before settings load), so per-step metrics go to the container
+log, not Redis. The dashboard's training stream reads
+`training:metrics:<job_id>` from Redis, so on a default cloud run the SSE view
+sits on **"waiting for metrics…"** for the whole job — status transitions
+still land (they go through Postgres), but the live loss chart never fills.
+
+To get live per-step metrics on the cloud path, point the remote at a
+Redis the Modal network can reach (e.g. Upstash) — never a compose-internal
+host:
+
+- `APP_METRICS_BACKEND=redis`
+- `APP_REDIS_URL=rediss://…` (a public `rediss://` URL, in the Modal secret)
+
+This is verified end-to-end (§10). The local path (`APP_GPU_PROVIDER=local`)
+already streams live metrics with no extra setup.
 
 ## 7. Modal secret setup
 
