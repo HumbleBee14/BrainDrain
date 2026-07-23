@@ -25,11 +25,11 @@ pub fn router() -> Router<AppState> {
             get(list_preferences).put(update_preferences),
         )
         .route("/notifications/deliveries", get(list_deliveries))
-        .route("/notifications/preferences/:id/test", post(test_webhook))
-        .route("/notifications/deliveries/:id/retry", post(retry_delivery))
+        .route("/notifications/preferences/{id}/test", post(test_webhook))
+        .route("/notifications/deliveries/{id}/retry", post(retry_delivery))
         .route("/notifications/in-app", get(list_in_app))
         .route("/notifications/in-app/read-all", post(mark_all_in_app_read))
-        .route("/notifications/in-app/:id/read", post(mark_in_app_read))
+        .route("/notifications/in-app/{id}/read", post(mark_in_app_read))
 }
 
 /// Default number of in-app notifications returned to the bell menu.
