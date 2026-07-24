@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ekcron-app",
+  "name": "ekcron",
   "main": ".open-next/worker.js",
   // >= 2025-04-01 so vars defined here surface on process.env.
   "compatibility_date": "2026-07-01",
