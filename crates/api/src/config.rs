@@ -78,6 +78,18 @@ pub struct Config {
     #[allow(dead_code)]
     pub clerk_secret_key: String,
 
+    /// Expected JWT `iss` claim (e.g. `https://your-instance.clerk.accounts.dev`).
+    /// Unset ⇒ issuer is not validated. Set this in every real deployment so
+    /// tokens signed by another instance's keys are rejected.
+    #[serde(default)]
+    pub clerk_issuer: Option<String>,
+
+    /// Comma-separated allowlist for the JWT `azp` (authorized party) claim —
+    /// the frontend origins allowed to mint sessions. Empty ⇒ `azp` is not
+    /// checked. When set, tokens without a matching `azp` are rejected.
+    #[serde(default)]
+    pub clerk_authorized_parties: String,
+
     // ── Temporal ──
     /// Temporal server host:port.
     #[serde(default = "default_temporal_host")]
@@ -217,6 +229,15 @@ pub struct Config {
     /// Maximum requests per minute per IP address.
     #[serde(default = "default_rate_limit_rpm")]
     pub rate_limit_rpm: u32,
+
+    /// Comma-separated CIDRs (or single IPs) of trusted reverse proxies.
+    /// When a request's socket IP is inside one of these ranges, the client IP
+    /// for rate limiting is read from X-Forwarded-For (rightmost untrusted
+    /// entry). Empty ⇒ forwarded headers are ignored and the socket IP is used
+    /// — behind a load balancer that means all traffic shares one bucket, so
+    /// set this in every proxied deployment.
+    #[serde(default)]
+    pub trusted_proxy_cidrs: String,
 
     // ── Security Headers ──
     /// Content-Security-Policy header value.
@@ -372,6 +393,16 @@ impl Config {
             .into_iter()
             .map(|s| s.to_lowercase())
             .collect()
+    }
+
+    /// Authorized parties for the JWT `azp` claim, parsed from the allowlist.
+    pub fn clerk_authorized_parties_list(&self) -> Vec<String> {
+        split_csv(&self.clerk_authorized_parties)
+    }
+
+    /// Trusted proxy CIDRs, parsed from the comma-separated list.
+    pub fn trusted_proxy_cidrs_list(&self) -> Vec<String> {
+        split_csv(&self.trusted_proxy_cidrs)
     }
 
     /// Whether we're running in development mode.

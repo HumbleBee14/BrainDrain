@@ -23,6 +23,7 @@ redis = { workspace = true }
 # Auth
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
+ipnet = { workspace = true }
 
 # Observability
 tracing = { workspace = true }

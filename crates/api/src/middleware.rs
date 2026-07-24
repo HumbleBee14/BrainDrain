@@ -1,5 +1,8 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Instant;
+
+use ipnet::IpNet;
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, State};
@@ -210,6 +213,7 @@ pub struct IpRateLimiter {
     redis: redis::aio::ConnectionManager,
     rpm: u32,
     enabled: bool,
+    trusted_proxies: Arc<[IpNet]>,
 }
 
 impl IpRateLimiter {
@@ -218,42 +222,70 @@ impl IpRateLimiter {
             redis,
             rpm: config.rate_limit_rpm,
             enabled: config.rate_limit_enabled,
+            trusted_proxies: parse_trusted_proxies(&config.trusted_proxy_cidrs_list()),
         }
     }
 }
 
-/// Extract the client IP address from the request.
+/// Parse CIDR strings (bare IPs allowed as /32 or /128) into networks.
+/// Invalid entries are dropped with a warning — failing closed: an unparsed
+/// entry means less trust, never more.
+fn parse_trusted_proxies(cidrs: &[String]) -> Arc<[IpNet]> {
+    cidrs
+        .iter()
+        .filter_map(|s| {
+            s.parse::<IpNet>()
+                .or_else(|_| s.parse::<IpAddr>().map(IpNet::from))
+                .map_err(|_| {
+                    tracing::warn!(entry = %s, "TRUSTED_PROXY_CIDRS: invalid entry ignored");
+                })
+                .ok()
+        })
+        .collect()
+}
+
+fn is_trusted_proxy(ip: IpAddr, trusted: &[IpNet]) -> bool {
+    trusted.iter().any(|net| net.contains(&ip))
+}
+
+/// Extract the client IP address used as the rate-limit bucket key.
 ///
-/// Priority: ConnectInfo (direct socket) > X-Forwarded-For > X-Real-IP > "unknown".
-fn extract_client_ip(request: &Request<Body>) -> String {
-    // Prefer the direct socket address when available -- immune to header spoofing.
-    // In production behind a reverse proxy, ConnectInfo will be the proxy's IP.
-    // Configure the proxy to set X-Forwarded-For and only trust it from known CIDRs.
-    if let Some(connect_info) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        return connect_info.0.ip().to_string();
+/// - Socket IP not in a trusted proxy CIDR (or no proxies configured): use the
+///   socket IP and ignore forwarded headers entirely — spoof-proof.
+/// - Socket IP is a trusted proxy: scan X-Forwarded-For right-to-left and take
+///   the first entry that is not itself a trusted proxy (rightmost-untrusted;
+///   the leftmost values are client-controlled and never trusted blindly).
+///   Missing/all-trusted XFF falls back to the socket IP.
+/// - No socket info at all: "unknown" (shared bucket, fail-safe).
+fn extract_client_ip(request: &Request<Body>, trusted_proxies: &[IpNet]) -> String {
+    let Some(connect_info) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
+        return "unknown".to_string();
+    };
+    let socket_ip = connect_info.0.ip();
+
+    if !is_trusted_proxy(socket_ip, trusted_proxies) {
+        return socket_ip.to_string();
     }
 
-    // Fallback: forwarded headers (only reliable when behind a trusted proxy)
     if let Some(xff) = request.headers().get("x-forwarded-for")
         && let Ok(value) = xff.to_str()
-        && let Some(first_ip) = value.split(',').next()
     {
-        let ip = first_ip.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
+        for entry in value.rsplit(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            match entry.parse::<IpAddr>() {
+                Ok(ip) if is_trusted_proxy(ip, trusted_proxies) => continue,
+                Ok(ip) => return ip.to_string(),
+                // Non-IP entry appended by a trusted proxy: keep it as the
+                // bucket key rather than trusting anything further left.
+                Err(_) => return entry.to_string(),
+            }
         }
     }
 
-    if let Some(real_ip) = request.headers().get("x-real-ip")
-        && let Ok(value) = real_ip.to_str()
-    {
-        let ip = value.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
-        }
-    }
-
-    "unknown".to_string()
+    socket_ip.to_string()
 }
 
 /// Middleware that enforces per-IP rate limiting using Redis.
@@ -269,7 +301,7 @@ pub async fn ip_rate_limit(
         return next.run(request).await;
     }
 
-    let client_ip = extract_client_ip(&request);
+    let client_ip = extract_client_ip(&request, &limiter.trusted_proxies);
 
     // Build Redis key: ip_rl:{ip}:{YYYYMMDDHHMM}
     let minute = chrono::Utc::now().format("%Y%m%d%H%M").to_string();
@@ -371,42 +403,83 @@ mod tests {
 
     // -- IP extraction tests --
 
-    #[test]
-    fn extract_ip_from_xff_header() {
-        let req = Request::builder()
-            .header(
-                "x-forwarded-for",
-                "203.0.113.50, 70.41.3.18, 150.172.238.178",
-            )
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(extract_client_ip(&req), "203.0.113.50");
+    fn proxies(cidrs: &[&str]) -> Vec<IpNet> {
+        parse_trusted_proxies(&cidrs.iter().map(|s| s.to_string()).collect::<Vec<_>>()).to_vec()
+    }
+
+    fn request_from(socket_ip: &str, xff: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().extension(ConnectInfo(SocketAddr::new(
+            socket_ip.parse().unwrap(),
+            12345,
+        )));
+        if let Some(xff) = xff {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        builder.body(Body::empty()).unwrap()
     }
 
     #[test]
-    fn extract_ip_from_x_real_ip() {
-        let req = Request::builder()
-            .header("x-real-ip", "10.0.0.1")
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(extract_client_ip(&req), "10.0.0.1");
+    fn direct_client_uses_socket_ip_ignoring_spoofed_xff() {
+        // No trusted proxies configured: XFF is attacker-controlled, ignore it.
+        let req = request_from("203.0.113.50", Some("1.2.3.4"));
+        assert_eq!(extract_client_ip(&req, &[]), "203.0.113.50");
     }
 
     #[test]
-    fn extract_ip_xff_takes_priority() {
-        // ConnectInfo is not set in this test (Request::builder doesn't add extensions),
-        // so XFF is used as the first available fallback, which still takes priority over X-Real-IP.
+    fn untrusted_socket_ignores_xff_even_with_proxies_configured() {
+        let trusted = proxies(&["10.0.0.0/8"]);
+        let req = request_from("203.0.113.50", Some("1.2.3.4"));
+        assert_eq!(extract_client_ip(&req, &trusted), "203.0.113.50");
+    }
+
+    #[test]
+    fn trusted_proxy_resolves_rightmost_untrusted() {
+        let trusted = proxies(&["10.0.0.0/8"]);
+        // Spoofed leftmost entry must not win; the rightmost untrusted entry
+        // (appended by the proxy) is the real client.
+        let req = request_from("10.0.0.1", Some("1.2.3.4, 198.51.100.7"));
+        assert_eq!(extract_client_ip(&req, &trusted), "198.51.100.7");
+    }
+
+    #[test]
+    fn trusted_proxy_chain_skips_trusted_hops() {
+        let trusted = proxies(&["10.0.0.0/8", "192.168.1.1"]);
+        let req = request_from("10.0.0.1", Some("198.51.100.7, 192.168.1.1, 10.0.0.2"));
+        assert_eq!(extract_client_ip(&req, &trusted), "198.51.100.7");
+    }
+
+    #[test]
+    fn trusted_proxy_without_xff_falls_back_to_socket_ip() {
+        let trusted = proxies(&["10.0.0.0/8"]);
+        assert_eq!(
+            extract_client_ip(&request_from("10.0.0.1", None), &trusted),
+            "10.0.0.1"
+        );
+        assert_eq!(
+            extract_client_ip(&request_from("10.0.0.1", Some("")), &trusted),
+            "10.0.0.1"
+        );
+    }
+
+    #[test]
+    fn all_trusted_xff_falls_back_to_socket_ip() {
+        let trusted = proxies(&["10.0.0.0/8"]);
+        let req = request_from("10.0.0.1", Some("10.0.0.2, 10.0.0.3"));
+        assert_eq!(extract_client_ip(&req, &trusted), "10.0.0.1");
+    }
+
+    #[test]
+    fn no_connect_info_is_unknown() {
         let req = Request::builder()
             .header("x-forwarded-for", "1.2.3.4")
-            .header("x-real-ip", "5.6.7.8")
             .body(Body::empty())
             .unwrap();
-        assert_eq!(extract_client_ip(&req), "1.2.3.4");
+        assert_eq!(extract_client_ip(&req, &[]), "unknown");
     }
 
     #[test]
-    fn extract_ip_fallback_to_unknown() {
-        let req = Request::builder().body(Body::empty()).unwrap();
-        assert_eq!(extract_client_ip(&req), "unknown");
+    fn invalid_cidr_entries_dropped() {
+        let trusted = proxies(&["not-a-cidr", "10.0.0.0/8"]);
+        assert_eq!(trusted.len(), 1);
     }
 }

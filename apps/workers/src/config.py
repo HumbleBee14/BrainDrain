@@ -5,6 +5,14 @@ from pydantic_settings import BaseSettings
 class WorkerSettings(BaseSettings):
     """Worker configuration loaded from environment variables."""
 
+    # Deployment environment: "development" | "production"
+    environment: str = "development"
+
+    # Fetch-time SSRF re-validation of tenant-supplied LLM base URLs
+    # (see src/url_guard.py). None = enabled only when environment=production,
+    # so dev keeps working against localhost endpoints.
+    url_guard_enabled: bool | None = None
+
     # Temporal
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
