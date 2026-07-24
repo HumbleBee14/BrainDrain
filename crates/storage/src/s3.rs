@@ -2,7 +2,7 @@ use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use std::time::Duration;
@@ -316,6 +316,69 @@ impl ObjectStorage for S3Storage {
 
         tracing::debug!(key = key, "Object deleted from S3");
         Ok(())
+    }
+
+    async fn delete_prefix(&self, prefix: &str) -> Result<usize, StorageError> {
+        let mut deleted = 0usize;
+        let mut continuation: Option<String> = None;
+
+        loop {
+            let mut req = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(prefix);
+            if let Some(token) = &continuation {
+                req = req.continuation_token(token);
+            }
+
+            let page = req
+                .send()
+                .await
+                .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
+
+            // S3 returns at most 1000 keys per page; delete_objects accepts up to
+            // 1000, so one page maps to one batched delete.
+            let ids: Vec<ObjectIdentifier> = page
+                .contents()
+                .iter()
+                .filter_map(|o| o.key())
+                .map(|key| {
+                    ObjectIdentifier::builder()
+                        .key(key)
+                        .build()
+                        .map_err(|e| StorageError::DeleteFailed(e.to_string()))
+                })
+                .collect::<Result<_, _>>()?;
+
+            if !ids.is_empty() {
+                let count = ids.len();
+                let delete = Delete::builder()
+                    .set_objects(Some(ids))
+                    .build()
+                    .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
+                self.client
+                    .delete_objects()
+                    .bucket(&self.bucket)
+                    .delete(delete)
+                    .send()
+                    .await
+                    .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
+                deleted += count;
+            }
+
+            if page.is_truncated().unwrap_or(false) {
+                continuation = page.next_continuation_token().map(str::to_string);
+                if continuation.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        tracing::debug!(prefix = prefix, deleted = deleted, "Prefix deleted from S3");
+        Ok(deleted)
     }
 
     async fn presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String, StorageError> {
