@@ -217,14 +217,43 @@ extra commentary, explanations, or markdown outside the JSON object.
         return prompt
 
     @staticmethod
-    def faithfulness_prompt(prompt: str, response: str, source_text: str) -> str:
+    def faithfulness_prompt(
+        prompt: str,
+        response: str,
+        source_text: str,
+        calibration: list[RatedSample] | None = None,
+    ) -> str:
         """Binary faithfulness judge prompt (FaithJudge-style).
 
         Asks a reasoning-capable judge model for a strict Consistent /
         Hallucinated verdict grounded ONLY in `source_text` — general
         knowledge or assumptions beyond the given text must not be used to
         justify the response.
+
+        `calibration` (optional) renders human-rated examples as a few-shot
+        block so the judge's quality bar aligns with the human reviewer's.
+        With no examples the output is byte-identical to the uncalibrated
+        prompt.
         """
+        calibration_block = ""
+        if calibration:
+            examples = ""
+            for i, sample in enumerate(calibration, 1):
+                verdict = "acceptable" if sample.looks_good else "below-the-bar"
+                examples += f"""<example_{i} verdict="{verdict}">
+<prompt>{xml_escape(sample.prompt)}</prompt>
+<response>{xml_escape(sample.response)}</response>
+</example_{i}>
+"""
+            calibration_block = f"""
+## Calibration Examples
+A human reviewer for this project rated these generated examples. Use them
+to calibrate how strict to be: responses comparable in quality and grounding
+to the acceptable examples should pass; responses with the flaws seen in the
+below-the-bar examples should fail.
+<calibration_examples>
+{examples}</calibration_examples>
+"""
         return f"""You are a **faithfulness judge** for a retrieval-augmented \
 generation pipeline.
 
@@ -256,7 +285,7 @@ outside/general knowledge to excuse an unsupported claim.
 <response>
 {xml_escape(response)}
 </response>
-
+{calibration_block}
 ### Output Format
 Return a single JSON object with this exact structure:
 ```json

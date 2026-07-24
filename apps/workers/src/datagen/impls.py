@@ -18,6 +18,45 @@ from src.datagen.protocols import Facet, FaithfulnessVerdict, GeneratedPair, Rat
 
 LlmCall = Callable[[str], Awaitable[str]]
 
+# Per-verdict cap so a long rating history can't blow up the judge prompt.
+MAX_CALIBRATION_PER_VERDICT = 4
+
+
+def select_calibration_examples(rated: list[dict] | None) -> list[RatedSample]:
+    """Cap and clean human ratings used to calibrate the faithfulness judge.
+
+    Keeps at most MAX_CALIBRATION_PER_VERDICT accepted and as many rejected
+    examples, preferring the most recent, skipping entries with an empty
+    prompt or response. Original order is preserved in the result.
+    """
+    if not rated:
+        return []
+    good = bad = 0
+    selected: list[RatedSample] = []
+    for entry in reversed(rated):
+        if not isinstance(entry, dict):
+            continue
+        prompt = entry.get("prompt")
+        response = entry.get("response")
+        looks_good = entry.get("looks_good")
+        if not isinstance(prompt, str) or not prompt.strip():
+            continue
+        if not isinstance(response, str) or not response.strip():
+            continue
+        if not isinstance(looks_good, bool):
+            continue
+        if looks_good:
+            if good >= MAX_CALIBRATION_PER_VERDICT:
+                continue
+            good += 1
+        else:
+            if bad >= MAX_CALIBRATION_PER_VERDICT:
+                continue
+            bad += 1
+        selected.append(RatedSample(prompt=prompt, response=response, looks_good=looks_good))
+    selected.reverse()
+    return selected
+
 
 def _parse_json_object(raw: str, *, required_keys: tuple[str, ...]) -> dict:
     """Parse `raw` as a JSON object containing every key in `required_keys`.
@@ -198,13 +237,21 @@ class LlmGuidanceRefiner:
 
 
 class LlmFaithfulnessScorer:
-    """Default FaithfulnessScorer: renders the faithfulness-judge prompt and parses the verdict."""
+    """Default FaithfulnessScorer: renders the faithfulness-judge prompt and parses the verdict.
 
-    def __init__(self, llm_call: LlmCall):
+    `calibration` (optional raw `{prompt, response, looks_good}` dicts) is
+    capped/cleaned once here and rendered into every judge prompt as few-shot
+    examples of the human reviewer's quality bar.
+    """
+
+    def __init__(self, llm_call: LlmCall, calibration: list[dict] | None = None):
         self.llm_call = llm_call
+        self.calibration = select_calibration_examples(calibration)
 
     async def score(self, *, pair: GeneratedPair, source_text: str) -> FaithfulnessVerdict:
-        prompt = PromptLibrary.faithfulness_prompt(pair.prompt, pair.response, source_text)
+        prompt = PromptLibrary.faithfulness_prompt(
+            pair.prompt, pair.response, source_text, calibration=self.calibration
+        )
         raw = await self.llm_call(prompt)
         data = _parse_json_object(raw, required_keys=("consistent", "score", "reason"))
         return FaithfulnessVerdict(

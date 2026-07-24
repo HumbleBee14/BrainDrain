@@ -218,6 +218,7 @@ class GenerateDatasetWorkflow:
         facets: list[dict] | None,
         document_ids: list[str],
         system_prompt: str = "",
+        rated: list[dict] | None = None,
     ) -> BuildDatasetOutput:
         try:
             chunk_result = await workflow.execute_activity(
@@ -245,6 +246,7 @@ class GenerateDatasetWorkflow:
                         task_type=task_type,
                         guidance=guidance,
                         facets=facets,
+                        rated=rated or [],
                     ),
                     start_to_close_timeout=timeouts.generate_pairs_activity(),
                     retry_policy=RetryPolicy(maximum_attempts=2),
