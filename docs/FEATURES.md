@@ -282,3 +282,42 @@ responses with these rejected flaws should fail").
 - `apps/workers/src/activities/generate_pairs.py` (input field + scorer wiring)
 - `apps/workers/src/datagen/impls.py` (`select_calibration_examples`,
   `LlmFaithfulnessScorer`), `prompts.py` (`faithfulness_prompt`)
+
+---
+
+## Tool-Calling Fine-Tuning
+
+**Purpose:** fine-tune on agent/tool-call trajectories, not just plain chat.
+Imported conversations with assistant `tool_calls`, `role: "tool"` results,
+and a top-level `tools` schema train and evaluate without losing the tool
+data.
+
+### What's supported
+
+- **Import → SFT:** JSONL import already preserves tool trajectories verbatim;
+  the training loader now also keeps each record's top-level `tools` schema,
+  and SFT renders the full trajectory (tool-call turns, tool results) through
+  the model's own chat template with `tools` passed to
+  `apply_chat_template` — so training matches serve-time formatting for
+  tool-calling models.
+- **Fallback template:** the ChatML fallback (installed only when a base
+  model ships no chat template) renders assistant `tool_calls` as
+  `<tool_call>{"name": ..., "arguments": ...}</tool_call>` blocks (null
+  content handled) and `role: "tool"` turns as their own ChatML block. Plain
+  messages render exactly as before.
+- **Eval / DPO / GRPO skip semantics:** these paths need a text-bearing final
+  assistant turn (a gold answer to score or prefer). Records whose final turn
+  is a pure tool call or tool result are skipped — counted and logged (eval
+  suites also report `skipped_samples`), never silently dropped or crashed
+  on. Prompts that do render pass the record's `tools` through to the
+  template.
+- **Import visibility:** dataset stats record `tool_records` — how many
+  imported records carry tool data (top-level `tools` or any `tool_calls`).
+
+### Files
+
+`apps/workers/src/activities/chat_template.py` (`render_chat` tools
+forwarding, fallback template), `train_model.py` (loader, SFT/DPO/GRPO
+rendering), `run_evaluation.py` (skip + tools threading),
+`crates/api/src/services/jsonl_import.rs` (`tool_records` count),
+`dataset_service.rs` (stats wiring).
