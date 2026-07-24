@@ -12,11 +12,27 @@
   "observability": {
     "enabled": true
   },
-  // Non-secret public config. Set CLERK_SECRET_KEY via `wrangler secret put`
-  // (or the dashboard) — never commit it here.
+  // ── ENV VARS: two scopes, do not confuse them ─────────────────────────
+  // BUILD-time (dash → Settings → Build → Variables and secrets): every
+  //   NEXT_PUBLIC_* the browser bundle uses is INLINED during `next build`, so
+  //   it must exist there too. Missing ones do NOT fail the build — they become
+  //   `undefined` and the client breaks silently.
+  //
+  // RUNTIME (deployed Worker env): the `vars` below are declaratively owned by
+  //   this file (wrangler deploy overwrites the runtime plaintext set to exactly
+  //   this list). Non-secret public config — incl. the Clerk PUBLISHABLE key,
+  //   which is public by design (it ships in the browser bundle) — lives here.
+  //
+  //   The ONLY value that must NOT live here is the secret:
+  //     - CLERK_SECRET_KEY → runtime SECRET. clerkMiddleware needs it at runtime
+  //       on EVERY request; without it every route 500s and sign-in is
+  //       unreachable. Set it via `wrangler secret put CLERK_SECRET_KEY`
+  //       (secrets persist across deploys and are never committed here).
   "vars": {
     "NEXT_PUBLIC_APP_NAME": "Ekcron",
+    "NEXT_PUBLIC_API_URL": "https://api.ekcron.com",
     "NEXT_PUBLIC_MARKETING_URL": "https://ekcron.com",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsuZWtjcm9uLmNvbSQ",
     "NEXT_PUBLIC_CLERK_SIGN_IN_URL": "/sign-in",
     "NEXT_PUBLIC_CLERK_SIGN_UP_URL": "/sign-up",
     "NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL": "/dashboard",
