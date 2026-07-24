@@ -1,10 +1,7 @@
-/// Temporal task queue for orchestration workflows and CPU activities. All
-/// workflows START here; GPU-bound activities pin themselves to the GPU queue
-/// from inside the workflow definitions.
+/// Default task queue: all workflows start here.
 pub const TEMPORAL_TASK_QUEUE_MAIN: &str = "ml-pipeline";
 
-/// Temporal task queue for GPU-bound activities (training, evaluation).
-/// Referenced by the Python workflows' per-activity `task_queue=` pins.
+/// GPU activity queue — targeted by per-activity `task_queue=` pins in workflows.
 #[allow(dead_code)]
 pub const TEMPORAL_TASK_QUEUE_GPU: &str = "ml-pipeline-gpu";
 

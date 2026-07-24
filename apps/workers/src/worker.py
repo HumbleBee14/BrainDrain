@@ -240,11 +240,8 @@ async def main() -> None:
         GenerateDatasetWorkflow,
     ]
 
-    # Queue architecture: workflows (lightweight coordinators) always run on
-    # the default queue; GPU-bound activities pin themselves to the GPU queue
-    # inside each workflow (`task_queue="ml-pipeline-gpu"`). A worker therefore
-    # needs to poll BOTH queues in "all" mode, or exactly its half in split
-    # mode — otherwise pinned GPU activities are never picked up.
+    # Workflows run on the default queue; GPU activities pin themselves to the
+    # GPU queue — so "all" mode must poll both.
     mode = settings.worker_mode
     gpu_queue = "ml-pipeline-gpu"
 

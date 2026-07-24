@@ -164,15 +164,18 @@ class ExportGgufActivity:
         """
 
         def _do_merge():
+            # Deferred: [ml] extra deps — top-level would crash non-ML workers at boot.
             import torch
             from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             tokenizer = AutoTokenizer.from_pretrained(base_model)
+            # CPU on purpose: merge is memory-bound; device_map="auto" crashes on
+            # non-CUDA hosts. fp16 is only the intermediate; quant_type decides precision.
             model = AutoModelForCausalLM.from_pretrained(
                 base_model,
                 torch_dtype=torch.float16,
-                device_map="auto",
+                device_map={"": "cpu"},
             )
 
             model = PeftModel.from_pretrained(model, adapter_dir)

@@ -13,15 +13,10 @@ from src.config import WorkerSettings
 
 
 def _s() -> WorkerSettings:
-    """Lazy singleton — avoids importing at module level before settings are loaded.
-
-    Called from inside workflow code, so the infra import must escape the
-    Temporal workflow sandbox: `src.infra` pulls in asyncpg, whose import
-    touches `platform.uname()` and is rejected by the sandbox otherwise.
-    Outside a workflow the escape is a no-op.
-    """
+    """Lazy singleton — avoids importing at module level before settings are loaded."""
     from temporalio import workflow
 
+    # Sandbox escape: src.infra→asyncpg is rejected by the workflow sandbox.
     with workflow.unsafe.imports_passed_through():
         from src.infra import get_container
 
