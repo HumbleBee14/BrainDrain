@@ -114,6 +114,28 @@ pub async fn finalize_stream_pending(
     Ok(())
 }
 
+/// Cancel a pending reservation that will never be finalized because no
+/// billable work occurred (e.g. the upstream inference call failed).
+///
+/// Best-effort: only removes rows still pending and undelivered. A failure here
+/// merely leaves the row for the reaper to deliver as the conservative
+/// fallback, so we log and swallow rather than fail the caller.
+pub async fn cancel_stream_pending(db: &PgPool, row_id: Uuid) {
+    let result = sqlx::query(
+        "DELETE FROM billing_outbox \
+         WHERE id = $1 \
+           AND delivered_at IS NULL \
+           AND COALESCE((metadata->>'stream_pending')::boolean, false) = true",
+    )
+    .bind(row_id)
+    .execute(db)
+    .await;
+
+    if let Err(e) = result {
+        tracing::error!(error = %e, row_id = %row_id, "Failed to cancel pending billing reservation");
+    }
+}
+
 /// Enqueue into billing_outbox within an existing transaction.
 #[allow(clippy::too_many_arguments)]
 pub async fn enqueue_in_tx(
