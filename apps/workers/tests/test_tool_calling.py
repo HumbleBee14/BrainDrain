@@ -252,16 +252,13 @@ class TestRenderSftDataset:
         ]
 
 
-class TestGrpoPromptsToolSkips:
-    def test_skips_tool_call_final_and_logs_count(self, tm, caplog):
+class TestGrpoPromptsToolRecords:
+    def test_tool_call_final_is_kept_with_reference(self, tm, caplog):
         tok = _Tok()
+        ref = [{"function": {"name": "get_weather", "arguments": "{}"}}]
         tool_final = [
             {"role": "user", "content": "weather?"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"function": {"name": "get_weather", "arguments": "{}"}}],
-            },
+            {"role": "assistant", "content": None, "tool_calls": ref},
         ]
         normal = [
             {"role": "user", "content": "2+2?"},
@@ -272,14 +269,25 @@ class TestGrpoPromptsToolSkips:
         with caplog.at_level("WARNING"):
             out = tm._create_grpo_prompts(dataset, tok)
 
-        assert out.rows == [{"prompt": "[user]2+2?[gen]"}]
-        assert "skipped 1" in caplog.text
+        # The tool-call final trains via the verifiable reward instead of
+        # being skipped: the final turn becomes the reference, not the prompt.
+        assert out.rows == [
+            {
+                "prompt": "[user]weather?[gen]",
+                "tools_json": "",
+                "ref_calls_json": json.dumps(ref),
+            },
+            {"prompt": "[user]2+2?[gen]", "tools_json": "", "ref_calls_json": ""},
+        ]
+        assert "skipped" not in caplog.text
 
     def test_prompt_only_records_still_fall_back(self, tm):
         tok = _Tok()
         dataset = {"messages": [[{"role": "user", "content": "just a prompt"}]]}
         out = tm._create_grpo_prompts(dataset, tok)
-        assert out.rows == [{"prompt": "[user]just a prompt[gen]"}]
+        assert out.rows == [
+            {"prompt": "[user]just a prompt[gen]", "tools_json": "", "ref_calls_json": ""}
+        ]
 
     def test_threads_tools_into_prompt(self, tm):
         tok = _ToolTok()
@@ -288,7 +296,13 @@ class TestGrpoPromptsToolSkips:
             "tools": [TOOLS],
         }
         out = tm._create_grpo_prompts(dataset, tok)
-        assert out.rows == [{"prompt": "[tools:1][user][gen]"}]
+        assert out.rows == [
+            {
+                "prompt": "[tools:1][user][gen]",
+                "tools_json": json.dumps(TOOLS),
+                "ref_calls_json": "",
+            }
+        ]
 
 
 class TestEvalToolTrajectories:

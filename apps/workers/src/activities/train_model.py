@@ -1039,6 +1039,41 @@ def _train_dpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config
 # -- GRPO Training --
 
 
+def _build_grpo_reward(judge):
+    """Build the GRPO reward function with per-record dispatch.
+
+    A record whose gold turn is a tool call is scored deterministically
+    against its schema and reference; everything else keeps the LLM-judge
+    reasoning reward. Both live on [-1, 1], and GRPO compares rewards only
+    within a prompt's generation group, so mixed datasets are fine.
+    """
+    from src.activities.tool_call_reward import score_tool_call_completion
+
+    def reasoning_reward(
+        completions: list[str],
+        tools_json: list[str] | None = None,
+        ref_calls_json: list[str] | None = None,
+        **kwargs,
+    ) -> list[float]:
+        rewards = []
+        for i, completion in enumerate(completions):
+            ref_raw = ref_calls_json[i] if ref_calls_json else ""
+            if ref_raw:
+                tools_raw = tools_json[i] if tools_json else ""
+                rewards.append(
+                    score_tool_call_completion(
+                        completion,
+                        tools=json.loads(tools_raw) if tools_raw else [],
+                        reference_calls=json.loads(ref_raw),
+                    )
+                )
+            else:
+                rewards.append(judge.score_reasoning(completion))
+        return rewards
+
+    return reasoning_reward
+
+
 def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_config, settings=None):
     """Run GRPO (Group Relative Policy Optimization) for reasoning tasks."""
     from trl import GRPOConfig, GRPOTrainer
@@ -1073,8 +1108,7 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_confi
         on_failure=getattr(settings, "judge_on_failure", "error"),
     )
 
-    def reasoning_reward(completions: list[str], **kwargs) -> list[float]:
-        return [judge.score_reasoning(c) for c in completions]
+    reasoning_reward = _build_grpo_reward(judge)
 
     trainer = GRPOTrainer(
         model=model,
@@ -1503,32 +1537,56 @@ def _create_grpo_prompts(dataset, tokenizer):
 
     prompts = []
     skipped_no_gold = 0
+    tool_records = 0
     messages_list = dataset["messages"]
     tools_list = _dataset_column(dataset, "tools") or [None] * len(messages_list)
     for messages, tools in zip(messages_list, tools_list):
+        ref_calls = []
         prompt_messages, _gold = split_prompt_and_response(messages)
         if prompt_messages is None:
-            # A conversation whose final assistant turn carries no text (e.g. a
-            # pure tool-call final) has no reference completion — skip it. Only
-            # truly prompt-only records (no assistant turn at all) fall back to
-            # the whole conversation.
-            if any(m.get("role") == "assistant" for m in messages):
+            last = messages[-1] if messages else {}
+            if last.get("role") == "assistant" and last.get("tool_calls"):
+                # A pure tool-call final has no gold text, but it can be scored
+                # verifiably against the reference call — train on it instead
+                # of skipping.
+                prompt_messages = messages[:-1]
+                ref_calls = last["tool_calls"]
+                tool_records += 1
+            elif any(m.get("role") == "assistant" for m in messages):
+                # A final assistant turn with neither text nor tool calls has
+                # nothing to learn from. Only truly prompt-only records (no
+                # assistant turn at all) fall back to the whole conversation.
                 skipped_no_gold += 1
                 continue
-            prompt_messages = messages
+            else:
+                prompt_messages = messages
         if not prompt_messages:
             continue
         prompt_text = render_chat(
             tokenizer, prompt_messages, add_generation_prompt=True, tools=tools
         )
         if prompt_text:
-            prompts.append({"prompt": prompt_text})
+            # Tool/reference context rides along as JSON strings: Arrow does
+            # not have to unify heterogeneous schema dicts across records, and
+            # TRL hands the columns back to the reward function per sample.
+            prompts.append(
+                {
+                    "prompt": prompt_text,
+                    "tools_json": json.dumps(tools) if tools else "",
+                    "ref_calls_json": json.dumps(ref_calls) if ref_calls else "",
+                }
+            )
 
     if skipped_no_gold:
         logger.warning(
             "GRPO: skipped %d record(s) whose final assistant turn has no text content "
-            "(e.g. pure tool-call finals)",
+            "and no tool calls",
             skipped_no_gold,
+        )
+    if tool_records:
+        logger.info(
+            "GRPO: %d tool-call record(s) will use the verifiable tool-call reward",
+            tool_records,
         )
 
     return Dataset.from_list(prompts) if prompts else dataset
