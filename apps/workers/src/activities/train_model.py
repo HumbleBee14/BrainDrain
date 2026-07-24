@@ -1325,21 +1325,42 @@ def _load_chatml_dataset(path: Path):
             line = line.strip()
             if line:
                 record = json.loads(line)
-                rows.append({"messages": record.get("messages", [])})
+                # Keep each record's tool schema (empty when absent) so tool-call
+                # trajectories render with their tool definitions downstream.
+                rows.append(
+                    {
+                        "messages": record.get("messages", []),
+                        "tools": record.get("tools", []),
+                    }
+                )
 
     return Dataset.from_list(rows)
+
+
+def _dataset_column(dataset, name):
+    """A dataset column's values, or None when the column does not exist."""
+    try:
+        return dataset[name]
+    except KeyError:
+        return None
 
 
 def _render_sft_dataset(dataset, tokenizer):
     """Render a messages-form dataset into `{"text": ...}` for SFT / eval.
 
     Uses the model's own chat template so the full supervised example (prompt +
-    assistant turn + the template's EOS) matches serve-time formatting.
+    assistant turn + the template's EOS) matches serve-time formatting. The
+    record's `tools` schema is forwarded so tool-call trajectories train with
+    their tool definitions rendered exactly as at serve time.
     """
     from src.activities.chat_template import render_chat
 
     def _map(row):
-        return {"text": render_chat(tokenizer, row["messages"], add_generation_prompt=False)}
+        return {
+            "text": render_chat(
+                tokenizer, row["messages"], add_generation_prompt=False, tools=row.get("tools")
+            )
+        }
 
     return dataset.map(_map, remove_columns=[c for c in dataset.column_names if c != "text"])
 
@@ -1390,9 +1411,11 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
     chosen_texts: list[str] = []
     rejected_texts: list[str] = []
     dropped = 0
+    skipped_no_gold = 0
 
     messages_list = dataset["messages"]
-    for messages in messages_list:
+    tools_list = _dataset_column(dataset, "tools") or [None] * len(messages_list)
+    for messages, tools in zip(messages_list, tools_list):
         if max_pairs is not None and len(chosen_texts) >= max_pairs:
             break
 
@@ -1401,11 +1424,14 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
         # ChatML and broke on every other model's template).
         prompt_messages, gold = split_prompt_and_response(messages)
         if prompt_messages is None:
+            skipped_no_gold += 1
             continue
 
         # Format the prompt with the model's own template so the sampled
         # ("rejected") response is generated exactly as the model is served.
-        gen_prompt = render_chat(tokenizer, prompt_messages, add_generation_prompt=True)
+        gen_prompt = render_chat(
+            tokenizer, prompt_messages, add_generation_prompt=True, tools=tools
+        )
         sampled = inference.generate(model, tokenizer, gen_prompt, max_new_tokens=max_new_tokens)
         sampled = sampled.strip()
 
@@ -1425,12 +1451,26 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
         # chosen/rejected are the full templated conversations (prompt + turn),
         # sharing the gen_prompt prefix so the only difference is the answer.
         chosen_texts.append(
-            render_chat(tokenizer, [*prompt_messages, {"role": "assistant", "content": gold}])
+            render_chat(
+                tokenizer,
+                [*prompt_messages, {"role": "assistant", "content": gold}],
+                tools=tools,
+            )
         )
         rejected_texts.append(
-            render_chat(tokenizer, [*prompt_messages, {"role": "assistant", "content": sampled}])
+            render_chat(
+                tokenizer,
+                [*prompt_messages, {"role": "assistant", "content": sampled}],
+                tools=tools,
+            )
         )
 
+    if skipped_no_gold:
+        logger.warning(
+            "DPO: skipped %d record(s) whose final assistant turn has no text content "
+            "(e.g. pure tool-call finals) — DPO needs a gold text response",
+            skipped_no_gold,
+        )
     logger.info(
         "DPO on-policy pairs: kept=%d dropped=%d (of %d examples)",
         len(chosen_texts),
@@ -1462,17 +1502,34 @@ def _create_grpo_prompts(dataset, tokenizer):
     from src.activities.chat_template import render_chat, split_prompt_and_response
 
     prompts = []
-    for messages in dataset["messages"]:
+    skipped_no_gold = 0
+    messages_list = dataset["messages"]
+    tools_list = _dataset_column(dataset, "tools") or [None] * len(messages_list)
+    for messages, tools in zip(messages_list, tools_list):
         prompt_messages, _gold = split_prompt_and_response(messages)
-        # Fall back to the whole conversation when there is no trailing assistant
-        # turn (e.g. prompt-only GRPO datasets).
         if prompt_messages is None:
+            # A conversation whose final assistant turn carries no text (e.g. a
+            # pure tool-call final) has no reference completion — skip it. Only
+            # truly prompt-only records (no assistant turn at all) fall back to
+            # the whole conversation.
+            if any(m.get("role") == "assistant" for m in messages):
+                skipped_no_gold += 1
+                continue
             prompt_messages = messages
         if not prompt_messages:
             continue
-        prompt_text = render_chat(tokenizer, prompt_messages, add_generation_prompt=True)
+        prompt_text = render_chat(
+            tokenizer, prompt_messages, add_generation_prompt=True, tools=tools
+        )
         if prompt_text:
             prompts.append({"prompt": prompt_text})
+
+    if skipped_no_gold:
+        logger.warning(
+            "GRPO: skipped %d record(s) whose final assistant turn has no text content "
+            "(e.g. pure tool-call finals)",
+            skipped_no_gold,
+        )
 
     return Dataset.from_list(prompts) if prompts else dataset
 

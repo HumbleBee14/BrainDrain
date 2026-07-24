@@ -215,6 +215,7 @@ impl DatasetService {
             serde_json::json!({
                 "source": "openai_import",
                 "rejected_rows": parsed.rejected_rows,
+                "tool_records": parsed.tool_records,
             }),
         )
         .await?;

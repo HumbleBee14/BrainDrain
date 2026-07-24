@@ -364,16 +364,16 @@ class DomainSuite:
         completeness_scores = []
         faithfulness_scores = []
         samples = []
+        skipped = 0
 
         for item in val_dataset[:50]:
-            messages = item.get("messages", [])
-            if len(messages) < 2:
+            split = _prompt_and_expected(item)
+            if split is None:
+                skipped += 1
                 continue
+            prompt_msgs, expected, tools = split
 
-            prompt_msgs = messages[:-1]
-            expected = messages[-1].get("content", "")
-
-            prompt_text = _format_prompt(tok_ft, prompt_msgs)
+            prompt_text = _render_eval_prompt(tok_ft, prompt_msgs, tools)
             generated = _generate(model_ft, tok_ft, prompt_text)
 
             rubric = judge.score_domain(prompt_text, generated, expected)
@@ -408,9 +408,16 @@ class DomainSuite:
             acc = comp = faith = 0.0
             mean = None
 
+        if skipped:
+            logger.warning(
+                "Domain suite: skipped %d sample(s) without a content-bearing "
+                "final assistant turn (e.g. tool-call trajectories)",
+                skipped,
+            )
+
         return (
             {"accuracy": acc, "completeness": comp, "faithfulness": faith, "mean": mean},
-            {"num_samples": len(samples), "samples": samples[:10]},
+            {"num_samples": len(samples), "skipped_samples": skipped, "samples": samples[:10]},
         )
 
 
@@ -518,6 +525,7 @@ class ABComparisonSuite:
         ties = 0
         losses = 0
         total = 0
+        skipped = 0
         comparisons = []
 
         # Seed A/B position assignment from a fixed seed: positions still vary
@@ -527,12 +535,12 @@ class ABComparisonSuite:
         rng = random.Random(_AB_POSITION_SEED)
 
         for item in samples:
-            messages = item.get("messages", [])
-            if len(messages) < 2:
+            split = _prompt_and_expected(item)
+            if split is None:
+                skipped += 1
                 continue
-
-            prompt_msgs = messages[:-1]
-            prompt_text = _format_prompt(tok_ft, prompt_msgs)
+            prompt_msgs, _expected, tools = split
+            prompt_text = _render_eval_prompt(tok_ft, prompt_msgs, tools)
 
             ft_response = _generate(model_ft, tok_ft, prompt_text)
             base_response = _generate(model_base, tok_base, prompt_text)
@@ -566,6 +574,13 @@ class ABComparisonSuite:
             if total % 10 == 0:
                 activity.heartbeat(f"ab_{total}/{len(samples)}")
 
+        if skipped:
+            logger.warning(
+                "A/B suite: skipped %d sample(s) without a content-bearing "
+                "final assistant turn (e.g. tool-call trajectories)",
+                skipped,
+            )
+
         # Ties count as neutral (half a win) rather than losses; the confidence
         # interval is computed over decisive comparisons only.
         win_rate = (wins + 0.5 * ties) / max(1, total)
@@ -582,7 +597,7 @@ class ABComparisonSuite:
                 "losses": losses,
                 "total": total,
             },
-            {"comparisons": comparisons[:10]},
+            {"skipped_samples": skipped, "comparisons": comparisons[:10]},
         )
 
 
@@ -680,18 +695,18 @@ class DocumentKnowledgeSuite:
         ft_means = []
         base_means = []
         samples = []
+        skipped = 0
 
         for item in golden_dataset[: self.MAX_SAMPLES]:
-            messages = item.get("messages", [])
-            if len(messages) < 2:
+            split = _prompt_and_expected(item)
+            if split is None:
+                skipped += 1
                 continue
+            prompt_msgs, expected, tools = split
 
-            prompt_msgs = messages[:-1]
-            expected = messages[-1].get("content", "")
-
-            ft_prompt = _format_prompt(tok_ft, prompt_msgs)
+            ft_prompt = _render_eval_prompt(tok_ft, prompt_msgs, tools)
             ft_answer = _generate(model_ft, tok_ft, ft_prompt)
-            base_prompt = _format_prompt(tok_base, prompt_msgs)
+            base_prompt = _render_eval_prompt(tok_base, prompt_msgs, tools)
             base_answer = _generate(model_base, tok_base, base_prompt)
 
             ft_rubric = judge.score_domain(ft_prompt, ft_answer, expected)
@@ -718,12 +733,23 @@ class DocumentKnowledgeSuite:
                 }
             )
 
+        if skipped:
+            logger.warning(
+                "Doc-knowledge suite: skipped %d sample(s) without a content-bearing "
+                "final assistant turn (e.g. tool-call trajectories)",
+                skipped,
+            )
+
         if not ft_means:
             # Nothing could be scored — exclude the suite instead of reporting
             # a fabricated zero.
             return (
                 {"mean": None, "base_mean": None, "knowledge_lift": None},
-                {"note": "No golden sample could be scored", "samples": []},
+                {
+                    "note": "No golden sample could be scored",
+                    "skipped_samples": skipped,
+                    "samples": [],
+                },
             )
 
         ft_mean = round(_mean(ft_means), 2)
@@ -735,7 +761,7 @@ class DocumentKnowledgeSuite:
                 "knowledge_lift": round(ft_mean - base_mean, 2),
                 "num_samples": len(ft_means),
             },
-            {"num_samples": len(samples), "samples": samples[:10]},
+            {"num_samples": len(samples), "skipped_samples": skipped, "samples": samples[:10]},
         )
 
 
@@ -760,18 +786,45 @@ def _generate(model, tokenizer, prompt: str, max_new_tokens: int = 512) -> str:
     return _get_model_inference().generate(model, tokenizer, prompt, max_new_tokens)
 
 
-def _format_prompt(tokenizer, messages: list[dict]) -> str:
+def _format_prompt(tokenizer, messages: list[dict], tools: list | None = None) -> str:
     """Format messages as a generation prompt using the model's chat template.
 
     Evaluation must format prompts exactly as the serving backend does, so it
     measures the model as it is actually deployed. Uses `apply_chat_template`
     (via `chat_template.render_chat`) with the generation marker appended,
     replacing the hardcoded ChatML that only matched Qwen and prevented eval
-    from catching train/serve skew on every other model.
+    from catching train/serve skew on every other model. A record's `tools`
+    schema is forwarded the same way for tool-call trajectories.
     """
     from src.activities.chat_template import render_chat
 
-    return render_chat(tokenizer, messages, add_generation_prompt=True)
+    return render_chat(tokenizer, messages, add_generation_prompt=True, tools=tools)
+
+
+def _render_eval_prompt(tokenizer, messages: list[dict], tools: list | None) -> str:
+    """`_format_prompt`, forwarding `tools` only when the record has any."""
+    if tools:
+        return _format_prompt(tokenizer, messages, tools=tools)
+    return _format_prompt(tokenizer, messages)
+
+
+def _prompt_and_expected(item: dict) -> tuple[list[dict], str, list] | None:
+    """Split an eval sample into ``(prompt_messages, expected_text, tools)``.
+
+    Returns None when the sample's final message is not a content-bearing
+    assistant turn — e.g. a tool-call trajectory ending in a tool call or tool
+    result — since there is no gold text to score the generation against.
+    """
+    messages = item.get("messages", [])
+    if len(messages) < 2:
+        return None
+    last = messages[-1]
+    if last.get("role") != "assistant":
+        return None
+    expected = last.get("content")
+    if not isinstance(expected, str) or not expected.strip():
+        return None
+    return messages[:-1], expected, item.get("tools") or []
 
 
 def _as_user_prompt(tokenizer, question: str) -> str:

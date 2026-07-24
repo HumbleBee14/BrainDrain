@@ -43,6 +43,9 @@ pub struct ImportResult {
     pub total_rows: usize,
     /// Total rejected rows, even if [`Self::errors`] was truncated.
     pub rejected_rows: usize,
+    /// Accepted records carrying tool-calling data (a top-level `tools` array
+    /// or any message with `tool_calls`).
+    pub tool_records: usize,
 }
 
 /// Parse an OpenAI-format chat JSONL document.
@@ -59,7 +62,12 @@ pub fn parse_openai_jsonl(content: &str) -> ImportResult {
         }
         result.total_rows += 1;
         match normalize_row(line) {
-            Ok(record) => result.records.push(record),
+            Ok(record) => {
+                if record_has_tool_data(&record) {
+                    result.tool_records += 1;
+                }
+                result.records.push(record);
+            }
             Err(reason) => {
                 result.rejected_rows += 1;
                 if result.errors.len() < MAX_REPORTED_ERRORS {
@@ -72,6 +80,19 @@ pub fn parse_openai_jsonl(content: &str) -> ImportResult {
         }
     }
     result
+}
+
+/// Whether a normalized record carries tool-calling data: a top-level `tools`
+/// array (only inserted when present in the source row) or any message with
+/// `tool_calls`.
+fn record_has_tool_data(record: &Value) -> bool {
+    if record.get("tools").is_some() {
+        return true;
+    }
+    record
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|msgs| msgs.iter().any(|m| m.get("tool_calls").is_some()))
 }
 
 /// Validate and normalize one JSONL line into an internal record. Preserves the
@@ -233,6 +254,7 @@ mod tests {
         let content = r#"{"tools":[{"type":"function","function":{"name":"get_weather"}}],"messages":[{"role":"user","content":"weather?"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"sunny"},{"role":"assistant","content":"It is sunny."}]}"#;
         let r = parse_openai_jsonl(content);
         assert_eq!(r.rejected_rows, 0, "errors: {:?}", r.errors);
+        assert_eq!(r.tool_records, 1);
         let rec = &r.records[0];
         // Top-level tools preserved.
         assert!(rec["tools"].is_array());
@@ -243,6 +265,25 @@ mod tests {
         // Tool turn preserved with its tool_call_id.
         assert_eq!(msgs[2]["role"], "tool");
         assert_eq!(msgs[2]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn counts_tool_records() {
+        // One record with top-level tools only, one with tool_calls only,
+        // one plain — tool_records must count the first two.
+        let with_tools = r#"{"tools":[{"type":"function","function":{"name":"f"}}],"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"}]}"#;
+        let with_tool_calls = r#"{"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]}]}"#;
+        let plain =
+            r#"{"messages":[{"role":"user","content":"a"},{"role":"assistant","content":"b"}]}"#;
+        let r = parse_openai_jsonl(&format!("{with_tools}\n{with_tool_calls}\n{plain}"));
+        assert_eq!(r.records.len(), 3);
+        assert_eq!(r.tool_records, 2);
+    }
+
+    #[test]
+    fn plain_records_count_no_tool_records() {
+        let content = r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#;
+        assert_eq!(parse_openai_jsonl(content).tool_records, 0);
     }
 
     #[test]
