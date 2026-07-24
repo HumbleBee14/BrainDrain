@@ -42,7 +42,6 @@ jobs:
               - '.github/workflows/ci.yml'
             frontend:
               - 'apps/web/**'
-              - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -99,6 +98,14 @@ jobs:
       - name: Run tests
         run: cargo test --all
 
+      # Proves RLS actually isolates tenants on the least-privilege app_rls
+      # connection. The test applies migrations itself; migration 017 creates
+      # the app_rls role (dev password) when it doesn't exist.
+      - name: RLS isolation test
+        env:
+          DATABASE_RLS_URL: postgresql://app_rls:app_rls_dev_password@localhost:5432/platform_test
+        run: cargo test -p platform-db --test rls_isolation -- --ignored --nocapture
+
       # `cargo test --all` runs the ts-rs export tests, which (re)write the
       # generated TypeScript into apps/web/src/lib/generated. If a DTO changed
       # without `make typegen` being run and committed, those files now differ
@@ -129,9 +136,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Type check shared-types
-        run: pnpm --filter @platform/shared-types type-check
 
       - name: Lint frontend
         run: pnpm --filter web lint
