@@ -220,3 +220,24 @@ promote → approve dataset → retrain.
 - `crates/api/src/routes/inference.rs` (capture wiring)
 - `apps/web/src/hooks/use-feedback.ts`,
   `apps/web/src/app/(dashboard)/projects/[id]/models/[modelId]/feedback/page.tsx`
+
+## Realtime Transports (SSE + WebSocket)
+
+Live updates ship over two transports:
+
+- **SSE** (what the dashboard uses): `GET .../status/stream` and
+  `GET .../training-jobs/{id}/metrics/stream` consumed by
+  `use-status-stream.ts` / `use-training-metrics.ts` via `fetch()` +
+  ReadableStream (Bearer auth; EventSource can't set headers). Server sends
+  events only on change; clients reconnect with exponential backoff.
+- **WebSocket** (`GET /api/v1/ws?token=...`): subscribe/unsubscribe message
+  protocol tailing Redis streams. Auth via query-param token (browsers can't
+  set WS headers); only `training:{job_id}` channels, authorized against the
+  caller's tenant before any stream is tailed. Currently unused by the
+  dashboard — kept as the transport for future push channels (notifications,
+  deploy status) and external consumers.
+
+### Files
+
+- `crates/api/src/routes/ws.rs`
+- `apps/web/src/hooks/use-status-stream.ts`, `use-training-metrics.ts`
