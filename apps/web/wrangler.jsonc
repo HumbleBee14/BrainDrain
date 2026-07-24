@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ekcron-app",
+  "main": ".open-next/worker.js",
+  // >= 2025-04-01 so vars defined here surface on process.env.
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  // Non-secret public config. Set CLERK_SECRET_KEY via `wrangler secret put`
+  // (or the dashboard) — never commit it here.
+  "vars": {
+    "NEXT_PUBLIC_APP_NAME": "Ekcron",
+    "NEXT_PUBLIC_MARKETING_URL": "https://ekcron.com",
+    "NEXT_PUBLIC_CLERK_SIGN_IN_URL": "/sign-in",
+    "NEXT_PUBLIC_CLERK_SIGN_UP_URL": "/sign-up",
+    "NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL": "/dashboard",
+    "NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL": "/dashboard"
+  }
+}

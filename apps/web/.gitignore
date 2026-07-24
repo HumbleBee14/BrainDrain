@@ -1,3 +1,7 @@
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# opennext / cloudflare workers build artifacts
+/.open-next/
+/.wrangler/
