@@ -35,6 +35,28 @@ pub fn export_path(tenant_id: Uuid, model_id: Uuid, filename: &str) -> String {
     format!("exports/{tenant_id}/{model_id}/{filename}")
 }
 
+/// Every S3 key prefix that can hold objects for a tenant, each as
+/// `"{category}/{tenant_id}/"`. Used by tenant erasure to wipe all of a
+/// tenant's stored objects. Includes the worker-only prefixes
+/// (`chunks/`, `pairs/`, `pair-checkpoints/`) which have no Rust key builder
+/// but hold tenant PII-derived data.
+pub fn tenant_prefixes(tenant_id: Uuid) -> Vec<String> {
+    [
+        "uploads",
+        "parsed",
+        "datasets",
+        "adapters",
+        "checkpoints",
+        "exports",
+        "chunks",
+        "pairs",
+        "pair-checkpoints",
+    ]
+    .iter()
+    .map(|category| format!("{category}/{tenant_id}/"))
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +77,34 @@ mod tests {
         let model = Uuid::nil();
         let prefix = adapter_prefix(tenant, model);
         assert!(prefix.ends_with('/'));
+    }
+
+    #[test]
+    fn test_tenant_prefixes_cover_all_categories() {
+        let tenant = Uuid::from_u128(0x1234_5678_9abc_def0);
+        let prefixes = tenant_prefixes(tenant);
+        let tenant_str = tenant.to_string();
+
+        assert_eq!(prefixes.len(), 9);
+        for category in [
+            "uploads/",
+            "parsed/",
+            "datasets/",
+            "adapters/",
+            "checkpoints/",
+            "exports/",
+            "chunks/",
+            "pairs/",
+            "pair-checkpoints/",
+        ] {
+            assert!(
+                prefixes.iter().any(|p| p.starts_with(category)),
+                "missing category {category}",
+            );
+        }
+        for prefix in &prefixes {
+            assert!(prefix.contains(&tenant_str), "{prefix} missing tenant id");
+            assert!(prefix.ends_with('/'), "{prefix} must end with /");
+        }
     }
 }
