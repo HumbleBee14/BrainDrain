@@ -84,6 +84,8 @@ services:
       RATE_LIMIT_ENABLED: "true"
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
+      FEATURE_FLAGS_PROVIDER: static
+      FEATURE_FLAGS_JSON: '{"billing.outbox.enabled":true,"idempotency.enforced":true,"deployments.multi_instance.enabled":false}'
     depends_on:
       migrate:
         condition: service_completed_successfully
