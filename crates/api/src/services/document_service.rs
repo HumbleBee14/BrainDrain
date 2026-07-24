@@ -150,6 +150,49 @@ impl DocumentService {
 
         Ok(doc.into())
     }
+
+    /// Hard-delete a document: its S3 objects (upload + parsed) and its DB row.
+    ///
+    /// The row is the index into storage, so a stranded row pointing at deleted
+    /// objects is worse than an orphaned object a later sweep can reclaim.
+    /// S3 deletes are therefore best-effort — a real delete error is logged but
+    /// does not block removal of the row. A never-parsed document has no parsed
+    /// object; deleting a missing key is a no-op success.
+    pub async fn delete(
+        repo: &dyn DocumentRepository,
+        storage: &impl ObjectStorage,
+        tenant_id: Uuid,
+        document_id: Uuid,
+    ) -> AppResult<()> {
+        let doc = repo
+            .get_by_id(tenant_id, document_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Document not found".to_string(),
+            })?;
+
+        let parsed = s3_paths::parsed_path(tenant_id, doc.project_id, document_id);
+        for key in [doc.storage_path.as_str(), parsed.as_str()] {
+            if let Err(e) = storage.delete(key).await {
+                tracing::warn!(
+                    document_id = %document_id,
+                    key = key,
+                    error = %e,
+                    "Failed to delete document object; deleting row anyway"
+                );
+            }
+        }
+
+        repo.delete(tenant_id, document_id).await?;
+
+        tracing::info!(
+            document_id = %document_id,
+            tenant_id = %tenant_id,
+            "Document deleted"
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +309,294 @@ mod tests {
     fn non_empty_file_is_valid() {
         let data = bytes::Bytes::from_static(b"hello");
         assert!(!data.is_empty());
+    }
+
+    // ── Delete ──
+
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use platform_db::models::Document;
+    use platform_shared::s3_paths;
+    use platform_storage::memory::InMemoryStorage;
+    use platform_storage::{ObjectStorage, StorageError};
+    use uuid::Uuid;
+
+    use super::DocumentService;
+    use crate::error::{AppError, AppResult};
+    use crate::repositories::traits::{BoxFuture, DocumentRepository};
+
+    fn make_doc(tenant_id: Uuid, project_id: Uuid, storage_path: &str) -> Document {
+        Document {
+            id: Uuid::now_v7(),
+            tenant_id,
+            project_id,
+            filename: "f.pdf".to_string(),
+            file_size: 10,
+            mime_type: "application/pdf".to_string(),
+            storage_path: storage_path.to_string(),
+            status: "uploaded".to_string(),
+            parse_quality: None,
+            page_count: None,
+            language: None,
+            domain: None,
+            metadata: serde_json::Value::Null,
+            error_message: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    /// Fake repo backed by an in-memory map. Only the methods the delete path
+    /// exercises are implemented; the rest panic if a test misuses them.
+    struct FakeDocumentRepo {
+        docs: Mutex<HashMap<Uuid, Document>>,
+    }
+
+    impl FakeDocumentRepo {
+        fn new(docs: Vec<Document>) -> Self {
+            Self {
+                docs: Mutex::new(docs.into_iter().map(|d| (d.id, d)).collect()),
+            }
+        }
+
+        fn contains(&self, id: Uuid) -> bool {
+            self.docs.lock().unwrap().contains_key(&id)
+        }
+    }
+
+    impl DocumentRepository for FakeDocumentRepo {
+        fn get_by_id(
+            &self,
+            tenant_id: Uuid,
+            document_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<Option<Document>>> {
+            let doc = self
+                .docs
+                .lock()
+                .unwrap()
+                .get(&document_id)
+                .filter(|d| d.tenant_id == tenant_id)
+                .cloned();
+            Box::pin(async move { Ok(doc) })
+        }
+
+        fn delete(&self, tenant_id: Uuid, document_id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
+            let removed = {
+                let mut docs = self.docs.lock().unwrap();
+                match docs.get(&document_id) {
+                    Some(d) if d.tenant_id == tenant_id => docs.remove(&document_id).is_some(),
+                    _ => false,
+                }
+            };
+            Box::pin(async move { Ok(removed) })
+        }
+
+        fn create(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _filename: &str,
+            _file_size: i64,
+            _mime_type: &str,
+            _storage_path: &str,
+        ) -> BoxFuture<'_, AppResult<Document>> {
+            unimplemented!()
+        }
+
+        fn list_by_project(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _offset: i64,
+            _limit: i64,
+        ) -> BoxFuture<'_, AppResult<Vec<Document>>> {
+            unimplemented!()
+        }
+
+        fn list_by_status(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _status: platform_shared::enums::DocumentStatus,
+        ) -> BoxFuture<'_, AppResult<Vec<Document>>> {
+            unimplemented!()
+        }
+
+        fn count_by_status(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _status: platform_shared::enums::DocumentStatus,
+        ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!()
+        }
+
+        fn update_status(
+            &self,
+            _tenant_id: Uuid,
+            _document_id: Uuid,
+            _status: platform_shared::enums::DocumentStatus,
+            _error_message: Option<&str>,
+        ) -> BoxFuture<'_, AppResult<bool>> {
+            unimplemented!()
+        }
+
+        fn count_by_project(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!()
+        }
+
+        fn count_by_tenant(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!()
+        }
+
+        fn sum_storage_bytes(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!()
+        }
+    }
+
+    /// Storage whose `delete` always fails — used to prove the row is removed
+    /// even when object deletion errors.
+    struct FailingDeleteStorage;
+
+    impl ObjectStorage for FailingDeleteStorage {
+        async fn delete(&self, _key: &str) -> Result<(), StorageError> {
+            Err(StorageError::DeleteFailed("boom".to_string()))
+        }
+
+        async fn put(
+            &self,
+            _key: &str,
+            _data: bytes::Bytes,
+            _content_type: &str,
+        ) -> Result<(), StorageError> {
+            unimplemented!()
+        }
+
+        async fn put_streaming<S>(
+            &self,
+            _key: &str,
+            _stream: S,
+            _content_type: &str,
+        ) -> Result<u64, StorageError>
+        where
+            S: futures::Stream<Item = Result<bytes::Bytes, StorageError>> + Send + 'static,
+        {
+            unimplemented!()
+        }
+
+        async fn get(&self, _key: &str) -> Result<bytes::Bytes, StorageError> {
+            unimplemented!()
+        }
+
+        async fn exists(&self, _key: &str) -> Result<bool, StorageError> {
+            unimplemented!()
+        }
+
+        async fn presigned_url(
+            &self,
+            _key: &str,
+            _expiry_secs: u64,
+        ) -> Result<String, StorageError> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_removes_row_and_both_objects() {
+        let tenant = Uuid::now_v7();
+        let project = Uuid::now_v7();
+        let doc = make_doc(tenant, project, "uploads/t/p/f.pdf");
+        let doc_id = doc.id;
+        let parsed = s3_paths::parsed_path(tenant, project, doc_id);
+
+        let storage = InMemoryStorage::new();
+        storage
+            .put(
+                &doc.storage_path,
+                bytes::Bytes::from_static(b"raw"),
+                "application/pdf",
+            )
+            .await
+            .unwrap();
+        storage
+            .put(
+                &parsed,
+                bytes::Bytes::from_static(b"{}"),
+                "application/json",
+            )
+            .await
+            .unwrap();
+
+        let repo = FakeDocumentRepo::new(vec![doc]);
+
+        DocumentService::delete(&repo, &storage, tenant, doc_id)
+            .await
+            .unwrap();
+
+        assert!(!repo.contains(doc_id), "row should be gone");
+        assert!(storage.is_empty().await, "both objects should be gone");
+    }
+
+    #[tokio::test]
+    async fn delete_succeeds_when_never_parsed() {
+        let tenant = Uuid::now_v7();
+        let project = Uuid::now_v7();
+        let doc = make_doc(tenant, project, "uploads/t/p/f.pdf");
+        let doc_id = doc.id;
+
+        let storage = InMemoryStorage::new();
+        storage
+            .put(
+                &doc.storage_path,
+                bytes::Bytes::from_static(b"raw"),
+                "application/pdf",
+            )
+            .await
+            .unwrap();
+
+        let repo = FakeDocumentRepo::new(vec![doc]);
+
+        DocumentService::delete(&repo, &storage, tenant, doc_id)
+            .await
+            .unwrap();
+
+        assert!(!repo.contains(doc_id));
+        assert!(storage.is_empty().await);
+    }
+
+    #[tokio::test]
+    async fn delete_missing_document_is_not_found() {
+        let repo = FakeDocumentRepo::new(vec![]);
+        let storage = InMemoryStorage::new();
+
+        let err = DocumentService::delete(&repo, &storage, Uuid::now_v7(), Uuid::now_v7())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn delete_removes_row_even_when_storage_delete_fails() {
+        let tenant = Uuid::now_v7();
+        let project = Uuid::now_v7();
+        let doc = make_doc(tenant, project, "uploads/t/p/f.pdf");
+        let doc_id = doc.id;
+
+        let repo = FakeDocumentRepo::new(vec![doc]);
+
+        DocumentService::delete(&repo, &FailingDeleteStorage, tenant, doc_id)
+            .await
+            .unwrap();
+
+        assert!(
+            !repo.contains(doc_id),
+            "row should be deleted despite S3 failure"
+        );
     }
 }
