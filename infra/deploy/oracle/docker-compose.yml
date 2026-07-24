@@ -1,0 +1,132 @@
+name: ekcron
+
+# Deploy stack for the box: app services only. Postgres/Redis/object-storage are
+# managed (Neon/Upstash/R2) and injected via env; GPU/vLLM runs on Modal.
+# Build contexts are relative to this file (repo root is ../../..).
+
+services:
+  temporal-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD}
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:1.29.3
+    restart: unless-stopped
+    ports:
+      - "7233:7233"
+      - "7243:7243" # HTTP API used by the Rust orchestrator client
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD}
+      POSTGRES_SEEDS: temporal-postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    volumes:
+      - ../../temporal/dynamicconfig/development-sql.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml:ro
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--namespace", "default"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Runs migrations against the managed DB, then exits. Connects directly (DDL +
+  # advisory locks need session state a pooler can't guarantee).
+  migrate:
+    build:
+      context: ../../..
+      dockerfile: crates/api/Dockerfile
+    entrypoint: ["platform-migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    restart: "no"
+
+  api:
+    build:
+      context: ../../..
+      dockerfile: crates/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:8000" # Cloudflare proxies api.ekcron.com to this
+    environment:
+      ENVIRONMENT: production
+      APP_NAME: Ekcron
+      DATABASE_URL: ${DATABASE_URL:?}
+      DATABASE_RLS_URL: ${DATABASE_RLS_URL:?}
+      DATABASE_MAX_CONNECTIONS: ${DATABASE_MAX_CONNECTIONS:-10}
+      REDIS_URL: ${REDIS_URL:?}
+      S3_ENDPOINT: ${S3_ENDPOINT:?}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+      S3_BUCKET: ${S3_BUCKET:?}
+      S3_REGION: ${S3_REGION:-auto}
+      SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:?}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+      TEMPORAL_HOST: temporal:7243
+      TEMPORAL_NAMESPACE: default
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.ekcron.com}
+      RATE_LIMIT_ENABLED: "true"
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  workers:
+    build:
+      context: ../../../apps/workers
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_TEMPORAL_ADDRESS: temporal:7233
+      APP_TEMPORAL_NAMESPACE: default
+      APP_TEMPORAL_TASK_QUEUE: ml-pipeline
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?}
+      APP_REDIS_URL: ${REDIS_URL:?}
+      APP_S3_ENDPOINT: ${S3_ENDPOINT:?}
+      APP_S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+      APP_S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+      APP_S3_BUCKET: ${S3_BUCKET:?}
+      APP_S3_REGION: ${S3_REGION:-auto}
+      APP_SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?}
+      APP_LLM_API_KEY: ${APP_LLM_API_KEY:-}
+      APP_PLATFORM_API_URL: http://api:8000
+      MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+      MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+      APP_MODAL_APP_NAME: ${APP_MODAL_APP_NAME:-platform-training}
+      APP_WORKER_MODE: all
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_healthy
+
+volumes:
+  temporal_postgres_data:
