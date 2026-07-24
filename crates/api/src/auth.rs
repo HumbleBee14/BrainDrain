@@ -704,7 +704,9 @@ async fn resolve_personal_tenant(
     clerk_user_id: &str,
     email: Option<&str>,
 ) -> Result<Uuid, AppError> {
-    let name = email.filter(|e| !e.is_empty()).unwrap_or("Personal Workspace");
+    let name = email
+        .filter(|e| !e.is_empty())
+        .unwrap_or("Personal Workspace");
 
     sqlx::query_scalar::<_, Uuid>(
         r#"
