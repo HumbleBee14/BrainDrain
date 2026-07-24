@@ -468,6 +468,10 @@ mod tests {
             Err(StorageError::DeleteFailed("boom".to_string()))
         }
 
+        async fn delete_prefix(&self, _prefix: &str) -> Result<usize, StorageError> {
+            unimplemented!()
+        }
+
         async fn put(
             &self,
             _key: &str,

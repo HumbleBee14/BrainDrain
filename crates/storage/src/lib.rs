@@ -71,6 +71,14 @@ pub trait ObjectStorage: Send + Sync {
     /// Delete an object.
     fn delete(&self, key: &str) -> impl Future<Output = Result<(), StorageError>> + Send;
 
+    /// Delete every object whose key starts with `prefix`, returning the count
+    /// deleted. An empty prefix (no matching objects) is `Ok(0)`. Deleting the
+    /// same prefix twice is safe: the second call finds nothing and returns 0.
+    fn delete_prefix(
+        &self,
+        prefix: &str,
+    ) -> impl Future<Output = Result<usize, StorageError>> + Send;
+
     /// Generate a presigned download URL valid for `expiry_secs`.
     fn presigned_url(
         &self,

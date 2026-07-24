@@ -31,6 +31,7 @@ pub mod secret_cipher;
 pub mod smtp_email;
 pub mod stripe_billing;
 pub mod team_service;
+pub mod tenant_erasure_service;
 pub mod tenant_settings_service;
 pub mod token_estimator;
 pub mod training_job_service;

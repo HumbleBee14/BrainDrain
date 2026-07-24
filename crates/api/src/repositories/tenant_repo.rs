@@ -143,4 +143,15 @@ impl TenantRepository for PgTenantRepo {
             Ok(())
         })
     }
+
+    fn delete(&self, id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
+        Box::pin(async move {
+            let result = sqlx::query("DELETE FROM tenants WHERE id = $1")
+                .bind(id)
+                .execute(&self.db)
+                .await?;
+
+            Ok(result.rows_affected() > 0)
+        })
+    }
 }

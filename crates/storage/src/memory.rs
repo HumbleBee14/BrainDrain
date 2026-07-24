@@ -107,6 +107,19 @@ impl ObjectStorage for InMemoryStorage {
         Ok(())
     }
 
+    async fn delete_prefix(&self, prefix: &str) -> Result<usize, StorageError> {
+        let mut objects = self.objects.write().await;
+        let matching: Vec<String> = objects
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        for key in &matching {
+            objects.remove(key);
+        }
+        Ok(matching.len())
+    }
+
     async fn presigned_url(&self, key: &str, _expiry_secs: u64) -> Result<String, StorageError> {
         // Verify object exists, then return a fake URL for test assertions
         if !self.objects.read().await.contains_key(key) {
@@ -163,6 +176,38 @@ mod tests {
 
         store.delete("key").await.unwrap();
         assert!(!store.exists("key").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_prefix_removes_matching_leaves_others() {
+        let store = InMemoryStorage::new();
+        for key in ["uploads/t1/a.pdf", "uploads/t1/b.pdf", "uploads/t2/c.pdf"] {
+            store
+                .put(key, Bytes::from("data"), "application/pdf")
+                .await
+                .unwrap();
+        }
+
+        let deleted = store.delete_prefix("uploads/t1/").await.unwrap();
+        assert_eq!(deleted, 2);
+        assert!(!store.exists("uploads/t1/a.pdf").await.unwrap());
+        assert!(!store.exists("uploads/t1/b.pdf").await.unwrap());
+        // A different tenant's objects are untouched.
+        assert!(store.exists("uploads/t2/c.pdf").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_prefix_empty_is_ok_zero() {
+        let store = InMemoryStorage::new();
+        store
+            .put("uploads/t1/a.pdf", Bytes::from("data"), "application/pdf")
+            .await
+            .unwrap();
+
+        let deleted = store.delete_prefix("uploads/nonexistent/").await.unwrap();
+        assert_eq!(deleted, 0);
+        // Non-matching object still present.
+        assert!(store.exists("uploads/t1/a.pdf").await.unwrap());
     }
 
     #[tokio::test]
