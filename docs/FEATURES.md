@@ -6,6 +6,121 @@ notes for developers.
 
 ---
 
+## Document-Grounded Eval Builder (Golden Holdout)
+
+**Purpose:** answer "does the fine-tuned model actually know MY documents?"
+with data the model has provably never trained on. During synthetic data
+generation, a slice of document chunks is held out; eval Q&A pairs generated
+from those chunks become the model's **golden set**.
+
+### How it works
+
+- During refine/generation, `golden_holdout_ratio` (default 0.1) of chunks are
+  reserved — deterministically, by content-addressed fingerprint (sha256 of
+  `doc_id:chunk_id`), so re-runs hold out the same chunks. Holdout is skipped
+  below 10 chunks and capped at 25% of the corpus.
+- Golden Q&A pairs (3 per held-out chunk) are generated with base facets and
+  always faithfulness-gated, then stored next to the dataset as
+  `<dataset>_golden.jsonl`. The dataset's stats record `golden_pairs`.
+- Evaluation loads the golden set by that path convention. The
+  **Document Knowledge** suite (weight 0.30) asks both the fine-tuned model
+  and its base model the golden questions, scores both with the judge, and
+  reports `knowledge_lift` = fine-tuned mean − base mean. Positive lift means
+  the model genuinely absorbed document knowledge rather than general ability.
+- The evaluation page shows the lift headline plus base-vs-tuned score cards;
+  a non-positive lift adds a recommendation to revisit the dataset.
+
+### Files
+
+`apps/workers/src/activities/generate_pairs.py` (holdout selection),
+`build_dataset.py` (golden write-out), `run_evaluation.py`
+(`DocumentKnowledgeSuite`), `crates/shared/src/types.rs`
+(`DocKnowledgeScores`).
+
+---
+
+## Eval-Gated Deployment
+
+**Purpose:** stop bad models from reaching production. A deploy is blocked
+unless the model's latest **completed** evaluation clears configured
+thresholds.
+
+### How to use
+
+Set either or both (unset = that rule disabled):
+
+```bash
+DEPLOY_MIN_AB_WIN_RATE=0.5           # A/B win rate vs base must be >= this
+DEPLOY_MAX_BENCHMARK_REGRESSION=10   # block if benchmark regression > this many points
+```
+
+A failing (or missing) evaluation returns **409 Conflict** with the reason —
+the gate **fails closed**: no completed eval means no deploy. Rollbacks to a
+previously deployed version bypass the gate (they were vetted when first
+deployed). Implementation: `crates/api/src/services/deploy_gate.rs`, invoked
+from the deployment service; metrics are read from the evaluation's raw
+scores JSON.
+
+---
+
+## JSONL Dataset Import (OpenAI Chat Format)
+
+**Purpose:** bring existing training data instead of (or alongside)
+generating it from documents.
+
+### How to use
+
+`POST /api/v1/projects/{id}/datasets/import` (multipart: `file` + optional
+`name`), or the dashboard's import action. Each line is an OpenAI chat sample
+(`{"messages": [...]}`, optional top-level `tools`). Malformed rows are
+reported per row (line number + reason, capped at 100 detailed errors) rather
+than failing the file. The dataset enters the standard `review_pending`
+approve/reject flow.
+
+**Tool-calling is preserved on purpose**: `role: "tool"` turns, assistant
+`tool_calls`, `tool_call_id`, and the `tools` array are validated and carried
+through verbatim into the stored records — groundwork for the agent/tool-call
+fine-tuning track. Parser: `crates/api/src/services/jsonl_import.rs` (pure,
+fully unit-tested); storage via `DatasetService::store_records_as_dataset`
+(90/10 train/val split).
+
+---
+
+## Ollama Export
+
+**Purpose:** run your fine-tuned model locally with one command.
+
+### How to use
+
+1. Export the model as GGUF (`POST /api/v1/models/{id}/exports`,
+   `quant_type` one of Q4_K_M / Q5_K_M / Q6_K / Q8_0).
+2. `GET /api/v1/exports/{id}/ollama` returns a ready-made recipe: a
+   `Modelfile` (FROM the GGUF; the deployment system prompt as `SYSTEM` when
+   present) plus the exact `ollama create` / `ollama run` commands.
+
+The GGUF embeds the chat template from training, so the Modelfile needs no
+`TEMPLATE` block. Generated model names use a generic `finetuned-` prefix.
+Implementation: `crates/api/src/services/ollama_modelfile.rs`.
+
+---
+
+## Facet Subtopic Expansion (Generation Diversity)
+
+**Purpose:** prevent synthetic samples from clustering on each facet's most
+obvious phrasing. Each document-grounded facet is expanded into up to
+`facet_subtopics` (default 3, cap 6) narrower subtopics — grounded in an
+excerpt sampled **across** the document, not just its head — and generation
+rotates chunks over the flattened facet×subtopic angles.
+
+Strictly additive and best-effort: expansion failure falls back to the base
+facet, `facet_subtopics: 0` disables it, expansion is skipped when chunks
+don't outnumber facets, and the golden eval set deliberately keeps base
+facets only. Implementation: `FacetExpander` protocol + `LlmFacetExpander`
+(`apps/workers/src/datagen/`), wiring in `generate_pairs.py`
+(`facets_to_angles`, `doc_sample_for_expansion`).
+
+---
+
 ## Data Flywheel — Traffic Capture & Feedback
 
 **Purpose:** close the loop between serving and training. Once a model is

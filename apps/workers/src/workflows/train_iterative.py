@@ -12,6 +12,7 @@ progress tracking (signals/queries), and Temporal UI visibility.
 import math
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
@@ -181,7 +182,7 @@ class TrainIterativeWorkflow:
                 task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timeouts.train_iterative_activity(),
                 heartbeat_timeout=timeouts.train_heartbeat(),
-                retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                retry_policy=RetryPolicy(maximum_attempts=2),
             )
 
             all_metrics[f"iter_{iteration}"] = sft_result.metrics
@@ -204,7 +205,7 @@ class TrainIterativeWorkflow:
                     task_queue="ml-pipeline-gpu",
                     start_to_close_timeout=timeouts.holdout_eval_activity(),
                     heartbeat_timeout=timeouts.holdout_eval_heartbeat(),
-                    retry_policy=workflow.RetryPolicy(maximum_attempts=2),
+                    retry_policy=RetryPolicy(maximum_attempts=2),
                 )
                 raw_eval_loss = eval_result.eval_loss
                 all_metrics[f"iter_{iteration}_eval"] = eval_result.metrics

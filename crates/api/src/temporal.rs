@@ -244,9 +244,10 @@ impl TemporalClient {
         task_queue: Option<&str>,
         trace_ctx: &TraceContext,
     ) -> Result<StartWorkflowResponse, OrchestratorError> {
+        // Workflow id must be in the path — an id-less /workflows POST is UNIMPLEMENTED.
         let url = format!(
-            "{}/api/v1/namespaces/{}/workflows",
-            self.base_url, self.namespace
+            "{}/api/v1/namespaces/{}/workflows/{}",
+            self.base_url, self.namespace, workflow_id
         );
 
         let queue = task_queue.unwrap_or(&self.task_queue);
@@ -560,7 +561,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     hyperparams,
                     gpu_class,
                 ]),
-                Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                None, // default queue — GPU activities pin their own
                 &trace_ctx,
             )
             .await
@@ -603,7 +604,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     judge_model.as_deref().unwrap_or(""),
                     judge_api_base.as_deref().unwrap_or(""),
                 ]),
-                Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                None, // default queue — GPU activities pin their own
                 &trace_ctx,
             )
             .await
@@ -637,7 +638,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     base_model,
                     quant_type,
                 ]),
-                Some(platform_shared::constants::TEMPORAL_TASK_QUEUE_GPU),
+                None, // default queue — GPU activities pin their own
                 &trace_ctx,
             )
             .await

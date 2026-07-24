@@ -1,7 +1,8 @@
-/// Temporal task queue for main orchestration workflows.
-pub const TEMPORAL_TASK_QUEUE_MAIN: &str = "ml-pipeline-main";
+/// Default task queue: all workflows start here.
+pub const TEMPORAL_TASK_QUEUE_MAIN: &str = "ml-pipeline";
 
-/// Temporal task queue for GPU-bound activities (training, evaluation).
+/// GPU activity queue — targeted by per-activity `task_queue=` pins in workflows.
+#[allow(dead_code)]
 pub const TEMPORAL_TASK_QUEUE_GPU: &str = "ml-pipeline-gpu";
 
 /// Temporal namespace.

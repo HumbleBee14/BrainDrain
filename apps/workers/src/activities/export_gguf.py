@@ -135,10 +135,17 @@ class ExportGgufActivity:
 
     async def _download_adapter(self, s3, bucket: str, adapter_path: str, local_dir: str) -> None:
         """Download all adapter files from S3 prefix."""
-        paginator = s3.get_paginator("list_objects_v2")
-        async_pages = paginator.paginate(Bucket=bucket, Prefix=adapter_path)
 
-        async for page in async_pages:
+        # boto3 paginators are synchronous — collect the pages in a thread
+        # rather than blocking the event loop (or `async for`-ing a sync
+        # iterator, which raises TypeError).
+        def _list_pages():
+            paginator = s3.get_paginator("list_objects_v2")
+            return list(paginator.paginate(Bucket=bucket, Prefix=adapter_path))
+
+        pages = await asyncio.to_thread(_list_pages)
+
+        for page in pages:
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 rel = key[len(adapter_path) :].lstrip("/")
@@ -157,15 +164,18 @@ class ExportGgufActivity:
         """
 
         def _do_merge():
+            # Deferred: [ml] extra deps — top-level would crash non-ML workers at boot.
             import torch
             from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             tokenizer = AutoTokenizer.from_pretrained(base_model)
+            # CPU on purpose: merge is memory-bound; device_map="auto" crashes on
+            # non-CUDA hosts. fp16 is only the intermediate; quant_type decides precision.
             model = AutoModelForCausalLM.from_pretrained(
                 base_model,
                 torch_dtype=torch.float16,
-                device_map="auto",
+                device_map={"": "cpu"},
             )
 
             model = PeftModel.from_pretrained(model, adapter_dir)

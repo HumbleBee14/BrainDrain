@@ -240,28 +240,35 @@ async def main() -> None:
         GenerateDatasetWorkflow,
     ]
 
+    # Workflows run on the default queue; GPU activities pin themselves to the
+    # GPU queue — so "all" mode must poll both.
     mode = settings.worker_mode
+    gpu_queue = "ml-pipeline-gpu"
 
     if mode == "main":
-        task_queue = "ml-pipeline-main"
-        activities = cpu_activities
+        queue_specs = [(settings.temporal_task_queue, cpu_activities)]
         logger.info("Worker mode: main (CPU only)")
     elif mode == "gpu":
-        task_queue = "ml-pipeline-gpu"
-        activities = gpu_activities
+        queue_specs = [(gpu_queue, gpu_activities)]
         logger.info("Worker mode: gpu (GPU only)")
     else:
-        task_queue = settings.temporal_task_queue
-        activities = cpu_activities + gpu_activities
+        queue_specs = [
+            (settings.temporal_task_queue, cpu_activities + gpu_activities),
+            (gpu_queue, gpu_activities),
+        ]
         logger.info("Worker mode: all (dev mode)")
 
-    logger.info("Starting worker on queue: %s", task_queue)
-    worker = Worker(
-        client,
-        task_queue=task_queue,
-        workflows=all_workflows,
-        activities=activities,
-    )
+    workers = []
+    for task_queue, activities in queue_specs:
+        logger.info("Starting worker on queue: %s", task_queue)
+        workers.append(
+            Worker(
+                client,
+                task_queue=task_queue,
+                workflows=all_workflows,
+                activities=activities,
+            )
+        )
 
     # Under the Modal provider, sweep for GPU calls orphaned by cancelled or
     # reaped jobs so a terminated/reaped run does not keep billing a remote GPU.
@@ -277,7 +284,7 @@ async def main() -> None:
 
     logger.info("Worker started. Waiting for tasks...")
     try:
-        await worker.run()
+        await asyncio.gather(*(w.run() for w in workers))
     finally:
         if sweep_task is not None:
             sweep_task.cancel()

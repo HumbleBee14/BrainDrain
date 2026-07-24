@@ -223,7 +223,8 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
       CLERK_JWKS_URL: ${CLERK_JWKS_URL}
-      TEMPORAL_HOST: temporal:7233
+      # Rust API speaks Temporal's HTTP API (7243); workers use gRPC (7233).
+      TEMPORAL_HOST: temporal:7243
       TEMPORAL_NAMESPACE: default
       INFERENCE_BACKEND_TYPE: ${INFERENCE_BACKEND_TYPE:-vllm}
       INFERENCE_SERVER_URL: ${INFERENCE_SERVER_URL:-http://vllm:8000}

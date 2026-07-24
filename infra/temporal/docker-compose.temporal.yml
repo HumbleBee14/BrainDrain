@@ -23,6 +23,8 @@ services:
     image: temporalio/auto-setup:1.29.3
     ports:
       - "7233:7233"
+      # Temporal HTTP API (used by the Rust orchestrator client; gRPC stays on 7233)
+      - "7243:7243"
     environment:
       DB: postgres12
       DB_PORT: "5432"
