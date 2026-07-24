@@ -248,3 +248,37 @@ Live updates ship over two transports:
 
 - `crates/api/src/routes/ws.rs`
 - `apps/web/src/hooks/use-status-stream.ts`, `use-training-metrics.ts`
+
+---
+
+## Judge Alignment from Human Ratings
+
+**Purpose:** make the generation-time faithfulness judge apply the same
+quality bar as the human reviewer. The Data Studio preview ratings
+(`realistic` / `needs_work`) already steer guidance refinement; when full
+dataset generation starts, the same rated samples are also sent to the
+workers and rendered into every faithfulness-judge prompt as few-shot
+calibration examples ("responses like these accepted ones should pass;
+responses with these rejected flaws should fail").
+
+### How it works
+
+- On `generate_dataset`, the API maps rated `preview_samples` to
+  `{prompt, response, looks_good}` records (same payload shape guidance
+  refinement uses) and appends them as the last positional workflow arg.
+- The scorer caps what it uses: at most 4 accepted and 4 rejected examples
+  (most recent first), skipping entries with an empty prompt or response.
+- With no rated samples the judge prompt is byte-identical to the
+  uncalibrated one — the feature is strictly additive.
+- Back-compat: the new workflow/activity fields default to empty, so
+  payloads queued before the change still deserialize; eval-time judges
+  (`llm_judge.py`) are a separate code path and are not affected.
+
+### Files
+
+- `crates/api/src/services/data_guide_service.rs` (`rated_samples_payload`)
+- `crates/api/src/temporal.rs` (`start_generate_dataset`)
+- `apps/workers/src/workflows/datagen.py` (`GenerateDatasetWorkflow`)
+- `apps/workers/src/activities/generate_pairs.py` (input field + scorer wiring)
+- `apps/workers/src/datagen/impls.py` (`select_calibration_examples`,
+  `LlmFaithfulnessScorer`), `prompts.py` (`faithfulness_prompt`)
