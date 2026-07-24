@@ -103,6 +103,7 @@ fn v1_router() -> Router<AppState> {
         documents::upload_document,
         documents::list_documents,
         documents::get_document,
+        documents::delete_document,
         // Pipeline
         pipeline::trigger_parse,
         pipeline::trigger_refine,

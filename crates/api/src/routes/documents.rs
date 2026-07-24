@@ -1,7 +1,7 @@
 use axum::extract::multipart::Multipart;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use tokio_stream::wrappers::ReceiverStream;
@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/projects/{project_id}/documents", get(list_documents))
         .route("/documents/{id}", get(get_document))
+        .route("/documents/{id}", delete(delete_document))
 }
 
 #[utoipa::path(
@@ -212,4 +213,34 @@ pub async fn get_document(
 ) -> AppResult<Json<DocumentResponse>> {
     let doc = DocumentService::get(state.document_repo(), user.tenant_id, id).await?;
     Ok(Json(doc))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/documents/{id}",
+    tag = "Documents",
+    params(("id" = Uuid, Path, description = "Document ID")),
+    responses(
+        (status = 204, description = "Document deleted"),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn delete_document(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    require_role(&user, TeamRole::Member)?;
+    DocumentService::delete(state.document_repo(), state.storage(), user.tenant_id, id).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "delete",
+        "document",
+        Some(id),
+        serde_json::json!({}),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
