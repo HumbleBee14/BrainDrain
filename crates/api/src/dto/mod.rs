@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod api_key;
 pub mod audit_log;
 pub mod billing;

@@ -1,4 +1,5 @@
 pub mod admin_instances;
+pub mod admin_tenants;
 pub mod api_keys;
 pub mod audit_logs;
 pub mod billing;
@@ -64,6 +65,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 fn v1_router() -> Router<AppState> {
     Router::new()
         .merge(admin_instances::router())
+        .merge(admin_tenants::router())
         .merge(projects::router())
         .merge(documents::router())
         .merge(pipeline::router())
@@ -153,6 +155,8 @@ fn v1_router() -> Router<AppState> {
         admin_instances::register_instance,
         admin_instances::update_lifecycle,
         admin_instances::delete_instance,
+        // Admin tenant erasure
+        admin_tenants::erase_tenant,
         // Deployments
         deployments::deploy_model,
         deployments::undeploy_model,
@@ -264,6 +268,8 @@ fn v1_router() -> Router<AppState> {
         crate::dto::inference_instance::CreateInferenceInstanceRequest,
         crate::dto::inference_instance::UpdateInferenceInstanceLifecycleRequest,
         crate::dto::inference_instance::InferenceInstanceResponse,
+        // Admin tenant erasure
+        crate::dto::admin::TenantErasureSummary,
         // Billing
         crate::dto::billing::BillingEventResponse,
         // Audit Logs
