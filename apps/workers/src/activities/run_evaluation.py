@@ -122,6 +122,7 @@ class RunEvaluationActivity:
                 default_api_base_url=self.infra.settings.llm_api_base_url,
                 default_api_key=self.infra.settings.llm_api_key,
                 default_model=self.infra.settings.llm_model,
+                encryption_key=self.infra.settings.settings_encryption_key,
             )
 
             # Dispatch the GPU work to the configured provider (local or Modal).

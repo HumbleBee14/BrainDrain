@@ -43,6 +43,7 @@ use crate::services::feature_flags::{
 use crate::services::inference_backend::{
     InferenceBackend, build_backend, build_backend_for_instance,
 };
+use crate::services::secret_cipher::SecretCipher;
 use crate::services::smtp_email::{NoOpEmailProvider, SmtpEmailProvider};
 use crate::services::stripe_billing::{NoOpBillingProvider, StripeBillingProvider};
 use crate::temporal::{TemporalClient, WorkflowOrchestrator};
@@ -101,6 +102,7 @@ struct AppStateInner {
     pub billing_batcher: Arc<BillingBatcher>,
     pub billing_outbox_relay: Option<Arc<BillingOutboxRelay>>,
     pub delivery_worker: Arc<DeliveryWorker>,
+    pub secret_cipher: SecretCipher,
 }
 
 impl AppState {
@@ -424,6 +426,25 @@ impl AppState {
             "Infrastructure hardening initialized (circuit breaker + billing batcher + delivery worker)"
         );
 
+        // Tenant-secret encryption at rest. A malformed key is a hard startup
+        // error; a missing key is tolerated (dev stores plaintext with a
+        // warning, non-dev refuses tenant API key writes with a 500).
+        let secret_cipher =
+            SecretCipher::new(config.settings_encryption_key.as_deref(), config.is_dev())
+                .map_err(|e| anyhow::anyhow!("SETTINGS_ENCRYPTION_KEY invalid: {e}"))?;
+        if config
+            .settings_encryption_key
+            .as_deref()
+            .unwrap_or("")
+            .is_empty()
+            && !config.is_dev()
+        {
+            tracing::warn!(
+                "SETTINGS_ENCRYPTION_KEY not set — tenant LLM API key writes will be refused \
+                 and existing encrypted keys cannot be read"
+            );
+        }
+
         Ok(Self {
             inner: Arc::new(AppStateInner {
                 config,
@@ -461,6 +482,7 @@ impl AppState {
                 billing_batcher,
                 billing_outbox_relay,
                 delivery_worker,
+                secret_cipher,
             }),
         })
     }
@@ -590,6 +612,10 @@ impl AppState {
 
     pub fn tenant_repo(&self) -> &dyn TenantRepository {
         &*self.inner.tenant_repo
+    }
+
+    pub fn secret_cipher(&self) -> &SecretCipher {
+        &self.inner.secret_cipher
     }
 
     pub fn billing_provider(&self) -> &dyn BillingProvider {

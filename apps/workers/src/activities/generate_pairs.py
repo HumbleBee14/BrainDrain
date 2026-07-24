@@ -324,6 +324,7 @@ class GeneratePairsActivity:
             default_api_key=settings.llm_api_key,
             default_model=settings.llm_model,
             default_max_tokens=settings.llm_max_tokens,
+            encryption_key=settings.settings_encryption_key,
         )
 
         if not llm_config.api_key:

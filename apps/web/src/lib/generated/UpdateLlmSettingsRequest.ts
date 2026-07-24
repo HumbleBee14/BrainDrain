@@ -15,7 +15,8 @@ provider?: string,
  */
 api_base_url?: string, 
 /**
- * API key — stored encrypted, never returned in full
+ * API key — encrypted at rest (AES-256-GCM, requires
+ * SETTINGS_ENCRYPTION_KEY; plaintext in dev without it), never returned in full
  */
 api_key?: string, 
 /**

@@ -21,6 +21,8 @@ dependencies = [
     "redis>=5.0.0",
     # LLM API (OpenAI-compatible)
     "httpx>=0.27.0",
+    # AES-256-GCM decryption of tenant API keys stored encrypted by the API
+    "cryptography>=42.0.0",
     # Structured logging
     "python-json-logger>=3.2.0",
     # Observability (OpenTelemetry)

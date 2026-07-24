@@ -50,6 +50,7 @@ hmac = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 subtle = { workspace = true }
+aes-gcm = { workspace = true }
 
 # Async traits
 async-trait = { workspace = true }

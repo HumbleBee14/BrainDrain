@@ -275,6 +275,15 @@ pub struct Config {
     #[serde(default)]
     pub platform_internal_token: String,
 
+    // ── Secrets at Rest ──
+    /// Base64-encoded 32-byte key for AES-256-GCM encryption of tenant secrets
+    /// (LLM API keys) stored in the database. Generate: `openssl rand -base64 32`.
+    /// Must match the workers' APP_SETTINGS_ENCRYPTION_KEY. When unset,
+    /// development stores plaintext (with a warning); production refuses to
+    /// store tenant API keys.
+    #[serde(default)]
+    pub settings_encryption_key: Option<String>,
+
     // ── Platform Admin ──
     /// Comma-separated allowlist of auth subject IDs (JWT `sub`) that may call
     /// platform/infrastructure admin endpoints. Empty ⇒ nobody is a platform
