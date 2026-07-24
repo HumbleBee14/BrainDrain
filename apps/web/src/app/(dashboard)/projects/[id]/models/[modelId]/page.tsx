@@ -24,6 +24,7 @@ import {
   useOllamaRecipe,
 } from "@/hooks/use-exports";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { AdapterDownloadButton } from "@/components/adapter-download-button";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -248,6 +249,13 @@ export default function ModelDetailPage() {
         <p className="text-zinc-500 mt-1">
           v{model.version} &middot; {model.base_model}
         </p>
+        <div className="mt-4">
+          <AdapterDownloadButton
+            modelId={params.modelId as string}
+            sizeBytes={model.adapter_size_bytes}
+            available={model.has_adapter}
+          />
+        </div>
       </div>
 
       {/* Model info grid */}

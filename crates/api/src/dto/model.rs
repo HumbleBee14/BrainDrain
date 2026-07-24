@@ -19,6 +19,9 @@ pub struct ModelResponse {
     pub eval_scores: Option<EvaluationScores>,
     pub version: i32,
     pub capture_traffic: bool,
+    /// Whether a trained adapter exists and can be downloaded.
+    pub has_adapter: bool,
+    pub adapter_size_bytes: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -46,6 +49,8 @@ impl From<Model> for ModelResponse {
             eval_scores: serde_json::from_value(m.eval_scores).ok(),
             version: m.version,
             capture_traffic: m.capture_traffic,
+            has_adapter: m.adapter_path.is_some(),
+            adapter_size_bytes: m.adapter_size_bytes,
             created_at: m.created_at,
             updated_at: m.updated_at,
         }

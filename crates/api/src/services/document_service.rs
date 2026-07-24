@@ -501,6 +501,13 @@ mod tests {
             unimplemented!()
         }
 
+        async fn list_prefix(
+            &self,
+            _prefix: &str,
+        ) -> Result<Vec<platform_storage::ObjectMeta>, StorageError> {
+            unimplemented!()
+        }
+
         async fn presigned_url(
             &self,
             _key: &str,

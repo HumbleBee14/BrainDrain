@@ -119,6 +119,11 @@ pub struct Config {
     #[serde(default)]
     pub inference_api_key: Option<String>,
 
+    /// Upper bound on the total adapter bytes packaged into a download archive,
+    /// which is built in memory (ADAPTER_DOWNLOAD_MAX_BYTES).
+    #[serde(default = "default_adapter_download_max_bytes")]
+    pub adapter_download_max_bytes: i64,
+
     /// Maximum number of LoRA adapters served simultaneously.
     /// Must match `--max-loras` on vLLM or equivalent for other engines.
     #[serde(default = "default_vllm_max_loras")]
@@ -529,6 +534,9 @@ fn default_inference_max_tokens() -> i64 {
 }
 fn default_vllm_max_loras() -> i64 {
     4
+}
+fn default_adapter_download_max_bytes() -> i64 {
+    2 * 1024 * 1024 * 1024
 }
 fn default_billing_channel_capacity() -> usize {
     10_000

@@ -19,6 +19,7 @@ use crate::dto::training_job::{
 };
 use crate::error::AppResult;
 use crate::rbac::require_role;
+use crate::services::adapter_download_service::AdapterDownloadService;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
 use crate::services::plan_service::PlanService;
@@ -58,6 +59,7 @@ pub fn router() -> Router<AppState> {
         .route("/models/{id}", get(get_model))
         .route("/models/{id}/versions", get(list_model_versions))
         .route("/models/{id}/rollback", post(rollback_model))
+        .route("/models/{id}/adapter/download", get(download_adapter))
 }
 
 /// POST /api/v1/projects/:project_id/training-jobs
@@ -534,6 +536,47 @@ pub async fn get_model(
 ) -> AppResult<Json<ModelResponse>> {
     let model = ModelService::get(state.model_repo(), user.tenant_id, id).await?;
     Ok(Json(model))
+}
+
+/// GET /api/v1/models/:id/adapter/download
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{id}/adapter/download",
+    tag = "Models",
+    params(("id" = Uuid, Path, description = "Model ID")),
+    responses(
+        (status = 200, description = "Adapter archive", content_type = "application/zip"),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn download_adapter(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<impl axum::response::IntoResponse> {
+    let archive = AdapterDownloadService::build_archive(
+        state.model_repo(),
+        state.storage(),
+        user.tenant_id,
+        id,
+        state.config().adapter_download_max_bytes,
+    )
+    .await?;
+
+    let headers = [
+        (
+            axum::http::header::CONTENT_TYPE,
+            "application/zip".to_string(),
+        ),
+        (
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", archive.filename),
+        ),
+    ];
+
+    Ok((headers, archive.bytes))
 }
 
 /// GET /api/v1/models/:id/versions

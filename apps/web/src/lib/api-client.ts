@@ -433,6 +433,72 @@ async function uploadRequest(
   return res.json();
 }
 
+/** A binary download with progress reporting and cancellation. */
+export interface BinaryDownload {
+  blob: Blob;
+  filename: string;
+}
+
+/**
+ * Fetch a binary attachment, reporting progress when the server sends a
+ * Content-Length. Not routed through `fetchWithRetry`: a retry would restart a
+ * potentially large transfer, and the caller owns cancellation via `signal`.
+ */
+async function downloadRequest(
+  path: string,
+  token: string,
+  options?: {
+    signal?: AbortSignal;
+    onProgress?: (loaded: number, total: number | null) => void;
+    fallbackFilename?: string;
+  },
+): Promise<BinaryDownload> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    const body = await parseErrorBody(res);
+    throw new ApiClientError(res.status, body);
+  }
+
+  const filename =
+    parseContentDispositionFilename(res.headers.get("Content-Disposition")) ??
+    options?.fallbackFilename ??
+    "download";
+
+  const lengthHeader = res.headers.get("Content-Length");
+  const total = lengthHeader ? Number(lengthHeader) : null;
+
+  if (!res.body || !options?.onProgress) {
+    return { blob: await res.blob(), filename };
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    options.onProgress(loaded, Number.isFinite(total) ? total : null);
+  }
+
+  const type = res.headers.get("Content-Type") ?? "application/octet-stream";
+  return { blob: new Blob(chunks as BlobPart[], { type }), filename };
+}
+
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const quoted = header.match(/filename="([^"]+)"/i);
+  if (quoted) return quoted[1];
+  const bare = header.match(/filename=([^;]+)/i);
+  return bare ? bare[1].trim() : null;
+}
+
 export const api = {
   catalog: {
     // Public endpoint — no auth token required.
@@ -705,6 +771,19 @@ export const api = {
         token,
         method: "POST",
         body: JSON.stringify({ target_version_id: targetVersionId }),
+      }),
+
+    downloadAdapter: (
+      token: string,
+      id: string,
+      options?: {
+        signal?: AbortSignal;
+        onProgress?: (loaded: number, total: number | null) => void;
+      },
+    ) =>
+      downloadRequest(`/api/v1/models/${id}/adapter/download`, token, {
+        ...options,
+        fallbackFilename: "adapter.zip",
       }),
   },
 

@@ -1,3 +1,4 @@
+pub mod adapter_download_service;
 pub mod api_key_service;
 pub mod audit_logger;
 pub mod billing_batcher;

@@ -7,7 +7,7 @@ use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use std::time::Duration;
 
-use crate::{ObjectStorage, StorageError};
+use crate::{ObjectMeta, ObjectStorage, StorageError};
 
 /// Multipart part size. S3 requires every part except the last to be at least
 /// 5 MiB; 8 MiB keeps part counts low for large objects while bounding the
@@ -379,6 +379,46 @@ impl ObjectStorage for S3Storage {
 
         tracing::debug!(prefix = prefix, deleted = deleted, "Prefix deleted from S3");
         Ok(deleted)
+    }
+
+    async fn list_prefix(&self, prefix: &str) -> Result<Vec<ObjectMeta>, StorageError> {
+        let mut objects = Vec::new();
+        let mut continuation: Option<String> = None;
+
+        loop {
+            let mut req = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(prefix);
+            if let Some(token) = &continuation {
+                req = req.continuation_token(token);
+            }
+
+            let page = req
+                .send()
+                .await
+                .map_err(|e| StorageError::DownloadFailed(e.to_string()))?;
+
+            objects.extend(page.contents().iter().filter_map(|object| {
+                object.key().map(|key| ObjectMeta {
+                    key: key.to_string(),
+                    size: object.size().unwrap_or(0),
+                    content_type: None,
+                })
+            }));
+
+            if page.is_truncated().unwrap_or(false) {
+                continuation = page.next_continuation_token().map(str::to_string);
+                if continuation.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        Ok(objects)
     }
 
     async fn presigned_url(&self, key: &str, expiry_secs: u64) -> Result<String, StorageError> {

@@ -174,6 +174,14 @@ mod tests {
         async fn delete_prefix(&self, _prefix: &str) -> Result<usize, StorageError> {
             Err(StorageError::DeleteFailed("boom".to_string()))
         }
+        fn list_prefix(
+            &self,
+            prefix: &str,
+        ) -> impl std::future::Future<
+            Output = Result<Vec<platform_storage::ObjectMeta>, StorageError>,
+        > + Send {
+            self.inner.list_prefix(prefix)
+        }
         fn presigned_url(
             &self,
             key: &str,

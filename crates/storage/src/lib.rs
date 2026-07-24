@@ -79,6 +79,12 @@ pub trait ObjectStorage: Send + Sync {
         prefix: &str,
     ) -> impl Future<Output = Result<usize, StorageError>> + Send;
 
+    /// List every object whose key starts with `prefix`.
+    fn list_prefix(
+        &self,
+        prefix: &str,
+    ) -> impl Future<Output = Result<Vec<ObjectMeta>, StorageError>> + Send;
+
     /// Generate a presigned download URL valid for `expiry_secs`.
     fn presigned_url(
         &self,

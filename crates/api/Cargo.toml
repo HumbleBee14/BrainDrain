@@ -20,6 +20,8 @@ sqlx = { workspace = true }
 # Redis
 redis = { workspace = true }
 
+zip = { workspace = true }
+
 # Provides the rustls CryptoProvider installed in main(); see there.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 

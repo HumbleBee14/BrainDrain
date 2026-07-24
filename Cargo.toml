@@ -89,6 +89,9 @@ tokio-stream = "0.1"
 # Type generation (Rust → TypeScript)
 ts-rs = { version = "12", features = ["chrono-impl", "uuid-impl", "serde-json-impl", "serde-compat"] }
 
+# Archive packaging (adapter downloads)
+zip = { version = "3", default-features = false }
+
 # OpenAPI documentation
 utoipa = { version = "5", features = ["uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }

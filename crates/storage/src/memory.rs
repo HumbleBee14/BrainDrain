@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{ObjectStorage, StorageError};
+use crate::{ObjectMeta, ObjectStorage, StorageError};
 
 /// In-memory storage backend for unit and integration tests.
 ///
@@ -26,7 +26,6 @@ pub struct InMemoryStorage {
 #[derive(Clone)]
 struct StoredObject {
     data: Bytes,
-    #[allow(dead_code)] // stored for future content-type assertions in tests
     content_type: String,
 }
 
@@ -120,6 +119,21 @@ impl ObjectStorage for InMemoryStorage {
         Ok(matching.len())
     }
 
+    async fn list_prefix(&self, prefix: &str) -> Result<Vec<ObjectMeta>, StorageError> {
+        let objects = self.objects.read().await;
+        let mut matching: Vec<ObjectMeta> = objects
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, object)| ObjectMeta {
+                key: key.clone(),
+                size: object.data.len() as i64,
+                content_type: Some(object.content_type.clone()),
+            })
+            .collect();
+        matching.sort_by(|a, b| a.key.cmp(&b.key));
+        Ok(matching)
+    }
+
     async fn presigned_url(&self, key: &str, _expiry_secs: u64) -> Result<String, StorageError> {
         // Verify object exists, then return a fake URL for test assertions
         if !self.objects.read().await.contains_key(key) {
@@ -208,6 +222,64 @@ mod tests {
         assert_eq!(deleted, 0);
         // Non-matching object still present.
         assert!(store.exists("uploads/t1/a.pdf").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn list_prefix_returns_only_matching_keys_with_sizes() {
+        let store = InMemoryStorage::new();
+        store
+            .put(
+                "adapters/t1/m1/config.json",
+                Bytes::from("{}"),
+                "application/json",
+            )
+            .await
+            .unwrap();
+        store
+            .put(
+                "adapters/t1/m1/model.safetensors",
+                Bytes::from("weights"),
+                "application/octet-stream",
+            )
+            .await
+            .unwrap();
+        store
+            .put(
+                "adapters/t2/m9/config.json",
+                Bytes::from("{}"),
+                "application/json",
+            )
+            .await
+            .unwrap();
+
+        let listed = store.list_prefix("adapters/t1/m1/").await.unwrap();
+
+        let keys: Vec<&str> = listed.iter().map(|o| o.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "adapters/t1/m1/config.json",
+                "adapters/t1/m1/model.safetensors"
+            ]
+        );
+        assert_eq!(listed[1].size, 7);
+    }
+
+    #[tokio::test]
+    async fn list_prefix_with_no_matches_is_empty() {
+        let store = InMemoryStorage::new();
+        store
+            .put("adapters/t1/a", Bytes::from("x"), "text/plain")
+            .await
+            .unwrap();
+
+        assert!(
+            store
+                .list_prefix("adapters/none/")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

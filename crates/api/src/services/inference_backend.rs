@@ -555,7 +555,13 @@ mod tests {
         use std::time::Duration;
         let cb = CircuitBreaker::new(5, Duration::from_secs(30));
         let client = reqwest::Client::new();
-        let backend = build_backend("sglang", "http://localhost:30000".to_string(), client, cb, None);
+        let backend = build_backend(
+            "sglang",
+            "http://localhost:30000".to_string(),
+            client,
+            cb,
+            None,
+        );
         assert_eq!(backend.name(), "sglang");
     }
 
@@ -564,7 +570,13 @@ mod tests {
         use std::time::Duration;
         let cb = CircuitBreaker::new(5, Duration::from_secs(30));
         let client = reqwest::Client::new();
-        let backend = build_backend("  TGI  ", "http://localhost:8080".to_string(), client, cb, None);
+        let backend = build_backend(
+            "  TGI  ",
+            "http://localhost:8080".to_string(),
+            client,
+            cb,
+            None,
+        );
         assert_eq!(backend.name(), "tgi");
     }
 
