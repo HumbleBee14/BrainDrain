@@ -8,6 +8,9 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME || "Platform";
+// After sign-out, send users back to the public marketing site. Falls back to
+// the app root (which routes to sign-in) when no marketing URL is configured.
+const afterSignOutUrl = process.env.NEXT_PUBLIC_MARKETING_URL || "/";
 
 const navLinks = [
   { href: "/dashboard", label: "Dashboard" },
@@ -40,7 +43,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="flex items-center gap-3 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-        <UserButton afterSignOutUrl="/" />
+        <UserButton afterSignOutUrl={afterSignOutUrl} />
         <ThemeToggle />
         <NotificationBell direction="up" />
       </div>
@@ -155,7 +158,7 @@ export default function DashboardLayout({
             </nav>
 
             <div className="flex items-center gap-3 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-              <UserButton afterSignOutUrl="/" />
+              <UserButton afterSignOutUrl={afterSignOutUrl} />
               <ThemeToggle />
             </div>
           </aside>
