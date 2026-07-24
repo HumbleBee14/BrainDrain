@@ -7,7 +7,6 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/package.json
-COPY packages/shared-types/package.json packages/shared-types/package.json
 
 RUN pnpm install --frozen-lockfile
 
@@ -20,11 +19,9 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
-COPY --from=deps /app/packages/shared-types/node_modules ./packages/shared-types/node_modules
 
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY apps/web/ apps/web/
-COPY packages/shared-types/ packages/shared-types/
 
 # Clerk requires NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY at build time for page prerendering.
 # Pass the real key via --build-arg for production builds. The default must be a
