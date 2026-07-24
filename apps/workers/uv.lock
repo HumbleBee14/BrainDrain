@@ -2286,6 +2286,7 @@ pdf-ml = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jinja2" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -2324,6 +2325,7 @@ provides-extras = ["ml", "gpu-cloud", "pdf-ml"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jinja2", specifier = ">=3.1.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "ruff", specifier = ">=0.9.0" },
