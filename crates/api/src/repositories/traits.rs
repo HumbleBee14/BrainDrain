@@ -874,6 +874,11 @@ pub trait TenantRepository: Send + Sync {
         id: Uuid,
         settings: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>>;
+
+    /// Delete a tenant row. Cascades all operational tables (tenant erasure).
+    /// Returns whether a row was deleted (false if the tenant was already gone).
+    /// Cross-tenant platform-admin operation — not tenant-scoped.
+    fn delete(&self, id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
 
 /// Contract for notification database operations.
