@@ -59,8 +59,8 @@ services:
   api:
     image: ghcr.io/humblebee14/ekcron-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    ports:
-      - "80:8000" # Cloudflare proxies api.ekcron.com to this
+    expose:
+      - "8000"
     environment:
       ENVIRONMENT: production
       APP_NAME: Ekcron
@@ -98,6 +98,22 @@ services:
       retries: 3
       start_period: 10s
 
+  # TLS terminator for api.ekcron.com. Auto-provisions a Let's Encrypt cert
+  # (HTTP-01) and reverse-proxies to the API. The DNS record is DNS-only so the
+  # challenge reaches the box directly.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
   workers:
     image: ghcr.io/humblebee14/ekcron-workers:${IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -128,3 +144,5 @@ services:
 
 volumes:
   temporal_postgres_data:
+  caddy_data:
+  caddy_config:

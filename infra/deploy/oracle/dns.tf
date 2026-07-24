@@ -9,6 +9,8 @@ resource "cloudflare_dns_record" "api" {
   name    = var.api_domain
   type    = "A"
   content = oci_core_public_ip.reserved.ip_address
-  ttl     = 1    # 1 = automatic
-  proxied = true # Cloudflare TLS + hides origin
+  ttl     = 1
+  # DNS-only: the box terminates TLS with Caddy (Let's Encrypt). Re-enable the
+  # proxy later with a Cloudflare origin certificate to regain WAF/DDoS + hidden origin.
+  proxied = false
 }

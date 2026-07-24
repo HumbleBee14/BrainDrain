@@ -103,7 +103,7 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             git -C ~/ekcron pull --ff-only
             cd ~/ekcron/infra/deploy/oracle
-            docker compose pull api workers
+            docker compose pull
             docker compose run --rm migrate
             docker compose up -d
             echo "Waiting for API health..."
