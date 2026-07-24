@@ -146,10 +146,55 @@ class TestCreateGrpoPrompts:
         out = tm._create_grpo_prompts(dataset, tok)
         # Prompt is templated (has [gen] marker) and retains the system turn —
         # not the bare, system-dropped user string the old splitter produced.
-        assert out.rows == [{"prompt": "[system]be terse[user]2+2?[gen]"}]
+        assert out.rows == [
+            {"prompt": "[system]be terse[user]2+2?[gen]", "tools_json": "", "ref_calls_json": ""}
+        ]
 
     def test_prompt_only_dataset_uses_whole_conversation(self, tm):
         tok = _Tok(chat_template="x")
         dataset = {"messages": [[{"role": "user", "content": "just a prompt"}]]}
         out = tm._create_grpo_prompts(dataset, tok)
-        assert out.rows == [{"prompt": "[user]just a prompt[gen]"}]
+        assert out.rows == [
+            {"prompt": "[user]just a prompt[gen]", "tools_json": "", "ref_calls_json": ""}
+        ]
+
+    def test_tool_call_final_becomes_prompt_with_reference(self, tm):
+        import json
+
+        tok = _Tok(chat_template="x")
+        calls = [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": "{}"},
+            }
+        ]
+        dataset = {
+            "messages": [
+                [
+                    {"role": "user", "content": "weather?"},
+                    {"role": "assistant", "content": None, "tool_calls": calls},
+                ]
+            ]
+        }
+        out = tm._create_grpo_prompts(dataset, tok)
+        assert len(out.rows) == 1
+        row = out.rows[0]
+        # The tool-call final is excluded from the prompt but preserved as the
+        # reference the verifiable reward scores against.
+        assert row["prompt"] == "[user]weather?[gen]"
+        assert json.loads(row["ref_calls_json"]) == calls
+        assert row["tools_json"] == ""
+
+    def test_empty_final_without_tool_calls_is_skipped(self, tm):
+        tok = _Tok(chat_template="x")
+        dataset = {
+            "messages": [
+                [
+                    {"role": "user", "content": "q"},
+                    {"role": "assistant", "content": "  "},
+                ]
+            ]
+        }
+        out = tm._create_grpo_prompts(dataset, tok)
+        assert out is dataset

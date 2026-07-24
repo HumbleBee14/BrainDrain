@@ -305,12 +305,21 @@ data.
   `<tool_call>{"name": ..., "arguments": ...}</tool_call>` blocks (null
   content handled) and `role: "tool"` turns as their own ChatML block. Plain
   messages render exactly as before.
-- **Eval / DPO / GRPO skip semantics:** these paths need a text-bearing final
+- **Eval / DPO skip semantics:** these paths need a text-bearing final
   assistant turn (a gold answer to score or prefer). Records whose final turn
   is a pure tool call or tool result are skipped — counted and logged (eval
   suites also report `skipped_samples`), never silently dropped or crashed
   on. Prompts that do render pass the record's `tools` through to the
   template.
+- **GRPO verifiable rewards:** records whose gold turn IS a tool call train
+  in GRPO with a deterministic reward instead of the LLM judge: the
+  completion is scored on whether it emits a parsable tool call, whether the
+  name exists in the record's `tools` schema, whether the arguments satisfy
+  that tool's parameter schema (required keys present, no unknown keys), and
+  whether it matches the reference call from the gold trajectory — graded on
+  [-1, 1], the judge's scale. Plain records keep the judge reward; mixed
+  datasets dispatch per record. No configuration: the reward is picked from
+  the data, like everything else in this track.
 - **Import visibility:** dataset stats record `tool_records` — how many
   imported records carry tool data (top-level `tools` or any `tool_calls`).
 
@@ -318,6 +327,7 @@ data.
 
 `apps/workers/src/activities/chat_template.py` (`render_chat` tools
 forwarding, fallback template), `train_model.py` (loader, SFT/DPO/GRPO
-rendering), `run_evaluation.py` (skip + tools threading),
+rendering, `_build_grpo_reward`), `tool_call_reward.py` (verifiable reward),
+`run_evaluation.py` (skip + tools threading),
 `crates/api/src/services/jsonl_import.rs` (`tool_records` count),
 `dataset_service.rs` (stats wiring).
