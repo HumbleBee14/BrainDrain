@@ -9,6 +9,11 @@ class WorkerSettings(BaseSettings):
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "ml-pipeline"
+    # Per-worker activity concurrency. GPU activities share one physical GPU,
+    # so the GPU queue defaults to strictly serial execution — two concurrent
+    # training runs OOM each other. 0 = Temporal's default (no explicit cap).
+    max_concurrent_activities: int = 0
+    gpu_max_concurrent_activities: int = 1
 
     # Database (required — no insecure default)
     database_url: str

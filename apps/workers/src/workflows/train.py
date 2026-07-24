@@ -86,7 +86,7 @@ class TrainWorkflow:
             )
 
             # Finalize: update DB status, calculate cost, create model record
-            await workflow.execute_activity(
+            model_id = await workflow.execute_activity(
                 "finalize_iterative_training",
                 FinalizeIterativeTrainingInput(
                     tenant_id=tenant_id,
@@ -103,6 +103,7 @@ class TrainWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
+            result.model_id = model_id or ""
             return result
 
         elif mode == "aligned":

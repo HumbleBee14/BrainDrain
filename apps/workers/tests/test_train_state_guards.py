@@ -97,6 +97,7 @@ async def test_completed_job_retry_returns_existing_result_without_training():
         "metrics": {"estimated_cost": 1.23},
         "adapter_path": "s3://bucket/tenant/adapters/job/adapter",
         "adapter_size_bytes": 4096,
+        "model_id": "33333333-3333-3333-3333-333333333333",
     }
     db = _FakeDB(started_id=None, existing_row=existing)
     act = _make_activity(db)
@@ -129,6 +130,12 @@ async def test_existing_result_helper_none_when_not_completed():
 
 @pytest.mark.asyncio
 async def test_existing_result_helper_none_when_no_adapter():
-    row = {"status": "completed", "metrics": {}, "adapter_path": None, "adapter_size_bytes": None}
+    row = {
+        "status": "completed",
+        "metrics": {},
+        "adapter_path": None,
+        "adapter_size_bytes": None,
+        "model_id": None,
+    }
     db = _FakeDB(started_id=None, existing_row=row)
     assert await StartTrainingActivity._existing_result_if_completed(db, "job") is None

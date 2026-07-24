@@ -37,6 +37,8 @@ class BuildDatasetOutput:
     pair_count: int
     storage_path: str
     golden_pair_count: int = 0
+    # Id of the datasets row this activity created; "" when nothing was built.
+    dataset_id: str = ""
 
 
 def _to_chat_records(pairs: list[dict], system_prompt: str) -> list[dict]:
@@ -197,4 +199,5 @@ class BuildDatasetActivity:
             pair_count=len(chat_records),
             storage_path=dataset_key,
             golden_pair_count=len(golden_records),
+            dataset_id=input.dataset_id,
         )
