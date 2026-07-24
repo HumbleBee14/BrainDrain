@@ -121,6 +121,71 @@ fn default_max_tokens() -> i64 {
     512
 }
 
+/// How a completed non-streaming (or batch) inference should be billed, given
+/// whether the durable reservation path is active and the token usage observed.
+///
+/// Kept pure so the reserve/finalize/cancel decision is unit-tested without a
+/// live database; the handler carries the reservation row id separately.
+#[derive(Debug, PartialEq, Eq)]
+enum BillingAction {
+    /// Relay active: finalize the reserved row with these token counts.
+    FinalizeReservation(i64, i64),
+    /// Relay active but no billable usage occurred: cancel the reservation.
+    CancelReservation,
+    /// Relay inactive: write a single durable billing event with these counts.
+    SingleWrite(i64, i64),
+    /// Nothing to bill (relay inactive and no usage observed).
+    NoWrite,
+}
+
+/// Decide how to bill a single successful non-streaming completion.
+///
+/// The upstream call already succeeded (failures cancel the reservation before
+/// reaching here), so GPU work was consumed: when the backend omits usage we
+/// finalize with the conservative pre-call estimate rather than dropping the
+/// charge.
+fn non_streaming_billing_action(
+    relay_enabled: bool,
+    reported_in: i64,
+    reported_out: i64,
+    estimate_in: i64,
+    estimate_out: i64,
+) -> BillingAction {
+    let has_usage = reported_in > 0 || reported_out > 0;
+    if relay_enabled {
+        let (bill_in, bill_out) = if has_usage {
+            (reported_in, reported_out)
+        } else {
+            (estimate_in, estimate_out)
+        };
+        BillingAction::FinalizeReservation(bill_in, bill_out)
+    } else if has_usage {
+        BillingAction::SingleWrite(reported_in, reported_out)
+    } else {
+        BillingAction::NoWrite
+    }
+}
+
+/// Decide how to bill a batch given the aggregate usage across its items.
+///
+/// A batch may have every item fail, so with no aggregate usage the reservation
+/// is cancelled instead of finalized to a conservative charge for work that
+/// never happened.
+fn batch_billing_action(relay_enabled: bool, total_in: i64, total_out: i64) -> BillingAction {
+    let has_usage = total_in > 0 || total_out > 0;
+    if relay_enabled {
+        if has_usage {
+            BillingAction::FinalizeReservation(total_in, total_out)
+        } else {
+            BillingAction::CancelReservation
+        }
+    } else if has_usage {
+        BillingAction::SingleWrite(total_in, total_out)
+    } else {
+        BillingAction::NoWrite
+    }
+}
+
 /// OpenAI-compatible chat completion response (schema-only for docs).
 #[derive(Serialize, ToSchema)]
 pub struct ChatCompletionResponse {
@@ -238,7 +303,34 @@ pub async fn chat_completions(
     let inference_url = backend.chat_completions_url();
     let http_client = state.http_client().clone();
 
-    let vllm_resp = backend
+    // Prompt-token estimate used as the conservative billing fallback for both
+    // the streaming reservation (below) and the non-streaming reservation.
+    let estimated_prompt_tokens = token_estimator::estimate_tokens_from_messages(
+        body.messages.iter().map(|m| m.content.as_str()),
+    );
+
+    // Non-streaming reserves a durable conservative billing row BEFORE the
+    // upstream call so a crash after the GPU work but before we read usage is
+    // still finalized — by us with actuals below, or by the reaper with the
+    // fallback. Streaming reserves after its own success check further down.
+    let non_streaming_pending = if !is_streaming && state.billing_outbox_relay_handle().is_some() {
+        Some(
+            billing_outbox::enqueue_stream_pending(
+                state.db(),
+                api_key.tenant_id,
+                Some(api_key.model_id),
+                estimated_prompt_tokens,
+                max_tokens,
+                token_estimator::estimate_inference_cost(estimated_prompt_tokens, max_tokens),
+                serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    let vllm_resp = match backend
         .circuit_breaker()
         .execute(|| async {
             http_client
@@ -250,12 +342,26 @@ pub async fn chat_completions(
                     AppError::Internal(anyhow::anyhow!("Cannot reach inference service: {e}"))
                 })
         })
-        .await?;
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            // No billable work occurred — drop the reservation so the reaper
+            // does not later charge the fallback for a failed call.
+            if let Some(row_id) = non_streaming_pending {
+                billing_outbox::cancel_stream_pending(state.db(), row_id).await;
+            }
+            return Err(e);
+        }
+    };
 
     if !vllm_resp.status().is_success() {
         let status = vllm_resp.status();
         let body_text = vllm_resp.text().await.unwrap_or_default();
         tracing::error!(status = %status, body = %body_text, "Inference request failed");
+        if let Some(row_id) = non_streaming_pending {
+            billing_outbox::cancel_stream_pending(state.db(), row_id).await;
+        }
         return Err(AppError::Internal(anyhow::anyhow!(
             "Inference request failed: {status}"
         )));
@@ -307,11 +413,6 @@ pub async fn chat_completions(
                     Err(e) => Err(std::io::Error::other(e.to_string())),
                 }
             });
-
-        // Estimate prompt tokens from request for fallback billing.
-        let estimated_prompt_tokens = token_estimator::estimate_tokens_from_messages(
-            body.messages.iter().map(|m| m.content.as_str()),
-        );
 
         let stream_metadata = serde_json::json!({
             "api_key_id": key_id.to_string(),
@@ -423,23 +524,51 @@ pub async fn chat_completions(
             AppError::Internal(anyhow::anyhow!("Failed to parse inference response: {e}"))
         })?;
 
-        // Extract token usage for billing via batcher (not fire-and-forget spawn)
         let tokens_in = response["usage"]["prompt_tokens"].as_i64().unwrap_or(0);
         let tokens_out = response["usage"]["completion_tokens"].as_i64().unwrap_or(0);
 
-        if tokens_in > 0 || tokens_out > 0 {
-            state
-                .record_billing_event_required(
-                    api_key.tenant_id,
-                    "inference",
-                    Some(api_key.model_id),
-                    tokens_in,
-                    tokens_out,
-                    0,
-                    token_estimator::estimate_inference_cost(tokens_in, tokens_out),
-                    serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
-                )
-                .await?;
+        match non_streaming_billing_action(
+            non_streaming_pending.is_some(),
+            tokens_in,
+            tokens_out,
+            estimated_prompt_tokens,
+            max_tokens,
+        ) {
+            BillingAction::FinalizeReservation(bill_in, bill_out) => {
+                if let Some(row_id) = non_streaming_pending {
+                    // Finalize the reservation with actuals. A finalize failure
+                    // must NOT fail the request — the reaper delivers the
+                    // conservative fallback still on the row.
+                    let cost = token_estimator::estimate_inference_cost(bill_in, bill_out);
+                    if let Err(e) = billing_outbox::finalize_stream_pending(
+                        state.db(),
+                        row_id,
+                        bill_in,
+                        bill_out,
+                        cost,
+                        serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
+                    )
+                    .await
+                    {
+                        tracing::error!(error = %e, row_id = %row_id, "Failed to finalize non-streaming billing row");
+                    }
+                }
+            }
+            BillingAction::SingleWrite(bill_in, bill_out) => {
+                state
+                    .record_billing_event_required(
+                        api_key.tenant_id,
+                        "inference",
+                        Some(api_key.model_id),
+                        bill_in,
+                        bill_out,
+                        0,
+                        token_estimator::estimate_inference_cost(bill_in, bill_out),
+                        serde_json::json!({"api_key_id": api_key.key_id.to_string()}),
+                    )
+                    .await?;
+            }
+            BillingAction::NoWrite | BillingAction::CancelReservation => {}
         }
 
         if let (Some(id), Some(msgs)) = (sample_id, capture_messages)
@@ -591,6 +720,47 @@ pub async fn batch_chat_completions(
         .unwrap_or("")
         .to_string();
 
+    let batch_size = body.requests.len();
+
+    // Conservative batch reservation: summed prompt-token estimates plus capped
+    // max_tokens across all items, committed durably BEFORE any upstream work so
+    // a crash mid-batch is finalized by the reaper.
+    let batch_est_prompt: i64 = body
+        .requests
+        .iter()
+        .map(|it| {
+            token_estimator::estimate_tokens_from_messages(
+                it.messages.iter().map(|m| m.content.as_str()),
+            )
+        })
+        .sum();
+    let batch_est_completion: i64 = body
+        .requests
+        .iter()
+        .map(|it| it.max_tokens.min(max_tokens_limit))
+        .sum();
+
+    let batch_pending = if state.billing_outbox_relay_handle().is_some() {
+        Some(
+            billing_outbox::enqueue_stream_pending(
+                state.db(),
+                api_key.tenant_id,
+                Some(api_key.model_id),
+                batch_est_prompt,
+                batch_est_completion,
+                token_estimator::estimate_inference_cost(batch_est_prompt, batch_est_completion),
+                serde_json::json!({
+                    "api_key_id": api_key.key_id.to_string(),
+                    "batch": true,
+                    "batch_size": batch_size,
+                }),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
     // Process batch items concurrently with bounded parallelism
     let results: Vec<BatchResponseItem> = futures::stream::iter(body.requests)
         .map(|item| {
@@ -686,24 +856,53 @@ pub async fn batch_chat_completions(
         }
     }
 
-    // Bill aggregated tokens
-    if total_prompt > 0 || total_completion > 0 {
-        state
-            .record_billing_event_required(
-                api_key.tenant_id,
-                "inference",
-                Some(api_key.model_id),
-                total_prompt,
-                total_completion,
-                0,
-                token_estimator::estimate_inference_cost(total_prompt, total_completion),
-                serde_json::json!({
-                    "api_key_id": api_key.key_id.to_string(),
-                    "batch": true,
-                    "batch_size": results.len(),
-                }),
-            )
-            .await?;
+    let batch_metadata = serde_json::json!({
+        "api_key_id": api_key.key_id.to_string(),
+        "batch": true,
+        "batch_size": results.len(),
+    });
+
+    match batch_billing_action(batch_pending.is_some(), total_prompt, total_completion) {
+        BillingAction::FinalizeReservation(bill_in, bill_out) => {
+            if let Some(row_id) = batch_pending {
+                // Finalize failure must not fail the request — the reaper
+                // delivers the conservative fallback still on the row.
+                let cost = token_estimator::estimate_inference_cost(bill_in, bill_out);
+                if let Err(e) = billing_outbox::finalize_stream_pending(
+                    state.db(),
+                    row_id,
+                    bill_in,
+                    bill_out,
+                    cost,
+                    batch_metadata,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, row_id = %row_id, "Failed to finalize batch billing row");
+                }
+            }
+        }
+        BillingAction::CancelReservation => {
+            // Every item failed — no billable work, so drop the reservation.
+            if let Some(row_id) = batch_pending {
+                billing_outbox::cancel_stream_pending(state.db(), row_id).await;
+            }
+        }
+        BillingAction::SingleWrite(bill_in, bill_out) => {
+            state
+                .record_billing_event_required(
+                    api_key.tenant_id,
+                    "inference",
+                    Some(api_key.model_id),
+                    bill_in,
+                    bill_out,
+                    0,
+                    token_estimator::estimate_inference_cost(bill_in, bill_out),
+                    batch_metadata,
+                )
+                .await?;
+        }
+        BillingAction::NoWrite => {}
     }
 
     Ok(Json(BatchChatCompletionResponse {
@@ -753,5 +952,62 @@ mod tests {
         let out = with_default_system_prompt(&msgs, "");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].role, "user");
+    }
+
+    // ── Non-streaming billing decision ──
+
+    #[test]
+    fn non_streaming_relay_finalizes_with_actuals() {
+        // Relay on + real usage: finalize the reservation with the actuals.
+        let action = non_streaming_billing_action(true, 120, 40, 10, 512);
+        assert_eq!(action, BillingAction::FinalizeReservation(120, 40));
+    }
+
+    #[test]
+    fn non_streaming_relay_finalizes_with_estimate_when_usage_missing() {
+        // Relay on + backend omitted usage: GPU work still happened, so
+        // finalize with the conservative pre-call estimate, never zero.
+        let action = non_streaming_billing_action(true, 0, 0, 10, 512);
+        assert_eq!(action, BillingAction::FinalizeReservation(10, 512));
+    }
+
+    #[test]
+    fn non_streaming_no_relay_keeps_single_write() {
+        // No relay + usage: preserve the prior single durable write behavior.
+        let action = non_streaming_billing_action(false, 120, 40, 10, 512);
+        assert_eq!(action, BillingAction::SingleWrite(120, 40));
+    }
+
+    #[test]
+    fn non_streaming_no_relay_no_usage_writes_nothing() {
+        let action = non_streaming_billing_action(false, 0, 0, 10, 512);
+        assert_eq!(action, BillingAction::NoWrite);
+    }
+
+    // ── Batch billing decision ──
+
+    #[test]
+    fn batch_relay_finalizes_with_aggregate() {
+        let action = batch_billing_action(true, 500, 200);
+        assert_eq!(action, BillingAction::FinalizeReservation(500, 200));
+    }
+
+    #[test]
+    fn batch_relay_cancels_when_all_items_failed() {
+        // No aggregate usage means no billable work — cancel, don't overcharge.
+        let action = batch_billing_action(true, 0, 0);
+        assert_eq!(action, BillingAction::CancelReservation);
+    }
+
+    #[test]
+    fn batch_no_relay_keeps_single_write() {
+        let action = batch_billing_action(false, 500, 200);
+        assert_eq!(action, BillingAction::SingleWrite(500, 200));
+    }
+
+    #[test]
+    fn batch_no_relay_no_usage_writes_nothing() {
+        let action = batch_billing_action(false, 0, 0);
+        assert_eq!(action, BillingAction::NoWrite);
     }
 }
