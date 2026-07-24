@@ -32,6 +32,12 @@ use services::inference_instance_service::InferenceInstanceService;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // rustls links both aws-lc-rs and ring (AWS SDK + redis TLS), so the provider
+    // must be selected explicitly before any TLS handshake.
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("failed to install rustls CryptoProvider"))?;
+
     // Load configuration from environment
     let config = Config::from_env().map_err(|e| anyhow::anyhow!("Config error: {e}"))?;
 

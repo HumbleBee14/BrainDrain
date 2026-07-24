@@ -20,6 +20,10 @@ sqlx = { workspace = true }
 # Redis
 redis = { workspace = true }
 
+# TLS: pin the process-level rustls CryptoProvider (both aws-lc-rs and ring are in
+# the graph, so rustls can't auto-select — installed explicitly at startup).
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
+
 # Auth
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
