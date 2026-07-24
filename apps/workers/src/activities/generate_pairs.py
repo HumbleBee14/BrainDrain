@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 from temporalio import activity
@@ -164,6 +164,10 @@ class GenerateSyntheticPairsInput:
     # chunks across facet×subtopic angles instead of the flat facet list).
     # 0 disables expansion.
     facet_subtopics: int = 3
+    # Human-rated preview samples ({prompt, response, looks_good}) used as
+    # few-shot calibration for the faithfulness judge. Defaulted so payloads
+    # queued before this field existed still deserialize.
+    rated: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -383,7 +387,9 @@ class GeneratePairsActivity:
             pair_generator: PairGenerator = get_pair_generator(
                 settings, make_llm_call(settings.generation_temperature)
             )
-            scorer = get_faithfulness_scorer(settings, make_llm_call(settings.judge_temperature))
+            scorer = get_faithfulness_scorer(
+                settings, make_llm_call(settings.judge_temperature), calibration=input.rated
+            )
 
             # Expand facets into facet×subtopic angles for generation diversity.
             # One LLM call per facet — negligible next to the per-chunk calls.

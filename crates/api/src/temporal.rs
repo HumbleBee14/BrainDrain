@@ -121,6 +121,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         system_prompt: &str,
         facets: serde_json::Value,
         document_ids: Vec<Uuid>,
+        rated: serde_json::Value,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
@@ -495,6 +496,7 @@ impl WorkflowOrchestrator for TemporalClient {
         system_prompt: &str,
         facets: serde_json::Value,
         document_ids: Vec<Uuid>,
+        rated: serde_json::Value,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let task_type = task_type.to_string();
@@ -506,8 +508,9 @@ impl WorkflowOrchestrator for TemporalClient {
                 build_generate_dataset_workflow_id(data_guide_id, chrono::Utc::now().timestamp());
 
             // Positional args — order MUST match GenerateDatasetWorkflow.run.
-            // system_prompt is last so pre-existing in-flight workflows using
-            // the Python default stay compatible.
+            // system_prompt and rated were added after the fact, so they go
+            // last: pre-existing in-flight workflows using the Python
+            // defaults stay compatible.
             self.start_workflow_on_queue(
                 "GenerateDatasetWorkflow",
                 &workflow_id,
@@ -520,6 +523,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     facets,
                     document_ids,
                     system_prompt,
+                    rated,
                 ]),
                 None,
                 &trace_ctx,

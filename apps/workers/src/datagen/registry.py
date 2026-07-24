@@ -48,9 +48,13 @@ def get_guidance_refiner(settings: WorkerSettings, llm_call: LlmCall) -> Guidanc
     raise ValueError(f"unknown datagen_refiner_backend: {settings.datagen_refiner_backend}")
 
 
-def get_faithfulness_scorer(settings: WorkerSettings, llm_call: LlmCall) -> FaithfulnessScorer:
+def get_faithfulness_scorer(
+    settings: WorkerSettings,
+    llm_call: LlmCall,
+    calibration: list[dict] | None = None,
+) -> FaithfulnessScorer:
     if settings.datagen_faithfulness_backend == "llm":
-        return LlmFaithfulnessScorer(llm_call=llm_call)
+        return LlmFaithfulnessScorer(llm_call=llm_call, calibration=calibration)
     raise ValueError(
         f"unknown datagen_faithfulness_backend: {settings.datagen_faithfulness_backend}"
     )
