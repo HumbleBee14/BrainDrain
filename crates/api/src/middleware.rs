@@ -53,11 +53,25 @@ pub fn request_id_layers() -> (SetRequestIdLayer<MakeRequestUuid>, PropagateRequ
     )
 }
 
+/// Span for each traced request: method + path, never the query string —
+/// query params can carry credentials (WebSocket auth tokens, presigned URLs)
+/// and must not reach logs.
+fn request_span(request: &Request<Body>) -> tracing::Span {
+    tracing::info_span!(
+        "request",
+        method = %request.method(),
+        path = %request.uri().path(),
+    )
+}
+
+type RequestSpanFn = fn(&Request<Body>) -> tracing::Span;
+
 /// HTTP request/response tracing layer.
-pub fn trace_layer()
--> TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>>
-{
-    TraceLayer::new_for_http()
+pub fn trace_layer() -> TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    RequestSpanFn,
+> {
+    TraceLayer::new_for_http().make_span_with(request_span as RequestSpanFn)
 }
 
 // -- Security Headers --

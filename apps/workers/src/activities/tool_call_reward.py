@@ -97,8 +97,10 @@ def _schema_map(tools: list) -> dict[str, dict]:
 def _arguments_satisfy_schema(arguments: dict | None, params: dict) -> bool:
     """Shallow parameter-schema check: required keys present, no unknown keys.
 
-    A tool without a declared parameter schema accepts any parsable arguments
-    object; declared ``properties`` bound the accepted keys.
+    Declared ``properties`` bound the accepted keys, and an explicit
+    ``additionalProperties: false`` is honored even without ``properties``.
+    Otherwise extra keys are accepted, matching JSON Schema's default of
+    ``additionalProperties: true``.
     """
     if arguments is None:
         return False
@@ -108,8 +110,12 @@ def _arguments_satisfy_schema(arguments: dict | None, params: dict) -> bool:
     if isinstance(required, list) and not set(required) <= set(arguments):
         return False
     properties = params.get("properties")
-    if isinstance(properties, dict) and properties:
-        return set(arguments) <= set(properties)
+    known = set(properties) if isinstance(properties, dict) else set()
+    if params.get("additionalProperties") is False:
+        allowed = known | (set(required) if isinstance(required, list) else set())
+        return set(arguments) <= allowed
+    if known:
+        return set(arguments) <= known
     return True
 
 

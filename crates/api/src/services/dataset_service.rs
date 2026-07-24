@@ -283,17 +283,28 @@ impl DatasetService {
             }
         }
 
-        dataset_repo
+        // The row is what makes the uploaded objects reachable; if it can't be
+        // created, remove them so a failed import leaves nothing behind.
+        let created = dataset_repo
             .create_imported(
                 tenant_id,
                 project_id,
                 dataset_id,
                 name.to_string(),
-                dataset_key,
+                dataset_key.clone(),
                 total as i32,
                 stats,
             )
-            .await
+            .await;
+        if created.is_err() {
+            let val_key = dataset_key.replace(".jsonl", "_val.jsonl");
+            for key in [dataset_key.as_str(), val_key.as_str()] {
+                if let Err(e) = storage.delete(key).await {
+                    tracing::warn!(key, error = %e, "failed to clean up orphaned dataset object");
+                }
+            }
+        }
+        created
     }
 
     /// Get a presigned URL for the parsed content of a document.
