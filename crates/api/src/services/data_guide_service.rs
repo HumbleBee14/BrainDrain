@@ -41,6 +41,26 @@ fn resolve_num_samples(requested: Option<u32>) -> u32 {
         .clamp(MIN_NUM_SAMPLES, MAX_NUM_SAMPLES)
 }
 
+/// Map preview samples to the `{prompt, response, looks_good}` records the
+/// Python workers deserialize as `RatedSample` (it has no `rating` field and
+/// no notion of an unrated sample), so unrated samples are dropped and the
+/// three-state `rating` is collapsed to the boolean the workers expect.
+fn rated_samples_payload(samples: &[PreviewSample]) -> serde_json::Value {
+    let rated: Vec<serde_json::Value> = samples
+        .iter()
+        .filter_map(|s| {
+            s.rating.map(|rating| {
+                json!({
+                    "prompt": s.prompt,
+                    "response": s.response,
+                    "looks_good": rating == SampleRating::Realistic,
+                })
+            })
+        })
+        .collect();
+    serde_json::Value::Array(rated)
+}
+
 /// Business logic for the guided synthetic-data session (data guide).
 ///
 /// Orchestrates the Draft → GeneratingFacets → FacetsReady → GeneratingPreview →
@@ -315,23 +335,6 @@ impl DataGuideService {
             });
         }
 
-        // The Python `RefineGuidanceActivity` deserializes `rated` into `RatedSample`
-        // (`{prompt, response, looks_good: bool}`) — it has no `rating` field and no
-        // notion of an unrated sample, so only rated samples are included and the
-        // three-state `rating` is collapsed to the boolean the refiner expects.
-        let rated: Vec<serde_json::Value> = samples
-            .iter()
-            .filter_map(|s| {
-                s.rating.map(|rating| {
-                    json!({
-                        "prompt": s.prompt,
-                        "response": s.response,
-                        "looks_good": rating == SampleRating::Realistic,
-                    })
-                })
-            })
-            .collect();
-
         let result = orchestrator
             .start_refine_guidance(
                 tenant_id,
@@ -339,7 +342,7 @@ impl DataGuideService {
                 guide_id,
                 &guide.task_type,
                 &guide.guidance,
-                serde_json::to_value(&rated).map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?,
+                rated_samples_payload(&samples),
                 trace_ctx,
             )
             .await
@@ -450,6 +453,11 @@ impl DataGuideService {
         }
         let doc_ids: Vec<Uuid> = parsed_docs.iter().map(|d| d.id).collect();
 
+        // Human ratings from the preview step calibrate the generation-time
+        // faithfulness judge (few-shot examples of the reviewer's quality bar).
+        let samples: Vec<PreviewSample> =
+            serde_json::from_value(guide.preview_samples.clone()).unwrap_or_default();
+
         let result = orchestrator
             .start_generate_dataset(
                 tenant_id,
@@ -460,6 +468,7 @@ impl DataGuideService {
                 &guide.system_prompt,
                 guide.facets.clone(),
                 doc_ids,
+                rated_samples_payload(&samples),
                 trace_ctx,
             )
             .await
@@ -541,6 +550,39 @@ mod tests {
         assert_eq!(resolve_num_facets(Some(0)), MIN_NUM_FACETS);
         assert_eq!(resolve_num_samples(Some(1_000_000)), MAX_NUM_SAMPLES);
         assert_eq!(resolve_num_samples(Some(0)), MIN_NUM_SAMPLES);
+    }
+
+    fn sample(id: &str, rating: Option<SampleRating>) -> PreviewSample {
+        PreviewSample {
+            id: id.to_string(),
+            facet_id: None,
+            prompt: format!("prompt-{id}"),
+            response: format!("response-{id}"),
+            rating,
+        }
+    }
+
+    #[test]
+    fn rated_samples_payload_keeps_only_rated_and_maps_looks_good() {
+        let samples = vec![
+            sample("a", Some(SampleRating::Realistic)),
+            sample("b", Some(SampleRating::NeedsWork)),
+            sample("c", None),
+        ];
+        let payload = rated_samples_payload(&samples);
+        let arr = payload.as_array().expect("payload must be a JSON array");
+        assert_eq!(arr.len(), 2, "unrated samples must be dropped");
+        assert_eq!(arr[0]["prompt"], "prompt-a");
+        assert_eq!(arr[0]["response"], "response-a");
+        assert_eq!(arr[0]["looks_good"], true);
+        assert_eq!(arr[1]["prompt"], "prompt-b");
+        assert_eq!(arr[1]["looks_good"], false);
+    }
+
+    #[test]
+    fn rated_samples_payload_empty_input_yields_empty_array() {
+        let payload = rated_samples_payload(&[]);
+        assert_eq!(payload, serde_json::json!([]));
     }
 
     #[test]
