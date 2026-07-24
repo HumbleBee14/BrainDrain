@@ -1,148 +1,116 @@
-name: Deploy to Staging
+name: Build and Deploy
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'apps/workers/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'infra/deploy/oracle/**'
+      - '.github/workflows/deploy-staging.yml'
   workflow_dispatch:
 
-# Serialize staging runs without cancelling: every merged SHA gets its image
-# builds verified even when merges land in quick succession.
 concurrency:
-  group: staging
+  group: deploy
   cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_API: ghcr.io/humblebee14/ekcron-api
+  IMAGE_WORKERS: ghcr.io/humblebee14/ekcron-workers
 
 jobs:
   build-api:
-    name: Build API image
-    runs-on: ubuntu-latest
+    name: Build & push API image (arm64)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      # Add registry login step when deploying:
-      # - name: Login to registry
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ${{ vars.REGISTRY }}
-      #     username: ${{ secrets.REGISTRY_USER }}
-      #     password: ${{ secrets.REGISTRY_PASSWORD }}
-
-      - name: Build API image
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./crates/api/Dockerfile
-          push: false  # Set to true when registry is configured
-          tags: platform-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  build-web:
-    name: Build Web image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build Web image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./apps/web/Dockerfile
-          push: false
-          tags: platform-web:${{ github.sha }}
-          # Build verification only (no deploy). ClerkProvider validates the key
-          # format while prerendering, so pass a format-valid placeholder. The real
-          # key is injected at deploy time, not baked into the image.
-          build-args: |
-            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_API }}:latest
+            ${{ env.IMAGE_API }}:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
 
   build-workers:
-    name: Build Workers image
-    runs-on: ubuntu-latest
+    name: Build & push Workers image (arm64)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build Workers image
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push
         uses: docker/build-push-action@v7
         with:
           context: ./apps/workers
           file: ./apps/workers/Dockerfile
-          push: false
-          tags: platform-workers:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_WORKERS }}:latest
+            ${{ env.IMAGE_WORKERS }}:${{ github.sha }}
+          cache-from: type=gha,scope=workers
+          cache-to: type=gha,mode=max,scope=workers
 
-  # ── Deploy to staging ──
-  # Uncomment and configure when ready for automated deployment.
-  # Templates below for common platforms.
-
-  # deploy-railway:
-  #   name: Deploy to Railway
-  #   needs: [build-api, build-web, build-workers]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - name: Deploy API
-  #       uses: bervProject/railway-deploy@main
-  #       with:
-  #         railway_token: ${{ secrets.RAILWAY_TOKEN }}
-  #         service: platform-api
-
-  # deploy-fly:
-  #   name: Deploy to Fly.io
-  #   needs: [build-api, build-web, build-workers]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - uses: superfly/flyctl-actions/setup-flyctl@master
-  #     - run: flyctl deploy --app platform-api-staging
-  #       env:
-  #         FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-  # deploy-vps:
-  #   name: Deploy to VPS (Docker Compose)
-  #   needs: [build-api, build-web, build-workers]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - name: Deploy via SSH
-  #       uses: appleboy/ssh-action@v1
-  #       with:
-  #         host: ${{ secrets.STAGING_HOST }}
-  #         username: ${{ secrets.STAGING_USER }}
-  #         key: ${{ secrets.STAGING_SSH_KEY }}
-  #         script: |
-  #           set -e
-  #           cd /opt/platform
-  #
-  #           # 1. Pull new images
-  #           docker compose -f docker-compose.prod.yml pull
-  #
-  #           # 2. Run migrations FIRST (connects directly to Postgres, not PgBouncer)
-  #           docker compose -f docker-compose.prod.yml run --rm migrate
-  #
-  #           # 3. Rolling restart: API first, then web, then workers
-  #           docker compose -f docker-compose.prod.yml up -d --no-deps api
-  #           sleep 10
-  #           # Verify API health before continuing
-  #           curl -sf http://localhost:8000/health || { echo "API health check failed"; exit 1; }
-  #
-  #           docker compose -f docker-compose.prod.yml up -d --no-deps web
-  #           docker compose -f docker-compose.prod.yml up -d --no-deps workers
-  #
-  #           # 4. Verify all services healthy
-  #           sleep 5
-  #           docker compose -f docker-compose.prod.yml ps
-  #
-  #           # 5. Cleanup old images
-  #           docker system prune -f
+  deploy:
+    name: Deploy to box
+    needs: [build-api, build-workers]
+    runs-on: ubuntu-latest
+    # Auto-deploy activates once BOX_SSH_KEY is added; until then CI just builds/pushes.
+    if: ${{ vars.AUTO_DEPLOY == 'true' }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        with:
+          host: ${{ secrets.BOX_HOST }}
+          username: ubuntu
+          key: ${{ secrets.BOX_SSH_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER
+          script: |
+            set -e
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            git -C ~/ekcron pull --ff-only
+            cd ~/ekcron/infra/deploy/oracle
+            docker compose pull api workers
+            docker compose run --rm migrate
+            docker compose up -d
+            echo "Waiting for API health..."
+            for i in $(seq 1 20); do
+              if docker exec ekcron-api-1 curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+                echo "API healthy"; docker logout ghcr.io; exit 0
+              fi
+              sleep 6
+            done
+            echo "API did not become healthy"; docker logs ekcron-api-1 --tail 40; docker logout ghcr.io; exit 1

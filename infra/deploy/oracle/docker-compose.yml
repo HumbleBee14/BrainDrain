@@ -50,18 +50,14 @@ services:
   # Runs migrations against the managed DB, then exits. Connects directly (DDL +
   # advisory locks need session state a pooler can't guarantee).
   migrate:
-    build:
-      context: ../../..
-      dockerfile: crates/api/Dockerfile
+    image: ghcr.io/humblebee14/ekcron-api:${IMAGE_TAG:-latest}
     entrypoint: ["platform-migrate"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
     restart: "no"
 
   api:
-    build:
-      context: ../../..
-      dockerfile: crates/api/Dockerfile
+    image: ghcr.io/humblebee14/ekcron-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "80:8000" # Cloudflare proxies api.ekcron.com to this
@@ -101,9 +97,7 @@ services:
       start_period: 10s
 
   workers:
-    build:
-      context: ../../../apps/workers
-      dockerfile: Dockerfile
+    image: ghcr.io/humblebee14/ekcron-workers:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       APP_TEMPORAL_ADDRESS: temporal:7233
