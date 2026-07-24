@@ -86,6 +86,8 @@ services:
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
       FEATURE_FLAGS_PROVIDER: static
       FEATURE_FLAGS_JSON: '{"billing.outbox.enabled":true,"idempotency.enforced":true,"deployments.multi_instance.enabled":false}'
+      INFERENCE_BACKEND_TYPE: vllm
+      INFERENCE_SERVER_URL: ${INFERENCE_SERVER_URL:-https://humblebee14--ekcron-vllm-serving-serve.modal.run}
     depends_on:
       migrate:
         condition: service_completed_successfully
