@@ -82,6 +82,11 @@ pub trait InferenceBackend: Send + Sync {
     fn chat_completions_url(&self) -> String {
         format!("{}/v1/chat/completions", self.base_url())
     }
+
+    /// Attach the engine's auth credentials to an outgoing request.
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
 }
 
 // ─── vLLM ──────────────────────────────────────────────────────────────────
@@ -104,6 +109,7 @@ pub struct VllmBackend {
     base_url: String,
     http_client: reqwest::Client,
     circuit_breaker: CircuitBreaker,
+    api_key: Option<String>,
 }
 
 impl VllmBackend {
@@ -111,11 +117,13 @@ impl VllmBackend {
         base_url: String,
         http_client: reqwest::Client,
         circuit_breaker: CircuitBreaker,
+        api_key: Option<String>,
     ) -> Self {
         Self {
             base_url,
             http_client,
             circuit_breaker,
+            api_key,
         }
     }
 }
@@ -132,6 +140,13 @@ impl InferenceBackend for VllmBackend {
 
     fn circuit_breaker(&self) -> &CircuitBreaker {
         &self.circuit_breaker
+    }
+
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.api_key.as_deref() {
+            Some(key) => request.bearer_auth(key),
+            None => request,
+        }
     }
 
     async fn load_adapter(&self, _model_id: Uuid, adapter_path: &str) -> AppResult<AdapterHandle> {
@@ -154,7 +169,7 @@ impl InferenceBackend for VllmBackend {
         let resp = self
             .circuit_breaker
             .execute(|| async {
-                http.post(&url)
+                self.apply_auth(http.post(&url))
                     .json(&warmup)
                     .send()
                     .await
@@ -179,8 +194,7 @@ impl InferenceBackend for VllmBackend {
     async fn unload_adapter(&self, adapter_ref: &str) -> AppResult<()> {
         let url = format!("{}/v1/unload_lora_adapter", self.base_url);
         match self
-            .http_client
-            .post(&url)
+            .apply_auth(self.http_client.post(&url))
             .json(&serde_json::json!({"lora_name": adapter_ref}))
             .send()
             .await
@@ -451,6 +465,7 @@ pub fn build_backend(
     server_url: String,
     http_client: reqwest::Client,
     circuit_breaker: CircuitBreaker,
+    api_key: Option<String>,
 ) -> Arc<dyn InferenceBackend> {
     let normalized = backend_type.trim().to_lowercase();
     match normalized.as_str() {
@@ -470,7 +485,12 @@ pub fn build_backend(
                 );
             }
             tracing::info!(%server_url, "Inference backend: vLLM");
-            Arc::new(VllmBackend::new(server_url, http_client, circuit_breaker))
+            Arc::new(VllmBackend::new(
+                server_url,
+                http_client,
+                circuit_breaker,
+                api_key,
+            ))
         }
     }
 }
@@ -481,12 +501,14 @@ pub fn build_backend_for_instance(
     server_url: &str,
     http_client: reqwest::Client,
     circuit_breaker: CircuitBreaker,
+    api_key: Option<String>,
 ) -> Arc<dyn InferenceBackend> {
     build_backend(
         backend_type,
         server_url.to_string(),
         http_client,
         circuit_breaker,
+        api_key,
     )
 }
 
@@ -513,6 +535,7 @@ mod tests {
             "http://localhost:8080".to_string(),
             client,
             cb,
+            None,
         );
         assert_eq!(backend.name(), "vllm");
     }
@@ -522,7 +545,7 @@ mod tests {
         use std::time::Duration;
         let cb = CircuitBreaker::new(5, Duration::from_secs(30));
         let client = reqwest::Client::new();
-        let backend = build_backend("tgi", "http://localhost:8080".to_string(), client, cb);
+        let backend = build_backend("tgi", "http://localhost:8080".to_string(), client, cb, None);
         assert_eq!(backend.name(), "tgi");
         assert_eq!(backend.base_url(), "http://localhost:8080");
     }
@@ -532,7 +555,7 @@ mod tests {
         use std::time::Duration;
         let cb = CircuitBreaker::new(5, Duration::from_secs(30));
         let client = reqwest::Client::new();
-        let backend = build_backend("sglang", "http://localhost:30000".to_string(), client, cb);
+        let backend = build_backend("sglang", "http://localhost:30000".to_string(), client, cb, None);
         assert_eq!(backend.name(), "sglang");
     }
 
@@ -541,7 +564,7 @@ mod tests {
         use std::time::Duration;
         let cb = CircuitBreaker::new(5, Duration::from_secs(30));
         let client = reqwest::Client::new();
-        let backend = build_backend("  TGI  ", "http://localhost:8080".to_string(), client, cb);
+        let backend = build_backend("  TGI  ", "http://localhost:8080".to_string(), client, cb, None);
         assert_eq!(backend.name(), "tgi");
     }
 
@@ -553,6 +576,7 @@ mod tests {
             "http://localhost:8080".to_string(),
             reqwest::Client::new(),
             cb,
+            None,
         );
         let body = backend.build_inference_body(
             "adapter-123",
@@ -564,6 +588,34 @@ mod tests {
         );
         assert_eq!(body["model"], "adapter-123");
         assert!(body.get("parameters").is_none());
+    }
+
+    #[test]
+    fn vllm_applies_bearer_auth_only_when_key_is_set() {
+        use std::time::Duration;
+
+        let header_of = |api_key: Option<String>| {
+            let backend = VllmBackend::new(
+                "http://localhost:8080".to_string(),
+                reqwest::Client::new(),
+                CircuitBreaker::new(5, Duration::from_secs(30)),
+                api_key,
+            );
+            let request = backend
+                .apply_auth(backend.http_client.post("http://localhost:8080"))
+                .build()
+                .expect("request builds");
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .map(|value| value.to_str().unwrap().to_string())
+        };
+
+        assert_eq!(header_of(None), None);
+        assert_eq!(
+            header_of(Some("secret-key".to_string())).as_deref(),
+            Some("Bearer secret-key")
+        );
     }
 
     #[test]

@@ -331,6 +331,7 @@ impl AppState {
             config.inference_server_url.clone(),
             http_client.clone(),
             inference_circuit_breaker,
+            config.inference_api_key().map(str::to_owned),
         );
 
         // Billing micro-batcher (in-memory, used when outbox is disabled)
@@ -664,6 +665,7 @@ impl AppState {
                 self.inner.config.vllm_cb_failure_threshold,
                 Duration::from_secs(self.inner.config.vllm_cb_recovery_timeout_secs),
             ),
+            self.inner.config.inference_api_key().map(str::to_owned),
         );
 
         if let Ok(mut cache) = self.inner.instance_backend_cache.write() {

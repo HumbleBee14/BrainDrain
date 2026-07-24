@@ -115,6 +115,10 @@ pub struct Config {
     #[serde(default = "default_inference_server_url")]
     pub inference_server_url: String,
 
+    /// Bearer token the serving engine requires (INFERENCE_API_KEY).
+    #[serde(default)]
+    pub inference_api_key: Option<String>,
+
     /// Maximum number of LoRA adapters served simultaneously.
     /// Must match `--max-loras` on vLLM or equivalent for other engines.
     #[serde(default = "default_vllm_max_loras")]
@@ -379,6 +383,14 @@ impl Config {
     /// Parse CORS origins into a Vec.
     pub fn cors_origins_list(&self) -> Vec<String> {
         split_csv(&self.cors_origins)
+    }
+
+    /// Serving-engine bearer token; blank is treated as unset.
+    pub fn inference_api_key(&self) -> Option<&str> {
+        self.inference_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
     }
 
     /// Platform-admin subject IDs (JWT `sub`), parsed from the allowlist.

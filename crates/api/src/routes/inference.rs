@@ -333,8 +333,8 @@ pub async fn chat_completions(
     let vllm_resp = match backend
         .circuit_breaker()
         .execute(|| async {
-            http_client
-                .post(&inference_url)
+            backend
+                .apply_auth(http_client.post(&inference_url))
                 .json(&inference_request)
                 .send()
                 .await
@@ -785,8 +785,8 @@ pub async fn batch_chat_completions(
 
                 let resp = cb
                     .execute(|| async {
-                        client
-                            .post(&url)
+                        backend
+                            .apply_auth(client.post(&url))
                             .json(&request_body)
                             .send()
                             .await

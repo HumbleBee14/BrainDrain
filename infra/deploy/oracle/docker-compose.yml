@@ -88,6 +88,7 @@ services:
       FEATURE_FLAGS_JSON: '{"billing.outbox.enabled":true,"idempotency.enforced":true,"deployments.multi_instance.enabled":false}'
       INFERENCE_BACKEND_TYPE: ${INFERENCE_BACKEND_TYPE:-vllm}
       INFERENCE_SERVER_URL: ${INFERENCE_SERVER_URL:-https://humblebee14--ekcron-vllm-serving-serve.modal.run}
+      INFERENCE_API_KEY: ${INFERENCE_API_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

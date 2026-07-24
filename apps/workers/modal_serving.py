@@ -97,4 +97,9 @@ def serve():
         "--dtype",
         os.environ.get("VLLM_DTYPE", _DEFAULT_DTYPE),
     ]
+
+    api_key = os.environ.get("VLLM_API_KEY", "").strip()
+    if api_key:
+        cmd += ["--api-key", api_key]
+
     subprocess.Popen(cmd)
