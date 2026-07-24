@@ -1,9 +1,7 @@
-# Portions of the prompt wording in this file are adapted from third-party
-# sources — see THIRD_PARTY_NOTICES.md at the repository root.
 """Central library of LLM prompts for the synthetic data-generation pipeline.
 
-Prompts live ONLY here — never inline them at call sites — so wording,
-attribution, and prompt-injection hygiene stay in one small, auditable file.
+Prompts live ONLY here — never inline them at call sites — so wording and
+prompt-injection hygiene stay in one small, auditable file.
 """
 
 from html import escape
@@ -29,12 +27,11 @@ def wrap_guidance(base: str, guidance: str) -> str:
     """
     return f"""{base}
 
-# Special Instructions
+# Additional Instructions
 
-The above instructions are the original instructions for this task. For this
-execution, we've been given additional instructions. Follow both, but
-prioritize the additional instructions when they conflict. The additional
-instructions are:
+Beyond the task described above, the operator supplied extra instructions
+for this run. Apply both; where they disagree, the extra instructions take
+precedence. They are:
 <additional_instructions>
 {xml_escape(guidance)}
 </additional_instructions>
@@ -94,23 +91,22 @@ the JSON object.
         base = """You are a **Q&A generation assistant**.
 
 ## Task Description
-Your goal is to generate high-quality **query-answer (Q&A)** pairs from the
-document content provided in the user message. A Q&A pair is a query and an
-answer to that query.
+Read the document content provided in the user message and produce
+high-quality **query-answer (Q&A) pairs** from it: each pair is one query
+plus the answer the document gives to that query.
 
-The queries should reflect **realistic user queries** that someone might ask
-when searching a corpus containing this document (among many others).
+Write queries the way real users would actually phrase them when hunting
+for this information inside a large document collection.
 
 ### Important Guidelines
-- Each query must have a **clear, objective answer** based on the document.
-  Avoid subjective or opinion-based queries.
-- Avoid **unanswerable queries** — every query must be answerable from the
-  given text.
-- Answers must be **factually correct**, **concise**, and **derived strictly
-  from the provided text** — not from general knowledge or assumptions.
-- Avoid answers that are too vague, too broad, or too detailed.
-- Queries may be phrased as natural questions or as short search-style
-  queries.
+- Only ask what the text settles **definitively** — skip subjective or
+  opinion-based questions.
+- Never emit a query the provided text cannot answer.
+- Ground every answer **strictly in the provided text** — no general
+  knowledge, no assumptions — and keep it factually correct and brief.
+- Pitch answers at a useful level of detail: not one-word fragments, not
+  exhaustive dumps, not vague generalities.
+- Mix natural-language questions with short keyword-style search queries.
 
 ### Output Format
 Return a single JSON object with this exact structure:
