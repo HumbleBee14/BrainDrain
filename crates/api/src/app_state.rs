@@ -231,6 +231,8 @@ impl AppState {
             config.clerk_jwks_url.clone(),
             config.is_dev(),
             http_client.clone(),
+            config.clerk_issuer.clone(),
+            config.clerk_authorized_parties_list(),
         ));
 
         // Internal token auth for worker → API service calls

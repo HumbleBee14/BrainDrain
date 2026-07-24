@@ -202,13 +202,25 @@ impl AuthProviderChain {
 pub struct ClerkAuthProvider {
     jwks_cache: JwksCache,
     is_dev: bool,
+    /// Expected `iss` claim. `None` disables issuer validation.
+    issuer: Option<String>,
+    /// Allowlist for the `azp` claim. Empty disables the check.
+    authorized_parties: Vec<String>,
 }
 
 impl ClerkAuthProvider {
-    pub fn new(jwks_url: String, is_dev: bool, http_client: reqwest::Client) -> Self {
+    pub fn new(
+        jwks_url: String,
+        is_dev: bool,
+        http_client: reqwest::Client,
+        issuer: Option<String>,
+        authorized_parties: Vec<String>,
+    ) -> Self {
         Self {
             jwks_cache: JwksCache::new(jwks_url, http_client),
             is_dev,
+            issuer,
+            authorized_parties,
         }
     }
 }
@@ -224,7 +236,14 @@ impl AuthProvider for ClerkAuthProvider {
             }
 
             // Try Clerk JWT verification (uses cached JWKS keys)
-            let claims = match verify_clerk_jwt(token, &self.jwks_cache).await {
+            let claims = match verify_clerk_jwt(
+                token,
+                &self.jwks_cache,
+                self.issuer.as_deref(),
+                &self.authorized_parties,
+            )
+            .await
+            {
                 Ok(c) => c,
                 Err(e) => return Some(Err(e)),
             };
@@ -641,6 +660,9 @@ struct ClerkClaims {
     /// Present only when the Clerk JWT template includes the email claim.
     #[serde(default)]
     email: Option<String>,
+    /// Authorized party — the frontend origin that minted the session.
+    #[serde(default)]
+    azp: Option<String>,
     // Clerk includes more claims; we only extract what we need.
 }
 
@@ -666,7 +688,14 @@ fn parse_dev_token(token: &str) -> Option<AuthenticatedUser> {
 ///
 /// Extracts the `kid` from the JWT header to find the correct signing key.
 /// Uses the JWKS cache (1h TTL) to avoid per-request HTTP calls.
-async fn verify_clerk_jwt(token: &str, jwks_cache: &JwksCache) -> Result<ClerkClaims, AppError> {
+/// Validates `iss` when `issuer` is set and `azp` when `authorized_parties`
+/// is non-empty (both opt-in — unset config keeps prior behavior).
+async fn verify_clerk_jwt(
+    token: &str,
+    jwks_cache: &JwksCache,
+    issuer: Option<&str>,
+    authorized_parties: &[String],
+) -> Result<ClerkClaims, AppError> {
     // Extract kid from JWT header for key matching
     let header = jsonwebtoken::decode_header(token).map_err(|_| AppError::Unauthorized)?;
     let kid = header.kid.ok_or(AppError::Unauthorized)?;
@@ -674,13 +703,36 @@ async fn verify_clerk_jwt(token: &str, jwks_cache: &JwksCache) -> Result<ClerkCl
     // Get the decoding key from cache (auto-refreshes on miss or TTL expiry)
     let decoding_key = jwks_cache.get_key(&kid).await?;
 
-    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
-    validation.validate_exp = true;
+    let validation = build_validation(issuer);
 
     let TokenData { claims, .. } = decode::<ClerkClaims>(token, &decoding_key, &validation)
         .map_err(|_| AppError::Unauthorized)?;
 
+    check_azp(claims.azp.as_deref(), authorized_parties)?;
+
     Ok(claims)
+}
+
+/// Build JWT validation rules: RS256, expiry, and (when configured) issuer.
+fn build_validation(issuer: Option<&str>) -> Validation {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.validate_exp = true;
+    if let Some(iss) = issuer {
+        validation.set_issuer(&[iss]);
+    }
+    validation
+}
+
+/// Enforce the `azp` allowlist. Empty allowlist ⇒ check disabled.
+/// A missing `azp` claim is rejected when the allowlist is configured.
+fn check_azp(azp: Option<&str>, authorized_parties: &[String]) -> Result<(), AppError> {
+    if authorized_parties.is_empty() {
+        return Ok(());
+    }
+    match azp {
+        Some(azp) if authorized_parties.iter().any(|p| p == azp) => Ok(()),
+        _ => Err(AppError::Unauthorized),
+    }
 }
 
 /// Look up tenant_id by Clerk organization ID.
@@ -721,4 +773,107 @@ async fn resolve_personal_tenant(
     .fetch_one(db)
     .await
     .map_err(AppError::Database)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{EncodingKey, Header, encode};
+
+    // Throwaway RSA keypair generated for these tests only — never used anywhere else.
+    const TEST_RSA_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCp965pbEZ3b8/5
+R8hIKWTB+hoIXrnHOa+zThSlzdeh2Ugcl+3pv5oEiGGB7uqoEtodYrMnBxONBzUm
+CjqjtAvstFtnLEArlW/fQ5OZzKeMj+r/6BrDNjZh4QNHnieOfkHGIy4o76Hh5nBN
+jjrMl7GjabA+5IzdoKNG2lLqqLZHhDORNAXF5NRnayYX/36fS9lluL+Hw7OTpskr
+Qh9pbZAJinS6ehcM6rsBDWvjLwnw+YZpfi9VEV72xENFaB09kIzs3KOlcNCzqkkN
+llRaklfRE7suR+7AblBi6gpNZVkPjTrwa1+TlaLFYdgNxMjgrvmjzWaWeKyIW7St
+qTVwKXyFAgMBAAECggEAaoQU4m5/jrQcwt0wb8C5KzNAg0RR6r+FE7p4CByC6SQR
+JBI2gAmaTQLnEJWYqzH9TPMg0PGHWBdPQIKikxrvaizxJyw9HtMs498mrfjqe5Vp
+sWxU8UeVNyvbcVN0+MC5GaHMeM0MR1Sxxni+8p6SLZW7ZP64JOBZ0rpZwkNu0EvM
+yEPe43MkN1/rxbgIGABYVId6sna0IlgYLfiwHRgykaWQIygdFPZQiXmbmfgi6e7a
+kk2N6OsMPu9Rkv68vGngmh5SRwrl6hshrZImOaeZ+TWJuyxS2SwKVcGllJQtF6de
+FBX8S8L7SeXaYuFjkG+JXGvMk+XJOAh760aRsdRadQKBgQDTYiv14T5Z3+hU9I0a
+fjPIf9KxG0BBNwKT/smejiSh8izzlLJfdSN0JAPluGR108ajwX1IqeC7izUEI+xB
+fFLDbmjff6KBfgtQnFVpIyUcXZG0o6HE13uQWMW0rqORbuwiJP4ey2eaoISY6eHf
+BGv1MmpddnA/4ZTSA1hDcxYxiwKBgQDN16bWTBhEH6EQt+oa+jDA1z1UtwpNcvkm
+NSXlOsyRtIHgQqTkK+5DBNdHTXruwWe9Loz1KfpY0ooZ4tIIZtOH++gOCfYlPe3u
+ztBJrjS03GIM0fSbdJVBsIW8tUdYSvCbqYMUOrFYKleeluUWCrELot1BI0JncRSc
+0Y6KgQesLwKBgEByZO7BLq5eGsqUCNUz9vvBJO6EXXHEoM+YVcY2liqd2GCnTD7Y
+Sufk9x85ub9GwwA4RMc7q93iElbh0O0iR2V4KxdBJb2PPUnlcBDu+yiLypmlbfPC
+stSOjDCLMilsBShf2O5wm3TETckFPa0t/vAx38YBDzYaw7HH/UgLNZADAoGAdGJt
+W5dU1RfJGsnSHQS/Ehng/Igt1BKg2sCMN6riRbP5BxLHZpeMNOqEyjT9wAcsn6O1
+YV0lxpjsKqy7srJpAeclkuKBARed8zuOO0q7VFOTQMppcogdaDHlvAgHWd2tY2YZ
+zhNNeJsgRXPt/WN4LSsdzJmiDxi53d0Cqj9AVlMCgYAvSKaT4IWS0SPXFOn3GB5q
+tqablmqHMf61wSUogkYiNS/uJxZ2AcaV6s1f7kqjFEj0ICShvXbmQImZO44ETwK4
+y3bvuKI4OIXzTbh6jhhQzx9BusRMH5OWZDpQye7Q0Y7+jFUCmc94LPHiopyLGf7N
+e/WXHQfJavZ36z2IOfjqoQ==
+-----END PRIVATE KEY-----";
+
+    const TEST_RSA_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqfeuaWxGd2/P+UfISClk
+wfoaCF65xzmvs04Upc3XodlIHJft6b+aBIhhge7qqBLaHWKzJwcTjQc1Jgo6o7QL
+7LRbZyxAK5Vv30OTmcynjI/q/+gawzY2YeEDR54njn5BxiMuKO+h4eZwTY46zJex
+o2mwPuSM3aCjRtpS6qi2R4QzkTQFxeTUZ2smF/9+n0vZZbi/h8Ozk6bJK0IfaW2Q
+CYp0unoXDOq7AQ1r4y8J8PmGaX4vVRFe9sRDRWgdPZCM7NyjpXDQs6pJDZZUWpJX
+0RO7LkfuwG5QYuoKTWVZD4068Gtfk5WixWHYDcTI4K75o81mlnisiFu0rak1cCl8
+hQIDAQAB
+-----END PUBLIC KEY-----";
+
+    fn sign_token(iss: &str) -> String {
+        let exp = chrono::Utc::now().timestamp() + 300;
+        let claims = serde_json::json!({ "sub": "user_1", "iss": iss, "exp": exp });
+        let key = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_PEM.as_bytes()).unwrap();
+        encode(&Header::new(jsonwebtoken::Algorithm::RS256), &claims, &key).unwrap()
+    }
+
+    fn decode_with_issuer(token: &str, issuer: Option<&str>) -> Result<ClerkClaims, ()> {
+        let key = DecodingKey::from_rsa_pem(TEST_RSA_PUBLIC_PEM.as_bytes()).unwrap();
+        decode::<ClerkClaims>(token, &key, &build_validation(issuer))
+            .map(|d| d.claims)
+            .map_err(|_| ())
+    }
+
+    #[test]
+    fn issuer_match_accepted() {
+        let token = sign_token("https://good.example.com");
+        let claims = decode_with_issuer(&token, Some("https://good.example.com")).unwrap();
+        assert_eq!(claims.sub, "user_1");
+    }
+
+    #[test]
+    fn issuer_mismatch_rejected() {
+        let token = sign_token("https://evil.example.com");
+        assert!(decode_with_issuer(&token, Some("https://good.example.com")).is_err());
+    }
+
+    #[test]
+    fn issuer_unset_skips_check() {
+        let token = sign_token("https://anything.example.com");
+        assert!(decode_with_issuer(&token, None).is_ok());
+    }
+
+    #[test]
+    fn azp_empty_allowlist_allows_any() {
+        assert!(check_azp(Some("https://app.example.com"), &[]).is_ok());
+        assert!(check_azp(None, &[]).is_ok());
+    }
+
+    #[test]
+    fn azp_in_allowlist_accepted() {
+        let allowed = vec!["https://app.example.com".to_string()];
+        assert!(check_azp(Some("https://app.example.com"), &allowed).is_ok());
+    }
+
+    #[test]
+    fn azp_not_in_allowlist_rejected() {
+        let allowed = vec!["https://app.example.com".to_string()];
+        assert!(check_azp(Some("https://evil.example.com"), &allowed).is_err());
+    }
+
+    #[test]
+    fn azp_missing_rejected_when_allowlist_set() {
+        let allowed = vec!["https://app.example.com".to_string()];
+        assert!(check_azp(None, &allowed).is_err());
+    }
 }

@@ -78,6 +78,18 @@ pub struct Config {
     #[allow(dead_code)]
     pub clerk_secret_key: String,
 
+    /// Expected JWT `iss` claim (e.g. `https://your-instance.clerk.accounts.dev`).
+    /// Unset ⇒ issuer is not validated. Set this in every real deployment so
+    /// tokens signed by another instance's keys are rejected.
+    #[serde(default)]
+    pub clerk_issuer: Option<String>,
+
+    /// Comma-separated allowlist for the JWT `azp` (authorized party) claim —
+    /// the frontend origins allowed to mint sessions. Empty ⇒ `azp` is not
+    /// checked. When set, tokens without a matching `azp` are rejected.
+    #[serde(default)]
+    pub clerk_authorized_parties: String,
+
     // ── Temporal ──
     /// Temporal server host:port.
     #[serde(default = "default_temporal_host")]
@@ -372,6 +384,11 @@ impl Config {
             .into_iter()
             .map(|s| s.to_lowercase())
             .collect()
+    }
+
+    /// Authorized parties for the JWT `azp` claim, parsed from the allowlist.
+    pub fn clerk_authorized_parties_list(&self) -> Vec<String> {
+        split_csv(&self.clerk_authorized_parties)
     }
 
     /// Whether we're running in development mode.
