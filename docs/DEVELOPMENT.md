@@ -352,6 +352,25 @@ real deployment.
 
 Each has its own `Dockerfile`. They share **zero runtime dependencies** — communicate only via HTTP API and Temporal task queues.
 
+### Production Checklist (must-set before going live)
+
+Security-relevant configuration that is intentionally permissive in
+development and must be set explicitly in production:
+
+| Setting | Component | What it does | Unset behavior |
+|---|---|---|---|
+| `SETTINGS_ENCRYPTION_KEY` | API **and** workers | AES-256-GCM key (base64, 32 bytes — `openssl rand -base64 32`) encrypting tenant LLM API keys at rest (`enc:v1:` format). Same key on both sides. | Dev: plaintext storage with a warning. Prod: settings writes with an API key are refused. |
+| `CLERK_ISSUER` | API | Validates the JWT `iss` claim against your Clerk instance URL | Issuer not validated |
+| `CLERK_AUTHORIZED_PARTIES` | API | Comma-separated allowlist checked against the JWT `azp` claim | azp not validated |
+| `TRUSTED_PROXY_CIDRS` | API | Marks your load balancer/proxy IPs so per-client rate limiting uses the real client IP from X-Forwarded-For (rightmost-untrusted). Without it, all traffic behind a proxy shares one rate-limit bucket. | Socket IP used; forwarded headers ignored |
+| `ENVIRONMENT=production` | workers | Enables fetch-time SSRF re-validation of tenant-supplied LLM base URLs (all resolved IPs must be public). Override with `URL_GUARD_ENABLED`. | Guard off (dev works against localhost endpoints) |
+| `GPU_MAX_CONCURRENT_ACTIVITIES` | workers | Concurrent activities on the GPU queue. Default `1` (strictly serial — two training runs OOM one GPU); raise only with multiple GPUs. | Default 1 |
+| Object-storage versioning | R2/MinIO console | Enable bucket versioning (and replication if available) on the uploads/adapters bucket — Postgres has PITR, object data needs its own protection. | Manual console action, not code |
+
+Also review the eval-gate thresholds (`DEPLOY_MIN_AB_WIN_RATE`,
+`DEPLOY_MAX_BENCHMARK_REGRESSION`, `DEPLOY_MIN_DOC_KNOWLEDGE_LIFT`) — all
+optional, but they are the production quality gate.
+
 ---
 
 ## Phase Status
