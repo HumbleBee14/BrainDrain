@@ -34,6 +34,11 @@ class WorkerSettings(BaseSettings):
     platform_api_url: str = "http://localhost:8000"
     platform_internal_token: str = ""
 
+    # Decrypts tenant LLM API keys stored as enc:v1:... in tenants.settings
+    # (AES-256-GCM, base64-encoded 32 bytes). Must match the API's
+    # SETTINGS_ENCRYPTION_KEY. Empty + encrypted value = the activity fails loud.
+    settings_encryption_key: str = ""
+
     # LLM API (OpenAI-compatible — works with any provider)
     llm_api_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""

@@ -291,6 +291,7 @@ async def create_judge_for_tenant(
         default_api_base_url=settings.llm_api_base_url,
         default_api_key=settings.llm_api_key,
         default_model=settings.llm_model,
+        encryption_key=getattr(settings, "settings_encryption_key", None),
     )
 
     return OpenAICompatibleJudge(

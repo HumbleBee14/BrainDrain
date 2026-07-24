@@ -8,6 +8,8 @@ import json
 import logging
 from dataclasses import dataclass
 
+from src.secret_cipher import decrypt_secret
+
 logger = logging.getLogger("platform.tenant_config")
 
 
@@ -29,6 +31,8 @@ async def get_tenant_llm_config(
     default_api_key: str,
     default_model: str,
     default_max_tokens: int = 2000,
+    *,
+    encryption_key: str | None = None,
 ) -> TenantLlmConfig:
     """Fetch tenant-specific LLM config from DB, falling back to worker defaults.
 
@@ -39,6 +43,9 @@ async def get_tenant_llm_config(
         db: asyncpg connection pool
         tenant_id: UUID string of the tenant
         default_*: Worker-level env var defaults (used when tenant has no custom config)
+        encryption_key: Base64 key for tenant API keys stored encrypted
+            (enc:v1:...). An encrypted key without it raises SecretCipherError —
+            fail loud rather than send the ciphertext as a bearer token.
     """
     defaults = TenantLlmConfig(
         api_base_url=default_api_base_url,
@@ -74,6 +81,8 @@ async def get_tenant_llm_config(
 
     # Tenant has custom config — use it, falling back to defaults for missing fields
     api_key = llm.get("api_key") or ""
+    if api_key:
+        api_key = decrypt_secret(api_key, encryption_key)
     has_custom_key = bool(api_key)
 
     return TenantLlmConfig(

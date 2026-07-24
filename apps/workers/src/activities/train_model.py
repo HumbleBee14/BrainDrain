@@ -135,6 +135,7 @@ class StartTrainingActivity:
                 default_api_base_url=self.infra.settings.llm_api_base_url,
                 default_api_key=self.infra.settings.llm_api_key,
                 default_model=self.infra.settings.llm_model,
+                encryption_key=self.infra.settings.settings_encryption_key,
             )
 
             if self.gpu_provider is not None:
@@ -815,6 +816,7 @@ async def _run_training(input: StartTrainingInput, infra: InfraContainer) -> Sta
         default_api_base_url=infra.settings.llm_api_base_url,
         default_api_key=infra.settings.llm_api_key,
         default_model=infra.settings.llm_model,
+        encryption_key=infra.settings.settings_encryption_key,
     )
     return await run_training_core(
         input,
