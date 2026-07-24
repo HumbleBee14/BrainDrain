@@ -87,6 +87,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://app.ekcron.com}
       RATE_LIMIT_ENABLED: "true"
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -118,6 +119,7 @@ services:
       APP_SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?}
       APP_LLM_API_KEY: ${APP_LLM_API_KEY:-}
       APP_PLATFORM_API_URL: http://api:8000
+      APP_PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
       APP_MODAL_APP_NAME: ${APP_MODAL_APP_NAME:-platform-training}
