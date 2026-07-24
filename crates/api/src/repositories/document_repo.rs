@@ -226,4 +226,18 @@ impl DocumentRepository for PgDocumentRepo {
             Ok(count)
         })
     }
+
+    fn delete(&self, tenant_id: Uuid, document_id: Uuid) -> BoxFuture<'_, AppResult<bool>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let result = sqlx::query("DELETE FROM documents WHERE id = $1 AND tenant_id = $2")
+                .bind(document_id)
+                .bind(tenant_id)
+                .execute(&mut *tx)
+                .await?;
+
+            tx.commit().await?;
+            Ok(result.rows_affected() > 0)
+        })
+    }
 }

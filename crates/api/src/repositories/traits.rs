@@ -134,6 +134,9 @@ pub trait DocumentRepository: Send + Sync {
 
     /// Sum of uploaded document bytes for a tenant (storage-quota accounting).
     fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Hard-delete a document row. Returns whether a row was deleted.
+    fn delete(&self, tenant_id: Uuid, document_id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
 
 /// Contract for dataset database operations.
