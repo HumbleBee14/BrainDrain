@@ -51,8 +51,12 @@ pub async fn get_llm_settings(
 ) -> AppResult<Json<LlmSettingsResponse>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let settings =
-        TenantSettingsService::get_llm_settings(state.tenant_repo(), user.tenant_id).await?;
+    let settings = TenantSettingsService::get_llm_settings(
+        state.tenant_repo(),
+        state.secret_cipher(),
+        user.tenant_id,
+    )
+    .await?;
 
     Ok(Json(settings))
 }
@@ -75,8 +79,12 @@ pub async fn test_llm_settings(
 ) -> AppResult<Json<LlmTestResponse>> {
     require_role(&user, TeamRole::Admin)?;
 
-    let result =
-        TenantSettingsService::test_llm_connection(state.tenant_repo(), user.tenant_id).await?;
+    let result = TenantSettingsService::test_llm_connection(
+        state.tenant_repo(),
+        state.secret_cipher(),
+        user.tenant_id,
+    )
+    .await?;
 
     Ok(Json(result))
 }
@@ -111,9 +119,13 @@ pub async fn update_llm_settings(
         "api_key_changed": body.api_key.is_some(),
     });
 
-    let settings =
-        TenantSettingsService::update_llm_settings(state.tenant_repo(), user.tenant_id, body)
-            .await?;
+    let settings = TenantSettingsService::update_llm_settings(
+        state.tenant_repo(),
+        state.secret_cipher(),
+        user.tenant_id,
+        body,
+    )
+    .await?;
 
     AuditLogger::log(
         state.audit_log_repo(),

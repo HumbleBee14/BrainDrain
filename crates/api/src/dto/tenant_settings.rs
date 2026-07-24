@@ -14,7 +14,8 @@ pub struct UpdateLlmSettingsRequest {
     /// OpenAI-compatible API base URL
     #[ts(optional)]
     pub api_base_url: Option<String>,
-    /// API key — stored encrypted, never returned in full
+    /// API key — encrypted at rest (AES-256-GCM, requires
+    /// SETTINGS_ENCRYPTION_KEY; plaintext in dev without it), never returned in full
     #[ts(optional)]
     pub api_key: Option<String>,
     /// Model identifier (e.g., "gpt-4o-mini", "llama-3.1-70b-versatile")

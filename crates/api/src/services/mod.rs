@@ -27,6 +27,7 @@ pub mod pipeline_service;
 pub mod plan_service;
 pub mod project_service;
 pub mod reaper;
+pub mod secret_cipher;
 pub mod smtp_email;
 pub mod stripe_billing;
 pub mod team_service;

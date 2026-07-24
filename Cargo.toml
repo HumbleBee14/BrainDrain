@@ -67,6 +67,8 @@ hmac = "0.12"
 rand = "0.8"
 hex = "0.4"
 subtle = "2"
+# AEAD for tenant secrets at rest — no existing AEAD dep in the tree
+aes-gcm = "0.10"
 
 # Async traits
 async-trait = "0.1"

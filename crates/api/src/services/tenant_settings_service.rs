@@ -6,18 +6,22 @@ use crate::dto::tenant_settings::{
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::TenantRepository;
+use crate::services::secret_cipher::SecretCipher;
 
 /// Business logic for per-tenant configuration.
 ///
 /// Settings are stored in the `tenants.settings` JSONB column, namespaced
 /// by feature (e.g., `settings.llm` for LLM provider config). This avoids
-/// new tables and migrations — the column already exists.
+/// new tables and migrations — the column already exists. The LLM API key
+/// is encrypted at rest (`enc:v1:` prefix); legacy plaintext values are
+/// still readable and get re-encrypted on the next save.
 pub struct TenantSettingsService;
 
 impl TenantSettingsService {
     /// Get the LLM provider settings for a tenant (API key masked).
     pub async fn get_llm_settings(
         tenant_repo: &dyn TenantRepository,
+        cipher: &SecretCipher,
         tenant_id: Uuid,
     ) -> AppResult<LlmSettingsResponse> {
         let settings = tenant_repo.get_settings(tenant_id).await?;
@@ -31,7 +35,10 @@ impl TenantSettingsService {
                     .get("api_key")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
-                    .map(mask_api_key),
+                    .map(|stored| cipher.decrypt(stored))
+                    .transpose()
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?
+                    .map(|key| mask_api_key(&key)),
                 model: json_str(llm_val, "model"),
                 max_tokens: llm_val
                     .get("max_tokens")
@@ -56,6 +63,7 @@ impl TenantSettingsService {
     /// returned to the caller — only a coarse pass/fail and the HTTP status.
     pub async fn test_llm_connection(
         tenant_repo: &dyn TenantRepository,
+        cipher: &SecretCipher,
         tenant_id: Uuid,
     ) -> AppResult<LlmTestResponse> {
         let settings = tenant_repo.get_settings(tenant_id).await?;
@@ -72,11 +80,15 @@ impl TenantSettingsService {
         };
 
         let base_url = json_str(&llm, "api_base_url").unwrap_or_default();
+        // Decrypt before use — an `enc:v1:` blob must never go out as a bearer token.
         let api_key = llm
             .get("api_key")
             .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
+            .filter(|s| !s.is_empty())
+            .map(|stored| cipher.decrypt(stored))
+            .transpose()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?
+            .unwrap_or_default();
 
         if base_url.is_empty() {
             return Ok(LlmTestResponse {
@@ -167,6 +179,7 @@ impl TenantSettingsService {
     /// not in the request are preserved.
     pub async fn update_llm_settings(
         tenant_repo: &dyn TenantRepository,
+        cipher: &SecretCipher,
         tenant_id: Uuid,
         request: UpdateLlmSettingsRequest,
     ) -> AppResult<LlmSettingsResponse> {
@@ -204,7 +217,11 @@ impl TenantSettingsService {
             );
         }
         if let Some(api_key) = request.api_key {
-            llm_obj.insert("api_key".into(), serde_json::Value::String(api_key));
+            // Encrypted at rest; without a key this errors outside development.
+            let stored = cipher
+                .encrypt(&api_key)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+            llm_obj.insert("api_key".into(), serde_json::Value::String(stored));
         }
         if let Some(model) = request.model {
             llm_obj.insert("model".into(), serde_json::Value::String(model));
@@ -218,7 +235,7 @@ impl TenantSettingsService {
             .update_settings(tenant_id, settings_update)
             .await?;
 
-        Self::get_llm_settings(tenant_repo, tenant_id).await
+        Self::get_llm_settings(tenant_repo, cipher, tenant_id).await
     }
 
     /// Delete (clear) the LLM provider settings for a tenant.
