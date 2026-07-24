@@ -141,6 +141,33 @@ class TestScoreRubric:
         completion = call_block({"name": "ping", "arguments": {"whatever": True}})
         assert score_tool_call_completion(completion, tools=tools, reference_calls=[]) == 1.0
 
+    def test_required_without_properties_accepts_extra_keys(self):
+        # JSON Schema default: additionalProperties true — extra keys are legal.
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "f", "parameters": {"required": ["a"]}},
+            }
+        ]
+        completion = call_block({"name": "f", "arguments": {"a": 1, "extra": 2}})
+        assert score_tool_call_completion(completion, tools=tools, reference_calls=[]) == 1.0
+
+    def test_additional_properties_false_rejects_unknown_keys(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "f",
+                    "parameters": {"required": ["a"], "additionalProperties": False},
+                },
+            }
+        ]
+        good = call_block({"name": "f", "arguments": {"a": 1}})
+        junk = call_block({"name": "f", "arguments": {"a": 1, "extra": 2}})
+        assert score_tool_call_completion(good, tools=tools, reference_calls=[]) == 1.0
+        # name (0.4) + reference-granted (0.3); args fail the strict schema.
+        assert score_tool_call_completion(junk, tools=tools, reference_calls=[]) == 0.7
+
 
 class TestGrpoRewardDispatch:
     def test_mixed_batch_routes_per_record(self):
