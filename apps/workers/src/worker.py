@@ -136,6 +136,10 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
     from src.activities.export_gguf import ExportGgufActivity
     from src.activities.generate_pairs import GeneratePairsActivity
     from src.activities.parse_document import ParseDocumentActivity
+    from src.activities.pipeline_records import (
+        CreateEvaluationActivity,
+        CreateTrainingJobActivity,
+    )
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
     from src.activities.train_model import (
@@ -156,6 +160,8 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
         GeneratePreviewActivity(infra).run,
         RefineGuidanceActivity(infra).run,
         UpdateDataGuideActivity(infra).run,
+        CreateTrainingJobActivity(infra).run,
+        CreateEvaluationActivity(infra).run,
     ]
 
     # GPU-bound activities (training, evaluation)
@@ -260,13 +266,25 @@ async def main() -> None:
 
     workers = []
     for task_queue, activities in queue_specs:
-        logger.info("Starting worker on queue: %s", task_queue)
+        # GPU activities share one physical GPU — the GPU queue runs strictly
+        # serial by default so concurrent jobs can't OOM each other.
+        if task_queue == gpu_queue:
+            concurrency = settings.gpu_max_concurrent_activities
+        else:
+            concurrency = settings.max_concurrent_activities
+        options = {"max_concurrent_activities": concurrency} if concurrency > 0 else {}
+        logger.info(
+            "Starting worker on queue: %s (max_concurrent_activities=%s)",
+            task_queue,
+            concurrency if concurrency > 0 else "default",
+        )
         workers.append(
             Worker(
                 client,
                 task_queue=task_queue,
                 workflows=all_workflows,
                 activities=activities,
+                **options,
             )
         )
 

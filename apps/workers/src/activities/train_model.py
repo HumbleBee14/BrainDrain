@@ -63,7 +63,8 @@ class StartTrainingActivity:
         or inserting a duplicate model row.
         """
         row = await db.fetchrow(
-            """SELECT j.status, j.metrics, m.adapter_path, m.adapter_size_bytes
+            """SELECT j.status, j.metrics, m.id AS model_id, m.adapter_path,
+                m.adapter_size_bytes
             FROM training_jobs j
             LEFT JOIN models m ON m.training_job_id = j.id
             WHERE j.id = $1""",
@@ -80,6 +81,7 @@ class StartTrainingActivity:
             adapter_path=row["adapter_path"],
             adapter_size_bytes=row["adapter_size_bytes"] or 0,
             metrics=metrics or {},
+            model_id=str(row["model_id"] or ""),
         )
 
     @activity.defn(name="start_training")
@@ -201,11 +203,12 @@ class StartTrainingActivity:
                     )
                     next_version = (max_version or 0) + 1
 
-                    await conn.execute(
+                    created_model_id = await conn.fetchval(
                         """INSERT INTO models
                         (tenant_id, project_id, training_job_id, name, base_model,
                          adapter_path, adapter_size_bytes, version)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        RETURNING id""",
                         input.tenant_id,
                         project_id,
                         job_id,
@@ -215,6 +218,7 @@ class StartTrainingActivity:
                         result.adapter_size_bytes,
                         next_version,
                     )
+                    result.model_id = str(created_model_id)
 
                     await _append_training_billing_outbox(
                         conn,
@@ -408,7 +412,7 @@ class FinalizeIterativeTrainingActivity:
         self.infra = infra
 
     @activity.defn(name="finalize_iterative_training")
-    async def run(self, input: FinalizeIterativeTrainingInput) -> None:
+    async def run(self, input: FinalizeIterativeTrainingInput) -> str:
         db = self.infra.db
         job_id = input.training_job_id
 
@@ -448,11 +452,12 @@ class FinalizeIterativeTrainingActivity:
                 )
                 next_version = (max_version or 0) + 1
 
-                await conn.execute(
+                created_model_id = await conn.fetchval(
                     """INSERT INTO models
                     (tenant_id, project_id, training_job_id, name, base_model,
                      adapter_path, adapter_size_bytes, version)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    RETURNING id""",
                     input.tenant_id,
                     project_id,
                     job_id,
@@ -503,6 +508,7 @@ class FinalizeIterativeTrainingActivity:
             model_name,
             actual_cost,
         )
+        return str(created_model_id)
 
 
 def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):

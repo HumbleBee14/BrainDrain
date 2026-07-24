@@ -4,8 +4,6 @@ Chains: chunk_text → generate_synthetic_pairs → build_dataset.
 Triggered after documents are parsed, or manually by the user.
 """
 
-import uuid
-
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
@@ -75,7 +73,9 @@ class RefineWorkflow:
             return BuildDatasetOutput(pair_count=0, storage_path="")
 
         # Stage 3: Build the dataset (filter, format, split)
-        dataset_id = str(uuid.uuid4())
+        # workflow.uuid4() is deterministic across replays; stdlib uuid4 would
+        # regenerate a different id on replay.
+        dataset_id = str(workflow.uuid4())
         dataset_result = await workflow.execute_activity(
             "build_dataset",
             BuildDatasetInput(

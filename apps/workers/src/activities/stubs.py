@@ -76,6 +76,9 @@ class StartTrainingOutput:
     adapter_path: str
     adapter_size_bytes: int
     metrics: dict
+    # Id of the models row created on completion. Defaulted for in-flight
+    # workflows serialized before the field existed.
+    model_id: str = ""
 
 
 # ── Iterative Training (individual round + holdout eval) ──
