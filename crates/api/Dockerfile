@@ -13,7 +13,7 @@ COPY crates/ crates/
 RUN cargo build --release --bin platform-api --bin migrate
 
 # ── Stage 2: Runtime ──
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
