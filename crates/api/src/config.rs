@@ -147,6 +147,13 @@ pub struct Config {
     #[serde(default)]
     pub deploy_max_benchmark_regression: Option<f64>,
 
+    /// Eval gate: block a normal deploy unless the model's document-knowledge
+    /// lift over the base model (judged-mean difference on the golden holdout,
+    /// 1–5 rubric) is at least this high (e.g. `0.5`). Unset disables this
+    /// rule. Rollbacks bypass the gate.
+    #[serde(default)]
+    pub deploy_min_doc_knowledge_lift: Option<f64>,
+
     /// Inference instance health probe interval in seconds.
     #[serde(default = "default_inference_instance_health_poll_interval_secs")]
     pub inference_instance_health_poll_interval_secs: u64,

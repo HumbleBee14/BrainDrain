@@ -47,12 +47,19 @@ thresholds.
 
 ### How to use
 
-Set either or both (unset = that rule disabled):
+Set any of these (unset = that rule disabled):
 
 ```bash
 DEPLOY_MIN_AB_WIN_RATE=0.5           # A/B win rate vs base must be >= this
 DEPLOY_MAX_BENCHMARK_REGRESSION=10   # block if benchmark regression > this many points
+DEPLOY_MIN_DOC_KNOWLEDGE_LIFT=0.5    # doc-knowledge lift vs base on the golden holdout must be >= this
 ```
+
+`DEPLOY_MIN_DOC_KNOWLEDGE_LIFT` gates on the Document Knowledge suite's
+`knowledge_lift` (fine-tuned minus base judged mean on the held-out golden
+set, 1–5 rubric — so the threshold is an absolute rubric-point delta, not a
+rate). Because the gate fails closed, enabling it requires an evaluation that
+actually produced the metric: a run whose dataset has a golden holdout.
 
 A failing (or missing) evaluation returns **409 Conflict** with the reason —
 the gate **fails closed**: no completed eval means no deploy. Rollbacks to a

@@ -142,6 +142,7 @@ impl DeploymentService {
         let policy = DeployGatePolicy::from_thresholds(
             state.config().deploy_min_ab_win_rate,
             state.config().deploy_max_benchmark_regression,
+            state.config().deploy_min_doc_knowledge_lift,
         );
         if !policy.is_enabled() {
             return Ok(());
