@@ -230,6 +230,15 @@ pub struct Config {
     #[serde(default = "default_rate_limit_rpm")]
     pub rate_limit_rpm: u32,
 
+    /// Comma-separated CIDRs (or single IPs) of trusted reverse proxies.
+    /// When a request's socket IP is inside one of these ranges, the client IP
+    /// for rate limiting is read from X-Forwarded-For (rightmost untrusted
+    /// entry). Empty ⇒ forwarded headers are ignored and the socket IP is used
+    /// — behind a load balancer that means all traffic shares one bucket, so
+    /// set this in every proxied deployment.
+    #[serde(default)]
+    pub trusted_proxy_cidrs: String,
+
     // ── Security Headers ──
     /// Content-Security-Policy header value.
     #[serde(default = "default_csp_policy")]
@@ -389,6 +398,11 @@ impl Config {
     /// Authorized parties for the JWT `azp` claim, parsed from the allowlist.
     pub fn clerk_authorized_parties_list(&self) -> Vec<String> {
         split_csv(&self.clerk_authorized_parties)
+    }
+
+    /// Trusted proxy CIDRs, parsed from the comma-separated list.
+    pub fn trusted_proxy_cidrs_list(&self) -> Vec<String> {
+        split_csv(&self.trusted_proxy_cidrs)
     }
 
     /// Whether we're running in development mode.
