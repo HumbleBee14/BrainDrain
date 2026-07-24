@@ -365,7 +365,7 @@ development and must be set explicitly in production:
 | `TRUSTED_PROXY_CIDRS` | API | Marks your load balancer/proxy IPs so per-client rate limiting uses the real client IP from X-Forwarded-For (rightmost-untrusted). Without it, all traffic behind a proxy shares one rate-limit bucket. | Socket IP used; forwarded headers ignored |
 | `ENVIRONMENT=production` | workers | Enables fetch-time SSRF re-validation of tenant-supplied LLM base URLs (all resolved IPs must be public). Override with `URL_GUARD_ENABLED`. | Guard off (dev works against localhost endpoints) |
 | `GPU_MAX_CONCURRENT_ACTIVITIES` | workers | Concurrent activities on the GPU queue. Default `1` (strictly serial — two training runs OOM one GPU); raise only with multiple GPUs. | Default 1 |
-| Object-storage versioning | R2/MinIO console | Enable bucket versioning (and replication if available) on the uploads/adapters bucket — Postgres has PITR, object data needs its own protection. | Manual console action, not code |
+| Object-storage delete protection | R2/MinIO console | Protect the uploads/adapters bucket from accidental/malicious loss — Postgres has PITR, object data needs its own protection. On **R2**: add a **Bucket Lock** rule (R2 has no S3-style versioning toggle) with a retention period covering the whole bucket. On **MinIO/S3**: enable bucket versioning (and replication if available). | Manual console action, not code |
 
 Also review the eval-gate thresholds (`DEPLOY_MIN_AB_WIN_RATE`,
 `DEPLOY_MAX_BENCHMARK_REGRESSION`, `DEPLOY_MIN_DOC_KNOWLEDGE_LIFT`) — all
