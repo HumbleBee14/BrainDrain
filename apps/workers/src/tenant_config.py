@@ -4,11 +4,13 @@ Security: API keys come from the database, never from Temporal workflow payloads
 Fallback: If a tenant has no custom LLM config, uses the worker-level env var defaults.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 
 from src.secret_cipher import decrypt_secret
+from src.url_guard import assert_safe_public_url, url_guard_active
 
 logger = logging.getLogger("platform.tenant_config")
 
@@ -33,11 +35,16 @@ async def get_tenant_llm_config(
     default_max_tokens: int = 2000,
     *,
     encryption_key: str | None = None,
+    settings=None,
 ) -> TenantLlmConfig:
     """Fetch tenant-specific LLM config from DB, falling back to worker defaults.
 
     Called at activity execution time (not workflow time) so secrets
     never appear in Temporal workflow history.
+
+    A tenant-supplied api_base_url is re-validated at fetch time (SSRF /
+    DNS-rebinding guard, see src/url_guard.py) and raises UnsafeUrlError
+    if it no longer resolves to a public address.
 
     Args:
         db: asyncpg connection pool
@@ -46,6 +53,7 @@ async def get_tenant_llm_config(
         encryption_key: Base64 key for tenant API keys stored encrypted
             (enc:v1:...). An encrypted key without it raises SecretCipherError —
             fail loud rather than send the ciphertext as a bearer token.
+        settings: WorkerSettings; resolved from the infra container when omitted
     """
     defaults = TenantLlmConfig(
         api_base_url=default_api_base_url,
@@ -68,14 +76,14 @@ async def get_tenant_llm_config(
         logger.warning("Tenant not found: %s, using defaults", tenant_id)
         return defaults
 
-    settings = row["settings"]
-    if isinstance(settings, str):
-        settings = json.loads(settings)
+    tenant_settings = row["settings"]
+    if isinstance(tenant_settings, str):
+        tenant_settings = json.loads(tenant_settings)
 
-    if not isinstance(settings, dict):
+    if not isinstance(tenant_settings, dict):
         return defaults
 
-    llm = settings.get("llm")
+    llm = tenant_settings.get("llm")
     if not llm or not isinstance(llm, dict):
         return defaults
 
@@ -85,8 +93,19 @@ async def get_tenant_llm_config(
         api_key = decrypt_secret(api_key, encryption_key)
     has_custom_key = bool(api_key)
 
+    # Fetch-time re-validation of the tenant-supplied base URL (the operator
+    # default from env is trusted config and not re-checked).
+    tenant_base_url = llm.get("api_base_url") or None
+    if tenant_base_url is not None:
+        if settings is None:
+            from src.clients import get_settings
+
+            settings = get_settings()
+        if url_guard_active(settings):
+            await asyncio.to_thread(assert_safe_public_url, tenant_base_url)
+
     return TenantLlmConfig(
-        api_base_url=llm.get("api_base_url") or default_api_base_url,
+        api_base_url=tenant_base_url or default_api_base_url,
         api_key=api_key if has_custom_key else default_api_key,
         model=llm.get("model") or default_model,
         max_tokens=llm.get("max_tokens") or default_max_tokens,
