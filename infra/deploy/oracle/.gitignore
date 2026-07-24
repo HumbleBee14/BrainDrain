@@ -1,0 +1,9 @@
+# Terraform state can contain generated passwords/keys in PLAINTEXT — never commit.
+*.tfstate
+*.tfstate.*
+.terraform/
+# Real variable values — keep local.
+terraform.tfvars
+# Any private keys that ever land in this dir.
+*.pem
+*.key

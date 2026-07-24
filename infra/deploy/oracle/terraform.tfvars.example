@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and set values (available in ~/.oci/config).
+tenancy_ocid         = "ocid1.tenancy.oc1..xxxx"
+compartment_ocid     = "ocid1.tenancy.oc1..xxxx"
+cloudflare_api_token = "cf-token"
