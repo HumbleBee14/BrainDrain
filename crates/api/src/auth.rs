@@ -235,7 +235,7 @@ impl AuthProvider for ClerkAuthProvider {
                     Err(e) => return Some(Err(e)),
                 }
             } else {
-                match resolve_personal_tenant(db, &claims.sub).await {
+                match resolve_personal_tenant(db, &claims.sub, claims.email.as_deref()).await {
                     Ok(id) => id,
                     Err(e) => return Some(Err(e)),
                 }
@@ -696,16 +696,27 @@ async fn resolve_tenant_id(db: &sqlx::PgPool, clerk_org_id: &str) -> Result<Uuid
     })
 }
 
-/// For users without an org, resolve their personal tenant.
-async fn resolve_personal_tenant(db: &sqlx::PgPool, clerk_user_id: &str) -> Result<Uuid, AppError> {
-    // Personal tenants use the user ID as the clerk_org_id
-    let row = sqlx::query_scalar::<_, Uuid>("SELECT id FROM tenants WHERE clerk_org_id = $1")
-        .bind(clerk_user_id)
-        .fetch_optional(db)
-        .await
-        .map_err(AppError::Database)?;
+/// For users without an org, resolve their personal tenant, creating it on
+/// first sign-in. Personal tenants use the user ID as the clerk_org_id; the
+/// no-op ON CONFLICT update makes concurrent first requests race-safe.
+async fn resolve_personal_tenant(
+    db: &sqlx::PgPool,
+    clerk_user_id: &str,
+    email: Option<&str>,
+) -> Result<Uuid, AppError> {
+    let name = email.filter(|e| !e.is_empty()).unwrap_or("Personal Workspace");
 
-    row.ok_or_else(|| AppError::Forbidden {
-        message: "Tenant not found. Please complete onboarding.".to_string(),
-    })
+    sqlx::query_scalar::<_, Uuid>(
+        r#"
+        INSERT INTO tenants (clerk_org_id, name)
+        VALUES ($1, $2)
+        ON CONFLICT (clerk_org_id) DO UPDATE SET clerk_org_id = EXCLUDED.clerk_org_id
+        RETURNING id
+        "#,
+    )
+    .bind(clerk_user_id)
+    .bind(name)
+    .fetch_one(db)
+    .await
+    .map_err(AppError::Database)
 }
