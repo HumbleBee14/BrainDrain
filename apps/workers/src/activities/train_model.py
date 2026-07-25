@@ -13,6 +13,7 @@ Uses TrainingEngine protocol (default: Unsloth) for model loading,
 LLMJudge protocol for scoring, and Redis streams for real-time metrics.
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -41,6 +42,7 @@ from src.activities.training_engine import (
     get_strategy,
     register_strategy,
 )
+from src.backends.judge import get as get_judge
 from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
 from src.gpu_provider import GpuProvider
 from src.heartbeat import safe_heartbeat
@@ -49,6 +51,8 @@ from src.notifications import EVENT_TRAINING_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig
 
 logger = logging.getLogger("platform.training")
+
+_JUDGE_BACKED_MODES = frozenset({"aligned", "reasoning"})
 
 # Warmup beyond this fraction of a run leaves the LR ramping for most of it.
 _MAX_WARMUP_FRACTION = 0.1
@@ -143,6 +147,18 @@ class StartTrainingActivity:
                 encryption_key=self.infra.settings.settings_encryption_key,
                 settings=self.infra.settings,
             )
+
+            if input.mode in _JUDGE_BACKED_MODES:
+                await asyncio.to_thread(
+                    get_judge(
+                        self.infra.settings.judge_backend,
+                        api_base=llm_config.api_base_url,
+                        api_key=llm_config.api_key,
+                        model=llm_config.model,
+                        max_retries=self.infra.settings.judge_max_retries,
+                        on_failure=self.infra.settings.judge_on_failure,
+                    ).preflight
+                )
 
             if self.gpu_provider is not None:
                 result_dict = await self.gpu_provider.run_training(
