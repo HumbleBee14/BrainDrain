@@ -36,6 +36,9 @@ function bodyOf(item: InAppItem): string | null {
   return typeof message === "string" ? message : null;
 }
 
+const PANEL_WIDTH_PX = 320;
+const VIEWPORT_MARGIN_PX = 8;
+
 export function NotificationBell({
   direction = "down",
 }: {
@@ -44,6 +47,7 @@ export function NotificationBell({
   const { getToken } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [align, setAlign] = useState<"left" | "right">("right");
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { data } = useQuery({
@@ -75,6 +79,22 @@ export function NotificationBell({
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["in-app-notifications"] }),
   });
+
+  // A right-aligned panel grows leftward, which leaves the viewport when the
+  // trigger sits in a narrow left rail. Measure the trigger instead of trusting
+  // a fixed side, so the panel stays on screen wherever the bell is mounted.
+  useEffect(() => {
+    if (!open) return;
+    function place() {
+      const anchor = containerRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      const fitsLeftward = anchor.right - PANEL_WIDTH_PX >= VIEWPORT_MARGIN_PX;
+      setAlign(fitsLeftward ? "right" : "left");
+    }
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open]);
 
   // Close on outside click
   useEffect(() => {
@@ -121,9 +141,9 @@ export function NotificationBell({
 
       {open && (
         <div
-          className={`absolute right-0 ${
+          className={`absolute ${align === "right" ? "right-0" : "left-0"} ${
             direction === "up" ? "bottom-full mb-2" : "top-full mt-2"
-          } w-80 max-h-96 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg z-50`}
+          } w-80 max-w-[calc(100vw-1rem)] max-h-96 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg z-50`}
         >
           <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-200 dark:border-zinc-800">
             <span className="text-sm font-medium text-zinc-900 dark:text-white">

@@ -63,6 +63,7 @@ export function useImportDataset(projectId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
   });
 }
@@ -79,6 +80,7 @@ export function useApproveDataset() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
   });
 }
@@ -95,6 +97,7 @@ export function useRejectDataset() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      queryClient.invalidateQueries({ queryKey: ["pipeline-status"] });
     },
   });
 }

@@ -1,0 +1,53 @@
+name: Deploy Modal Apps
+
+# Modal apps are pushed by the Modal CLI rather than pulled from a registry, so
+# without this they only update when someone runs `modal deploy` by hand — and
+# the deployed app silently drifts from the repo.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/workers/modal_app.py'
+      - 'apps/workers/modal_serving.py'
+      - 'apps/workers/src/**'
+      - 'apps/workers/pyproject.toml'
+      - 'infra/serving/vllm_s3_lora_resolver/**'
+      - '.github/workflows/deploy-modal.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-modal
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy training + serving apps
+    runs-on: ubuntu-24.04
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install Modal client
+        run: uv tool install modal
+
+      - name: Fail fast when Modal credentials are absent
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "::error::MODAL_TOKEN_ID / MODAL_TOKEN_SECRET are not configured"
+            exit 1
+          fi
+
+      # Deploying rebuilds the image, which is where a dependency drift between
+      # pyproject.toml and the image's pip list would surface.
+      - name: Deploy training app
+        working-directory: apps/workers
+        run: modal deploy modal_app.py
+
+      - name: Deploy serving app
+        working-directory: apps/workers
+        run: modal deploy modal_serving.py

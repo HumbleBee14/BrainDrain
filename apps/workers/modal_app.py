@@ -25,6 +25,7 @@ _weights_cache = modal.Volume.from_name("ekcron-model-cache", create_if_missing=
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    # GPU/ML stack — remote-only, absent from pyproject's runtime deps.
     .pip_install(
         "unsloth>=2025.12",
         "transformers>=4.51.0,<5.0.0",
@@ -34,19 +35,29 @@ image = (
         "accelerate>=1.2.0",
         "bitsandbytes>=0.45.0",
         "pynvml>=12.0.0",
-        "boto3>=1.36.0",
-        "httpx>=0.27.0",
+    )
+    # Mirror of pyproject.toml runtime deps. Importing src.activities.train_model
+    # pulls in the whole worker module graph, so a dep missing here becomes a
+    # ModuleNotFoundError at GPU-call time. Kept in sync by
+    # tests/test_dockerfiles.py::test_modal_image_covers_pyproject_runtime_deps.
+    .pip_install(
+        "temporalio>=1.9.0",
         "pydantic>=2.10.0",
         "pydantic-settings>=2.7.0",
-        # Transitively imported at load time by src.activities.stubs /
-        # src.activities.train_model (via src.infra): temporalio (`from
-        # temporalio import activity`), asyncpg, redis. Not used at runtime
-        # remotely (remote never touches Postgres/Redis — see I3/§2 in
-        # docs/CLOUD_GPU_TRAINING.md) but required for the module graph to
-        # import without ModuleNotFoundError. Versions match apps/workers/pyproject.toml.
-        "temporalio>=1.9.0",
+        "pymupdf>=1.24.0",
+        "python-docx>=1.1.0",
+        "beautifulsoup4>=4.12.0",
+        "markdown>=3.6",
+        "langdetect>=1.0.9",
         "asyncpg>=0.29.0",
+        "boto3>=1.36.0",
         "redis>=5.0.0",
+        "httpx>=0.27.0",
+        "cryptography>=42.0.0",
+        "python-json-logger>=3.2.0",
+        "opentelemetry-sdk>=1.29.0",
+        "opentelemetry-exporter-otlp-proto-grpc>=1.29.0",
+        "opentelemetry-instrumentation-logging>=0.50b0",
     )
     .env({"HF_HOME": _HF_CACHE_PATH})
     # Make our own `src` package importable remotely (replaces removed auto-mount).

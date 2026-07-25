@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useImportDataset } from "@/hooks/use-datasets";
+import { Button } from "@/components/ui/button";
 import { ApiClientError, type DatasetImportRowError } from "@/lib/api-client";
 
 const MAX_IMPORT_BYTES = 100 * 1024 * 1024;
@@ -29,19 +30,6 @@ function validateFile(file: File): string | null {
     return `File is ${formatBytes(file.size)}; the limit is ${formatBytes(MAX_IMPORT_BYTES)}.`;
   }
   return null;
-}
-
-function SpinnerIcon() {
-  return (
-    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-      />
-    </svg>
-  );
 }
 
 function UploadIcon() {
@@ -154,7 +142,7 @@ export function DatasetImportCard({ projectId }: { projectId: string }) {
         onDrop={handleDrop}
         className={`rounded-lg border border-dashed px-4 py-6 text-center transition ${
           isDragging
-            ? "border-blue-500 bg-blue-50/50 dark:bg-blue-950/20"
+            ? "border-violet-500 bg-violet-50/50 dark:bg-violet-950/20"
             : "border-zinc-300 dark:border-zinc-700"
         } ${isUploading ? "opacity-60" : ""}`}
       >
@@ -172,7 +160,7 @@ export function DatasetImportCard({ projectId }: { projectId: string }) {
           className={`text-sm ${
             isUploading
               ? "text-zinc-400 dark:text-zinc-600"
-              : "text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+              : "text-violet-600 dark:text-violet-400 hover:underline cursor-pointer"
           }`}
         >
           Choose a .jsonl file
@@ -217,21 +205,14 @@ export function DatasetImportCard({ projectId }: { projectId: string }) {
       )}
 
       <div className="flex items-center gap-2 mt-3">
-        <button
-          onClick={handleUpload}
-          disabled={!file || isUploading}
-          className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
-        >
-          {isUploading ? <SpinnerIcon /> : <UploadIcon />}
+        <Button onClick={handleUpload} disabled={!file} loading={isUploading}>
+          {!isUploading && <UploadIcon />}
           {isUploading ? "Importing..." : "Import dataset"}
-        </button>
+        </Button>
         {(file || outcome || requestError) && !isUploading && (
-          <button
-            onClick={reset}
-            className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2 text-sm text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition"
-          >
+          <Button variant="secondary" onClick={reset}>
             Clear
-          </button>
+          </Button>
         )}
       </div>
 
