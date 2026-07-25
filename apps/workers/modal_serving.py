@@ -24,6 +24,10 @@ VLLM_VERSION = "v0.8.5"
 DEFAULT_BASE_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 
 _RESOLVER_REMOTE_PATH = "/opt/vllm_s3_lora_resolver"
+# Base weights survive scale-to-zero here. Without it every cold start re-pulls
+# the full model from HuggingFace, which dominates time-to-first-token.
+_HF_CACHE_PATH = "/root/.cache/huggingface"
+_weights_cache = modal.Volume.from_name("ekcron-model-cache", create_if_missing=True)
 
 # Remotely this module is imported from /root, where the repo layout is absent;
 # the already-installed copy in the image stands in for the source directory.
@@ -44,6 +48,9 @@ serving_image = (
             "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "true",
             "VLLM_PLUGINS": "s3_lora_resolver",
             "VLLM_LORA_RESOLVER_CACHE_DIR": "/var/lora-cache",
+            # Set on the image, not at runtime: the base image may already
+            # define HF_HOME, which would win over a setdefault.
+            "HF_HOME": _HF_CACHE_PATH,
         }
     )
     .add_local_dir(_resolver_src, remote_path=_RESOLVER_REMOTE_PATH, copy=True)
@@ -54,6 +61,7 @@ serving_image = (
 )
 
 app = modal.App("ekcron-vllm-serving")
+
 
 # Reuses the training secret: provides APP_S3_* (bucket, endpoint, creds) that we
 # remap below to the boto3/resolver-standard names. Optionally set BASE_MODEL,
@@ -75,6 +83,7 @@ _DEFAULT_DTYPE = "half" if _GPU.upper().startswith("T4") else "auto"
     image=serving_image,
     gpu=_GPU,
     secrets=[_secret, _serving_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
     scaledown_window=_SCALEDOWN,  # idle seconds before scale-to-zero
     timeout=3600,
     # min_containers defaults to 0 → genuine scale-to-zero.

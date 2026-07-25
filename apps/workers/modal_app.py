@@ -18,6 +18,11 @@ import modal
 # at import time — see comment below) plus the pyproject [ml] extra. This is NOT
 # a literal mirror of either dependency group — see docs/CLOUD_GPU_TRAINING.md
 # §8. Modal builds this image on its own infra.
+# Shared with the serving app so base weights are pulled from HuggingFace once
+# and then reused by every subsequent training job and serving cold start.
+_HF_CACHE_PATH = "/root/.cache/huggingface"
+_weights_cache = modal.Volume.from_name("ekcron-model-cache", create_if_missing=True)
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -43,6 +48,7 @@ image = (
         "asyncpg>=0.29.0",
         "redis>=5.0.0",
     )
+    .env({"HF_HOME": _HF_CACHE_PATH})
     # Make our own `src` package importable remotely (replaces removed auto-mount).
     # Must be the last layer since copy defaults to False (mounted, not built).
     .add_local_python_source("src")
@@ -53,6 +59,7 @@ app = modal.App("platform-training")
 # Secret must provide: APP_S3_* , APP_LLM_* , APP_HF_TOKEN, and a syntactically
 # valid APP_DATABASE_URL placeholder (never connected to). See docs/CLOUD_GPU_TRAINING.md.
 _secret = modal.Secret.from_name("platform-training-secrets")
+
 
 
 def _remote_env_setup():
@@ -70,11 +77,16 @@ def _remote_env_setup():
     """
     import os
 
-    os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
     os.environ.setdefault("APP_METRICS_BACKEND", "log")
 
 
-@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+@app.function(
+    image=image,
+    gpu="A10",
+    timeout=86400,
+    secrets=[_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
 async def train(payload: dict) -> dict:
     """Remote GPU entrypoint. payload = {"input": {...}, "llm_config": {...}}."""
     _remote_env_setup()
@@ -101,7 +113,13 @@ async def train(payload: dict) -> dict:
     }
 
 
-@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+@app.function(
+    image=image,
+    gpu="A10",
+    timeout=86400,
+    secrets=[_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
 async def train_sft_round(payload: dict) -> dict:
     """Remote SFT round for the iterative workflow. payload = {"input": {...}}."""
     _remote_env_setup()
@@ -126,7 +144,13 @@ async def train_sft_round(payload: dict) -> dict:
     }
 
 
-@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+@app.function(
+    image=image,
+    gpu="A10",
+    timeout=86400,
+    secrets=[_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
 async def evaluate_holdout(payload: dict) -> dict:
     """Remote holdout eval for the iterative workflow. payload = {"input": {...}}."""
     _remote_env_setup()
@@ -147,7 +171,13 @@ async def evaluate_holdout(payload: dict) -> dict:
     return {"eval_loss": result.eval_loss, "metrics": result.metrics}
 
 
-@app.function(image=image, gpu="A10", timeout=86400, secrets=[_secret])
+@app.function(
+    image=image,
+    gpu="A10",
+    timeout=86400,
+    secrets=[_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
 async def run_evaluation(payload: dict) -> dict:
     """Remote full evaluation suite. payload = {"input": {...}, "llm_config": {...}}."""
     _remote_env_setup()

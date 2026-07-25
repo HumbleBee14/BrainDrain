@@ -540,7 +540,7 @@ fn default_inference_max_tokens() -> i64 {
     8192
 }
 fn default_inference_request_timeout_secs() -> u64 {
-    300
+    600
 }
 fn default_vllm_max_loras() -> i64 {
     4
