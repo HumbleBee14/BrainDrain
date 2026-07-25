@@ -114,6 +114,7 @@ pub async fn trigger_refine(
         project_id,
         task_type,
         body.config,
+        state.config().generation_stale_minutes,
         trace_ctx,
     )
     .await?;

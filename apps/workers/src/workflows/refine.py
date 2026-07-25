@@ -17,6 +17,7 @@ with workflow.unsafe.imports_passed_through():
         GenerateSyntheticPairsOutput,
     )
     from src.activities.pipeline_records import MarkDatasetFailedInput
+    from src.failure_message import root_cause_message
 
 
 async def _mark_failed(tenant_id: str, dataset_id: str, error: str) -> None:
@@ -60,7 +61,7 @@ class RefineWorkflow:
                 tenant_id, project_id, document_ids, task_type, config, dataset_id
             )
         except Exception as e:
-            await _mark_failed(tenant_id, dataset_id, str(e))
+            await _mark_failed(tenant_id, dataset_id, root_cause_message(e))
             raise
 
     async def _refine(

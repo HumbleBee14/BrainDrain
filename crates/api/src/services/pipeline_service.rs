@@ -82,6 +82,7 @@ impl PipelineService {
         project_id: Uuid,
         task_type: &str,
         mut config: serde_json::Value,
+        stale_minutes: i64,
         trace_ctx: TraceContext,
     ) -> AppResult<TriggerRefineResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
@@ -101,6 +102,12 @@ impl PipelineService {
 
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
+
+        // A killed worker never reaches mark_failed, so clear those rows here
+        // rather than leaving them generating forever.
+        if let Err(e) = dataset_repo.reap_stale_generating(stale_minutes).await {
+            tracing::warn!(error = %e, "Failed to reap stale generating datasets");
+        }
 
         // Reserve the row before starting the run: generation takes minutes of
         // LLM calls, and without a durable row there is nothing for the UI to

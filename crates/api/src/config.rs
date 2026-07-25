@@ -162,6 +162,11 @@ pub struct Config {
     #[serde(default = "default_deploy_stale_minutes")]
     pub deploy_stale_minutes: i64,
 
+    /// Stale `generating` dataset reap threshold in minutes. Generous: a large
+    /// document set legitimately spends a long time in LLM calls.
+    #[serde(default = "default_generation_stale_minutes")]
+    pub generation_stale_minutes: i64,
+
     /// Eval gate: block a normal deploy unless the model's latest completed
     /// evaluation shows an A/B win rate against the base model at least this
     /// high (`0.0`–`1.0`). Unset disables this rule. Rollbacks to a previously
@@ -565,6 +570,9 @@ fn default_billing_outbox_retention_days() -> i32 {
 }
 fn default_deploy_stale_minutes() -> i64 {
     10
+}
+fn default_generation_stale_minutes() -> i64 {
+    120
 }
 fn default_inference_instance_health_poll_interval_secs() -> u64 {
     60

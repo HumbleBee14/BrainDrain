@@ -206,6 +206,10 @@ pub trait DatasetRepository: Send + Sync {
         dataset_id: Uuid,
         error: String,
     ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
+
+    /// Fail `generating` rows whose run died without reporting: a terminated
+    /// worker never gets to mark_failed, leaving the row generating forever.
+    fn reap_stale_generating(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>>;
 }
 
 /// Contract for data guide database operations.

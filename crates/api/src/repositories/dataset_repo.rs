@@ -12,11 +12,14 @@ use crate::repositories::traits::{BoxFuture, DatasetRepository};
 /// All queries require `tenant_id` — multi-tenancy enforced at this layer.
 pub struct PgDatasetRepo {
     db: PgPool,
+    /// Cross-tenant sweeps have no tenant_id to satisfy RLS, so they run on the
+    /// owner pool.
+    db_admin: PgPool,
 }
 
 impl PgDatasetRepo {
-    pub fn new(db: PgPool) -> Self {
-        Self { db }
+    pub fn new(db: PgPool, db_admin: PgPool) -> Self {
+        Self { db, db_admin }
     }
 }
 
@@ -243,6 +246,30 @@ impl DatasetRepository for PgDatasetRepo {
 
             tx.commit().await?;
             Ok(dataset)
+        })
+    }
+
+    fn reap_stale_generating(&self, stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let result = sqlx::query(
+                r#"
+                UPDATE datasets
+                SET status = 'failed',
+                    error = 'Generation stopped unexpectedly and did not report a result',
+                    updated_at = NOW()
+                WHERE status = 'generating'
+                  AND updated_at < NOW() - make_interval(mins => $1)
+                "#,
+            )
+            .bind(stale_minutes as f64)
+            .execute(&self.db_admin)
+            .await?;
+
+            let reaped = result.rows_affected() as i64;
+            if reaped > 0 {
+                tracing::warn!(reaped, stale_minutes, "Reaped stale generating datasets");
+            }
+            Ok(reaped)
         })
     }
 }

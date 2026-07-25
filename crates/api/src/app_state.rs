@@ -272,7 +272,8 @@ impl AppState {
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(PgProjectRepo::new(db_rls.clone()));
         let document_repo: Arc<dyn DocumentRepository> =
             Arc::new(PgDocumentRepo::new(db_rls.clone()));
-        let dataset_repo: Arc<dyn DatasetRepository> = Arc::new(PgDatasetRepo::new(db_rls.clone()));
+        let dataset_repo: Arc<dyn DatasetRepository> =
+            Arc::new(PgDatasetRepo::new(db_rls.clone(), db.clone()));
         let data_guide_repo: Arc<dyn DataGuideRepository> =
             Arc::new(PgDataGuideRepo::new(db_rls.clone()));
         let training_job_repo: Arc<dyn TrainingJobRepository> =
