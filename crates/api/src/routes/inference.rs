@@ -301,7 +301,7 @@ pub async fn chat_completions(
     }
 
     let inference_url = backend.chat_completions_url();
-    let http_client = state.http_client().clone();
+    let http_client = state.inference_http_client().clone();
 
     // Prompt-token estimate used as the conservative billing fallback for both
     // the streaming reservation (below) and the non-streaming reservation.
@@ -713,7 +713,7 @@ pub async fn batch_chat_completions(
     let batch_backend = resolve_backend_for_model(&state, &model).await?;
 
     let batch_url = batch_backend.chat_completions_url();
-    let http_client = state.http_client().clone();
+    let http_client = state.inference_http_client().clone();
     let max_tokens_limit = state.config().inference_max_tokens;
     let default_system_prompt = model.deployment_config["system_prompt"]
         .as_str()

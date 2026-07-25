@@ -119,6 +119,13 @@ pub struct Config {
     #[serde(default)]
     pub inference_api_key: Option<String>,
 
+    /// Request timeout for calls to the serving engine
+    /// (INFERENCE_REQUEST_TIMEOUT_SECS). Far longer than the shared outbound
+    /// timeout: a scale-to-zero engine must cold-start a GPU and load weights
+    /// before it answers the first request.
+    #[serde(default = "default_inference_request_timeout_secs")]
+    pub inference_request_timeout_secs: u64,
+
     /// Upper bound on the total adapter bytes packaged into a download archive,
     /// which is built in memory (ADAPTER_DOWNLOAD_MAX_BYTES).
     #[serde(default = "default_adapter_download_max_bytes")]
@@ -531,6 +538,9 @@ fn default_cb_recovery_timeout_secs() -> u64 {
 }
 fn default_inference_max_tokens() -> i64 {
     8192
+}
+fn default_inference_request_timeout_secs() -> u64 {
+    300
 }
 fn default_vllm_max_loras() -> i64 {
     4

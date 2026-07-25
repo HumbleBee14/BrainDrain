@@ -72,6 +72,7 @@ struct AppStateInner {
     pub auth_chain: AuthProviderChain,
     pub internal_auth: Option<InternalTokenAuthProvider>,
     pub http_client: reqwest::Client,
+    pub inference_http_client: reqwest::Client,
     // Repository trait objects
     pub project_repo: Arc<dyn ProjectRepository>,
     pub document_repo: Arc<dyn DocumentRepository>,
@@ -226,6 +227,16 @@ impl AppState {
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))?;
 
+        // Serving-engine calls need their own budget: a scale-to-zero engine
+        // cold-starts a GPU and loads weights before answering, which the 10s
+        // shared timeout would abort long before the engine is even ready.
+        let inference_http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(
+                config.inference_request_timeout_secs,
+            ))
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build inference HTTP client: {e}"))?;
+
         // Auth provider chain (uses shared HTTP client for JWKS fetching)
         let auth_chain = AuthProviderChain::new().add(ClerkAuthProvider::new(
             config.clerk_jwks_url.clone(),
@@ -329,7 +340,7 @@ impl AppState {
         let inference_backend = build_backend(
             &config.inference_backend_type,
             config.inference_server_url.clone(),
-            http_client.clone(),
+            inference_http_client.clone(),
             inference_circuit_breaker,
             config.inference_api_key().map(str::to_owned),
         );
@@ -459,6 +470,7 @@ impl AppState {
                 auth_chain,
                 internal_auth,
                 http_client,
+                inference_http_client,
                 project_repo,
                 document_repo,
                 dataset_repo,
@@ -527,6 +539,11 @@ impl AppState {
 
     pub fn http_client(&self) -> &reqwest::Client {
         &self.inner.http_client
+    }
+
+    /// HTTP client for serving-engine calls; tolerates GPU cold starts.
+    pub fn inference_http_client(&self) -> &reqwest::Client {
+        &self.inner.inference_http_client
     }
 
     pub fn project_repo(&self) -> &dyn ProjectRepository {
@@ -660,7 +677,7 @@ impl AppState {
         let backend = build_backend_for_instance(
             backend_type,
             server_url,
-            self.inner.http_client.clone(),
+            self.inner.inference_http_client.clone(),
             CircuitBreaker::new(
                 self.inner.config.vllm_cb_failure_threshold,
                 Duration::from_secs(self.inner.config.vllm_cb_recovery_timeout_secs),
