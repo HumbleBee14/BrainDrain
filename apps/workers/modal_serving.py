@@ -52,6 +52,11 @@ app = modal.App("ekcron-vllm-serving")
 # SERVING_GPU, SCALEDOWN_WINDOW, VLLM_DTYPE, MAX_LORA_RANK here to tune serving.
 _secret = modal.Secret.from_name("platform-training-secrets")
 
+# Serving-only credentials, kept separate so rotating VLLM_API_KEY never rewrites
+# the training secret. Holds VLLM_API_KEY, which must match the control plane's
+# INFERENCE_API_KEY.
+_serving_secret = modal.Secret.from_name("ekcron-serving-secrets")
+
 _GPU = os.environ.get("SERVING_GPU", "A10")
 _SCALEDOWN = int(os.environ.get("SCALEDOWN_WINDOW", "300"))
 # T4 (compute 7.5) has no bfloat16 support, so vLLM must run fp16 there.
@@ -61,7 +66,7 @@ _DEFAULT_DTYPE = "half" if _GPU.upper().startswith("T4") else "auto"
 @app.function(
     image=serving_image,
     gpu=_GPU,
-    secrets=[_secret],
+    secrets=[_secret, _serving_secret],
     scaledown_window=_SCALEDOWN,  # idle seconds before scale-to-zero
     timeout=3600,
     # min_containers defaults to 0 → genuine scale-to-zero.
