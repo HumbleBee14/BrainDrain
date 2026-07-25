@@ -50,6 +50,7 @@ class DatasetStatus:
     REVIEW_PENDING = "review_pending"
     APPROVED = "approved"
     ARCHIVED = "archived"
+    FAILED = "failed"
 
 
 class TrainingJobStatus:

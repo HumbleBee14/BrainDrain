@@ -1,6 +1,7 @@
 use platform_shared::enums::{
     DatasetStatus, DeploymentStatus, DocumentStatus, EvaluationStatus, TrainingJobStatus,
 };
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::dto::pipeline::{
@@ -72,13 +73,15 @@ impl PipelineService {
     /// Trigger data refinement for parsed documents in a project.
     ///
     /// Finds documents with status "parsed" and starts a RefineWorkflow.
+    #[allow(clippy::too_many_arguments)]
     pub async fn trigger_refine(
         doc_repo: &dyn DocumentRepository,
+        dataset_repo: &dyn DatasetRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         tenant_id: Uuid,
         project_id: Uuid,
         task_type: &str,
-        config: serde_json::Value,
+        mut config: serde_json::Value,
         trace_ctx: TraceContext,
     ) -> AppResult<TriggerRefineResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
@@ -99,16 +102,46 @@ impl PipelineService {
         let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
         let doc_count = doc_ids.len();
 
-        let result = orchestrator
+        // Reserve the row before starting the run: generation takes minutes of
+        // LLM calls, and without a durable row there is nothing for the UI to
+        // show meanwhile and nowhere to record a failure.
+        let dataset_id = Uuid::new_v4();
+        dataset_repo
+            .create_generating(
+                tenant_id,
+                project_id,
+                dataset_id,
+                format!("Generating from {doc_count} document(s)"),
+                config.clone(),
+            )
+            .await?;
+
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("dataset_id".to_string(), json!(dataset_id.to_string()));
+        }
+
+        let started = orchestrator
             .start_refine(tenant_id, project_id, doc_ids, task_type, config, trace_ctx)
-            .await
-            .map_err(|e| {
-                AppError::Internal(anyhow::anyhow!("Failed to start RefineWorkflow: {e}"))
-            })?;
+            .await;
+
+        let result = match started {
+            Ok(result) => result,
+            Err(e) => {
+                let message = format!("Failed to start generation: {e}");
+                if let Err(mark_err) = dataset_repo
+                    .mark_failed(tenant_id, dataset_id, message.clone())
+                    .await
+                {
+                    tracing::error!(error = %mark_err, %dataset_id, "Failed to mark dataset failed");
+                }
+                return Err(AppError::Internal(anyhow::anyhow!(message)));
+            }
+        };
 
         tracing::info!(
             project_id = %project_id,
             workflow_id = %result.workflow_id,
+            dataset_id = %dataset_id,
             document_count = doc_count,
             task_type = task_type,
             "RefineWorkflow started"
@@ -207,6 +240,7 @@ impl PipelineService {
             generating,
             review_pending,
             approved,
+            datasets_failed,
             total_jobs,
             jobs_pending,
             jobs_training,
@@ -229,6 +263,7 @@ impl PipelineService {
             dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Generating),
             dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::ReviewPending),
             dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Approved),
+            dataset_repo.count_by_status(tenant_id, project_id, DatasetStatus::Failed),
             training_repo.count_by_project(tenant_id, project_id),
             training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Pending),
             training_repo.count_by_status(tenant_id, project_id, TrainingJobStatus::Training),
@@ -261,6 +296,7 @@ impl PipelineService {
                 generating,
                 review_pending,
                 approved,
+                failed: datasets_failed,
             },
             training_jobs: TrainingJobStatusCounts {
                 total: total_jobs,

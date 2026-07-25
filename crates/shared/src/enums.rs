@@ -29,6 +29,7 @@ pub enum DatasetStatus {
     ReviewPending,
     Approved,
     Archived,
+    Failed,
 }
 
 /// Status of a training job through its lifecycle.

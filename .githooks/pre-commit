@@ -94,8 +94,9 @@ if git diff --cached --name-only | grep -qE '(constants\.rs|enums\.rs|constants\
     fi
 
     echo -e "  Sync: checking Rust/Python constant drift"
-    "$PYTHON_BIN" scripts/sync_constants.py --check 2>/dev/null
-    if [ $? -ne 0 ]; then
+    # Must be `if !` — under `set -e` a bare failing command aborts the hook
+    # before the auto-sync below can run.
+    if ! "$PYTHON_BIN" scripts/sync_constants.py --check 2>/dev/null; then
         echo -e "  ${YELLOW}Sync: auto-syncing constants...${NC}"
         "$PYTHON_BIN" scripts/sync_constants.py
         git add apps/workers/src/constants.py

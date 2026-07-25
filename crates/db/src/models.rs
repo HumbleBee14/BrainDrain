@@ -63,6 +63,7 @@ pub struct Dataset {
     pub pair_count: Option<i32>,
     pub stats: serde_json::Value,
     pub config: serde_json::Value,
+    pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

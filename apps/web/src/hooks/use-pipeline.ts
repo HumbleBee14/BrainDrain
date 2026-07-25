@@ -12,6 +12,17 @@ import {
 } from "@/lib/api-client";
 import { useStatusStream } from "@/hooks/use-status-stream";
 
+function hasWorkInFlight(status: ProjectPipelineStatus | undefined): boolean {
+  if (!status) return false;
+  return (
+    status.documents.parsing > 0 ||
+    status.datasets.generating > 0 ||
+    status.training_jobs.pending > 0 ||
+    status.training_jobs.training > 0 ||
+    status.evaluations.running > 0
+  );
+}
+
 export function usePipelineStatus(projectId: string, enabled = true) {
   const { getToken } = useAuth();
   const queryClient = useQueryClient();
@@ -24,12 +35,12 @@ export function usePipelineStatus(projectId: string, enabled = true) {
       return api.pipeline.getStatus(token, projectId);
     },
     enabled: !!projectId && enabled,
+    // The SSE stream below is best-effort; polling guarantees the terminal
+    // state lands without a manual reload.
+    refetchInterval: (q) => (hasWorkInFlight(q.state.data) ? 4000 : false),
   });
 
-  const isActive =
-    (query.data?.documents.parsing ?? 0) > 0 ||
-    (query.data?.datasets.generating ?? 0) > 0 ||
-    (query.data?.training_jobs.training ?? 0) > 0;
+  const isActive = hasWorkInFlight(query.data);
 
   useStatusStream<ProjectPipelineStatus>(
     projectId ? `/api/v1/projects/${projectId}/status/stream` : null,

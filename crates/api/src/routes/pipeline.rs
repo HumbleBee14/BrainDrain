@@ -108,6 +108,7 @@ pub async fn trigger_refine(
 
     let result = PipelineService::trigger_refine(
         state.document_repo(),
+        state.dataset_repo(),
         state.orchestrator(),
         user.tenant_id,
         project_id,

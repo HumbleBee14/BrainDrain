@@ -188,6 +188,24 @@ pub trait DatasetRepository: Send + Sync {
         pair_count: i32,
         stats: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<Dataset>>;
+
+    /// Reserve a `generating` row before starting a refine run, so the run is
+    /// visible while it works and has somewhere to record a failure.
+    fn create_generating(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        name: String,
+        config: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<Dataset>>;
+
+    fn mark_failed(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+        error: String,
+    ) -> BoxFuture<'_, AppResult<Option<Dataset>>>;
 }
 
 /// Contract for data guide database operations.

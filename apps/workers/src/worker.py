@@ -139,6 +139,7 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
     from src.activities.pipeline_records import (
         CreateEvaluationActivity,
         CreateTrainingJobActivity,
+        MarkDatasetFailedActivity,
     )
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
@@ -162,6 +163,7 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
         UpdateDataGuideActivity(infra).run,
         CreateTrainingJobActivity(infra).run,
         CreateEvaluationActivity(infra).run,
+        MarkDatasetFailedActivity(infra).run,
     ]
 
     # GPU-bound activities (training, evaluation)

@@ -18,7 +18,7 @@ import {
   useCancelTrainingJob,
   useEstimateTrainingCost,
 } from "@/hooks/use-training";
-import type { CreateTrainingJobInput } from "@/lib/api-client";
+import type { CreateTrainingJobInput, Dataset } from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
 import { useModelCatalog } from "@/hooks/use-catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +33,57 @@ import {
   DocumentRow,
   PipelineStageCard,
 } from "./components";
+
+function DatasetRow({
+  dataset,
+  projectId,
+}: {
+  dataset: Dataset;
+  projectId: string;
+}) {
+  const isGenerating = dataset.status === "generating";
+  const isFailed = dataset.status === "failed";
+
+  const detail = isFailed
+    ? (dataset.error ?? "Generation failed")
+    : isGenerating
+      ? "Generating pairs — this takes a few minutes"
+      : `${dataset.pair_count ?? 0} pairs · ${dataset.format}`;
+
+  const body = (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm text-zinc-900 dark:text-white">
+          {dataset.name}
+        </p>
+        <p
+          className={`mt-0.5 text-xs ${isFailed ? "text-red-600 dark:text-red-400" : "text-zinc-400 dark:text-zinc-600"}`}
+        >
+          {detail}
+        </p>
+      </div>
+      <DatasetStatusBadge status={dataset.status} />
+    </div>
+  );
+
+  // Nothing to review until pairs exist, so these rows are not navigable.
+  if (isGenerating || isFailed) {
+    return (
+      <div className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={`/projects/${projectId}/dataset?datasetId=${dataset.id}`}
+      className="block border-b border-zinc-200 transition last:border-b-0 hover:bg-zinc-50/50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
+    >
+      {body}
+    </Link>
+  );
+}
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -569,23 +620,7 @@ export default function ProjectDetailPage() {
         {datasets.length > 0 && (
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {datasets.map((ds) => (
-              <Link
-                key={ds.id}
-                href={`/projects/${params.id}/dataset?datasetId=${ds.id}`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
-              >
-                <div>
-                  <p className="text-sm text-zinc-900 dark:text-white">{ds.name}</p>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                    {ds.pair_count != null
-                      ? `${ds.pair_count} pairs`
-                      : "Generating..."}
-                    {" \u00b7 "}
-                    {ds.format}
-                  </p>
-                </div>
-                <DatasetStatusBadge status={ds.status} />
-              </Link>
+              <DatasetRow key={ds.id} dataset={ds} projectId={params.id} />
             ))}
           </div>
         )}

@@ -35,6 +35,13 @@ class CreateEvaluationInput:
     model_id: str
 
 
+@dataclass
+class MarkDatasetFailedInput:
+    tenant_id: str
+    dataset_id: str
+    error: str
+
+
 class CreateTrainingJobActivity:
     def __init__(self, infra: InfraContainer):
         self.infra = infra
@@ -77,3 +84,21 @@ class CreateEvaluationActivity:
         )
         logger.info("Pipeline created evaluation %s for model %s", eval_id, input.model_id)
         return str(eval_id)
+
+
+class MarkDatasetFailedActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="mark_dataset_failed")
+    async def run(self, input: MarkDatasetFailedInput) -> None:
+        """Record why a reserved dataset row never produced pairs."""
+        await self.infra.db.execute(
+            """UPDATE datasets
+            SET status = 'failed', error = $3, updated_at = NOW()
+            WHERE id = $1::uuid AND tenant_id = $2::uuid""",
+            input.dataset_id,
+            input.tenant_id,
+            input.error[:2000],
+        )
+        logger.warning("Dataset %s marked failed: %s", input.dataset_id, input.error[:200])

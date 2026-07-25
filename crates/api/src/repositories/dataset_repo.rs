@@ -185,4 +185,64 @@ impl DatasetRepository for PgDatasetRepo {
             Ok(dataset)
         })
     }
+
+    fn create_generating(
+        &self,
+        tenant_id: Uuid,
+        project_id: Uuid,
+        dataset_id: Uuid,
+        name: String,
+        config: serde_json::Value,
+    ) -> BoxFuture<'_, AppResult<Dataset>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let dataset = sqlx::query_as::<_, Dataset>(
+                r#"
+                INSERT INTO datasets
+                    (id, tenant_id, project_id, name, format, status, pair_count, config)
+                VALUES ($1, $2, $3, $4, 'chatml', $5, 0, $6)
+                RETURNING *
+                "#,
+            )
+            .bind(dataset_id)
+            .bind(tenant_id)
+            .bind(project_id)
+            .bind(name)
+            .bind(DatasetStatus::Generating.to_string())
+            .bind(config)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(dataset)
+        })
+    }
+
+    fn mark_failed(
+        &self,
+        tenant_id: Uuid,
+        dataset_id: Uuid,
+        error: String,
+    ) -> BoxFuture<'_, AppResult<Option<Dataset>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let dataset = sqlx::query_as::<_, Dataset>(
+                r#"
+                UPDATE datasets
+                SET status = $3, error = $4, updated_at = now()
+                WHERE id = $1 AND tenant_id = $2
+                RETURNING *
+                "#,
+            )
+            .bind(dataset_id)
+            .bind(tenant_id)
+            .bind(DatasetStatus::Failed.to_string())
+            .bind(error)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(dataset)
+        })
+    }
 }

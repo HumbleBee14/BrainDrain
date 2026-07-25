@@ -17,6 +17,7 @@ pub struct DatasetResponse {
     pub pair_count: Option<i32>,
     #[schema(value_type = Object)]
     pub stats: serde_json::Value,
+    pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -29,6 +30,7 @@ impl From<Dataset> for DatasetResponse {
             name: d.name,
             format: d.format,
             status: d.status.parse().unwrap_or(DatasetStatus::Generating),
+            error: d.error,
             pair_count: d.pair_count,
             stats: d.stats,
             created_at: d.created_at,

@@ -90,6 +90,7 @@ pub struct DatasetStatusCounts {
     pub generating: i64,
     pub review_pending: i64,
     pub approved: i64,
+    pub failed: i64,
 }
 
 #[derive(Debug, Serialize, TS, ToSchema)]
