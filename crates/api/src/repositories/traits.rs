@@ -253,6 +253,14 @@ pub trait DataGuideRepository: Send + Sync {
         status: &str,
     ) -> BoxFuture<'_, AppResult<()>>;
 
+    /// Return a finished or failed guide to `draft` so the session can be run
+    /// again, keeping the guidance and system prompt the user wrote.
+    fn reset_to_draft(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Option<DataGuide>>>;
+
     fn update_facets(
         &self,
         tenant_id: Uuid,

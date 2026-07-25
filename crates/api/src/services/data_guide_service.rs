@@ -111,6 +111,43 @@ impl DataGuideService {
         Ok(guide.into())
     }
 
+    /// Reset a finished or failed guide so the session can be run again.
+    pub async fn reset(
+        repo: &dyn DataGuideRepository,
+        tenant_id: Uuid,
+        guide_id: Uuid,
+    ) -> AppResult<DataGuideResponse> {
+        let guide = repo
+            .get(tenant_id, guide_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Data guide not found".to_string(),
+            })?;
+
+        let status: DataGuideStatus = guide.status.parse().unwrap_or(DataGuideStatus::Draft);
+        if matches!(
+            status,
+            DataGuideStatus::GeneratingFacets
+                | DataGuideStatus::GeneratingPreview
+                | DataGuideStatus::Generating
+        ) {
+            return Err(AppError::BadRequest {
+                message: "This session is still running — wait for it to finish or fail."
+                    .to_string(),
+            });
+        }
+
+        let reset = repo
+            .reset_to_draft(tenant_id, guide_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Data guide not found".to_string(),
+            })?;
+
+        tracing::info!(data_guide_id = %guide_id, %tenant_id, "Data guide reset to draft");
+        Ok(reset.into())
+    }
+
     /// Start facet generation from parsed source documents.
     #[allow(clippy::too_many_arguments)]
     pub async fn start_facets(

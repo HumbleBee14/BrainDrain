@@ -687,6 +687,12 @@ export const api = {
         body: JSON.stringify(data),
       }),
 
+    reset: (token: string, id: string) =>
+      request<DataGuideResponse>(`/api/v1/data-guides/${id}/reset`, {
+        token,
+        method: "POST",
+      }),
+
     generateFacets: (token: string, id: string, data: GenerateFacetsRequest) =>
       request<DataGuideResponse>(`/api/v1/data-guides/${id}/facets`, {
         token,

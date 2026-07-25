@@ -56,6 +56,22 @@ export function useCreateDataGuide(projectId: string) {
   });
 }
 
+export function useResetDataGuide(projectId: string) {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation<DataGuide, Error, string>({
+    mutationFn: async (id) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.dataGuides.reset(token, id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["data-guide", projectId] });
+    },
+  });
+}
+
 export function useGenerateFacets(projectId: string) {
   const { getToken } = useAuth();
   const queryClient = useQueryClient();

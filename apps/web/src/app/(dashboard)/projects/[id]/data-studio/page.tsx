@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   useDataGuide,
   useCreateDataGuide,
+  useResetDataGuide,
   useGenerateFacets,
   useUpdateFacets,
   useGeneratePreview,
@@ -151,6 +152,7 @@ export default function DataStudioPage() {
     useDataGuide(projectId);
 
   const createGuide = useCreateDataGuide(projectId);
+  const resetGuide = useResetDataGuide(projectId);
   const generateFacets = useGenerateFacets(projectId);
   const updateFacets = useUpdateFacets(projectId);
   const generatePreview = useGeneratePreview(projectId);
@@ -389,11 +391,23 @@ export default function DataStudioPage() {
           {guide.status === "failed" && (
             <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-4">
               <p className="text-sm font-medium text-red-700 dark:text-red-400">
-                This guided session failed and cannot be resumed.
+                This guided session failed.
               </p>
               {guide.error && (
                 <p className="mt-2 break-words text-sm text-red-600 dark:text-red-300">
                   {guide.error}
+                </p>
+              )}
+              <button
+                onClick={() => resetGuide.mutate(guide.id)}
+                disabled={resetGuide.isPending}
+                className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {resetGuide.isPending ? "Starting over..." : "Start over"}
+              </button>
+              {resetGuide.error && (
+                <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+                  {resetGuide.error.message}
                 </p>
               )}
             </div>

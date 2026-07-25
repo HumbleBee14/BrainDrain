@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/projects/{project_id}/data-guide", post(create_data_guide))
         .route("/projects/{project_id}/data-guide", get(get_data_guide))
+        .route("/data-guides/{id}/reset", post(reset_data_guide))
         .route("/data-guides/{id}/facets", post(start_facets))
         .route("/data-guides/{id}/facets", put(update_facets))
         .route("/data-guides/{id}/preview", post(start_preview))
@@ -45,6 +46,41 @@ async fn require_guide(
         .ok_or(crate::error::AppError::NotFound {
             message: "Data guide not found".to_string(),
         })
+}
+
+/// POST /api/v1/data-guides/{id}/reset
+#[utoipa::path(
+    post,
+    path = "/api/v1/data-guides/{id}/reset",
+    tag = "DataGen",
+    params(("id" = Uuid, Path, description = "Data guide ID")),
+    responses(
+        (status = 200, description = "Guide reset to draft", body = DataGuideResponse),
+        (status = 400, body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn reset_data_guide(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(guide_id): Path<Uuid>,
+) -> AppResult<Json<DataGuideResponse>> {
+    require_role(&user, TeamRole::Member)?;
+
+    let guide = DataGuideService::reset(state.data_guide_repo(), user.tenant_id, guide_id).await?;
+
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "reset_data_guide",
+        "data_guide",
+        Some(guide_id),
+        serde_json::json!({}),
+    )
+    .await;
+
+    Ok(Json(guide))
 }
 
 /// Create (or fetch the existing) data guide session for a project.

@@ -118,6 +118,7 @@ fn v1_router() -> Router<AppState> {
         datasets::get_parsed_content,
         // Data Studio
         datagen::create_data_guide,
+        datagen::reset_data_guide,
         datagen::get_data_guide,
         datagen::start_facets,
         datagen::update_facets,
