@@ -17,6 +17,40 @@ import httpx
 from src.failure_message import NO_LLM_KEY
 
 
+class LlmApiError(RuntimeError):
+    """Provider returned an error status, with its own explanation attached."""
+
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        suffix = f": {detail}" if detail else ""
+        super().__init__(f"LLM provider returned HTTP {status_code}{suffix}")
+
+    @property
+    def is_retryable(self) -> bool:
+        return self.status_code == 429 or self.status_code >= 500
+
+
+def _provider_detail(body: str, limit: int = 300) -> str:
+    text = (body or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        err = parsed.get("error")
+        if isinstance(err, dict) and isinstance(err.get("message"), str):
+            text = err["message"]
+        elif isinstance(err, str):
+            text = err
+        elif isinstance(parsed.get("message"), str):
+            text = parsed["message"]
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 class LLMProvider(Protocol):
     """Protocol for LLM API providers used in synthetic data generation."""
 
@@ -67,7 +101,8 @@ class OpenAICompatibleProvider:
                 "temperature": temperature,
             },
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise LlmApiError(resp.status_code, _provider_detail(resp.text))
 
         data = resp.json()
         content = data["choices"][0]["message"]["content"].strip()

@@ -19,6 +19,7 @@ from temporalio import activity
 
 from src import s3_paths
 from src.activities.pair_checkpoint import Checkpoint, NullCheckpoint, PairCheckpoint
+from src.backends.llm_provider import LlmApiError
 from src.backends.llm_provider import get as get_llm_provider
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, PairGenerator
@@ -262,6 +263,7 @@ async def generate_pairs_with_checkpoint(
 
     dropped_unfaithful = 0
     failed_chunks = 0
+    last_failure: str | None = None
 
     for i, chunk in enumerate(chunks):
         if i in completed:
@@ -284,8 +286,16 @@ async def generate_pairs_with_checkpoint(
                 count=pairs_per_chunk,
                 avoid=list(avoid),
             )
+        except LlmApiError as exc:
+            if not exc.is_retryable:
+                raise
+            failed_chunks += 1
+            last_failure = str(exc)
+            activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
+            continue
         except TRANSIENT_GENERATION_ERRORS as exc:
             failed_chunks += 1
+            last_failure = str(exc)
             activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
             continue
 
@@ -299,8 +309,8 @@ async def generate_pairs_with_checkpoint(
 
     if failed_chunks > 0 and not records:
         raise RuntimeError(
-            f"All {failed_chunks} chunk(s) failed synthetic pair generation due to "
-            "transient errors; refusing to return an empty dataset."
+            f"Synthetic pair generation failed for all {failed_chunks} chunk(s). "
+            f"Last error: {last_failure or 'unknown'}"
         )
 
     return records, dropped_unfaithful, failed_chunks

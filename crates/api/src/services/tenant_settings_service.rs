@@ -80,6 +80,7 @@ impl TenantSettingsService {
         };
 
         let base_url = json_str(&llm, "api_base_url").unwrap_or_default();
+        let model = json_str(&llm, "model").unwrap_or_default();
         // Decrypt before use — an `enc:v1:` blob must never go out as a bearer token.
         let api_key = llm
             .get("api_key")
@@ -90,6 +91,13 @@ impl TenantSettingsService {
             .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?
             .unwrap_or_default();
 
+        if model.is_empty() {
+            return Ok(LlmTestResponse {
+                success: false,
+                message: "No model is configured.".to_string(),
+                status_code: None,
+            });
+        }
         if base_url.is_empty() {
             return Ok(LlmTestResponse {
                 success: false,
@@ -115,16 +123,16 @@ impl TenantSettingsService {
             });
         }
 
-        let url = format!("{}/models", base_url.trim_end_matches('/'));
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
 
-        let mut sent = Self::probe_models(&client, &url, &api_key, AuthStyle::Bearer).await;
+        let mut sent = Self::probe_chat(&client, &url, &api_key, &model, AuthStyle::Bearer).await;
         if !api_key.is_empty() && matches!(&sent, Ok(r) if r.status() == 401 || r.status() == 403) {
-            sent = Self::probe_models(&client, &url, &api_key, AuthStyle::ApiKeyHeader).await;
+            sent = Self::probe_chat(&client, &url, &api_key, &model, AuthStyle::ApiKeyHeader).await;
         }
 
         match sent {
@@ -145,7 +153,7 @@ impl TenantSettingsService {
                     with_detail("Authentication failed — check your API key.", &detail)
                 } else if code == 404 {
                     with_detail(
-                        "Endpoint reachable, but /models was not found — verify the base URL is OpenAI-compatible.",
+                        "Endpoint reachable, but /chat/completions was not found — verify the base URL is OpenAI-compatible.",
                         &detail,
                     )
                 } else {
@@ -179,13 +187,18 @@ impl TenantSettingsService {
         }
     }
 
-    async fn probe_models(
+    async fn probe_chat(
         client: &reqwest::Client,
         url: &str,
         api_key: &str,
+        model: &str,
         style: AuthStyle,
     ) -> Result<reqwest::Response, reqwest::Error> {
-        let mut req = client.get(url);
+        let mut req = client.post(url).json(&serde_json::json!({
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }));
         if !api_key.is_empty() {
             req = match style {
                 AuthStyle::Bearer => req.bearer_auth(api_key),

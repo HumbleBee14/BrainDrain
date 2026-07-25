@@ -7,6 +7,7 @@ from src.activities.generate_pairs import (
     generate_pairs_with_checkpoint,
 )
 from src.activities.pair_checkpoint import NullCheckpoint
+from src.backends.llm_provider import LlmApiError
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import FaithfulnessVerdict, GeneratedPair
 
@@ -110,7 +111,7 @@ async def test_all_chunks_transiently_failing_raises(error):
     generator = _AlwaysFailsGenerator(error)
 
     env = ActivityEnvironment()
-    with pytest.raises(RuntimeError, match="failed synthetic pair generation"):
+    with pytest.raises(RuntimeError, match="generation failed for all"):
         await env.run(
             generate_pairs_with_checkpoint,
             chunks,
@@ -133,6 +134,54 @@ async def test_value_error_from_generator_still_propagates():
 
     env = ActivityEnvironment()
     with pytest.raises(ValueError, match="not valid JSON"):
+        await env.run(
+            generate_pairs_with_checkpoint,
+            chunks,
+            [],
+            generator,
+            None,
+            NullCheckpoint(),
+            task_type="qna",
+            guidance="",
+            pairs_per_chunk=1,
+            faithfulness_enabled=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_permanent_provider_error_propagates_immediately():
+    """A 400 will fail identically on every chunk, so retrying only hides it."""
+    chunks = [
+        {"text": "x" * 60, "doc_id": "d1", "chunk_id": "c1"},
+        {"text": "y" * 60, "doc_id": "d2", "chunk_id": "c2"},
+    ]
+    generator = _AlwaysFailsGenerator(
+        LlmApiError(400, "temperature must be 1 when thinking is enabled")
+    )
+
+    env = ActivityEnvironment()
+    with pytest.raises(LlmApiError, match="temperature must be 1"):
+        await env.run(
+            generate_pairs_with_checkpoint,
+            chunks,
+            [],
+            generator,
+            None,
+            NullCheckpoint(),
+            task_type="qna",
+            guidance="",
+            pairs_per_chunk=1,
+            faithfulness_enabled=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_still_tolerated_per_chunk():
+    chunks = [{"text": "x" * 60, "doc_id": "d1", "chunk_id": "c1"}]
+    generator = _AlwaysFailsGenerator(LlmApiError(429, "rate limited"))
+
+    env = ActivityEnvironment()
+    with pytest.raises(RuntimeError, match="rate limited"):
         await env.run(
             generate_pairs_with_checkpoint,
             chunks,
