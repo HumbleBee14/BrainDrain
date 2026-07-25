@@ -140,6 +140,8 @@ services:
       MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
       MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
       APP_MODAL_APP_NAME: ${APP_MODAL_APP_NAME:-platform-training}
+      # This host has no GPU, so GPU work must go to Modal; the code default is local.
+      APP_GPU_PROVIDER: ${APP_GPU_PROVIDER:-modal}
       APP_WORKER_MODE: all
     depends_on:
       migrate:

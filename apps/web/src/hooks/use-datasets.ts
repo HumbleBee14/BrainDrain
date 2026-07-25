@@ -2,7 +2,12 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Dataset, type PaginatedResponse } from "@/lib/api-client";
+import {
+  api,
+  type Dataset,
+  type DatasetImportResponse,
+  type PaginatedResponse,
+} from "@/lib/api-client";
 
 export function useDatasets(projectId: string, offset = 0, limit = 20) {
   const { getToken } = useAuth();
@@ -43,6 +48,22 @@ export function useDatasetPreview(id: string, maxRows = 20) {
       return api.datasets.preview(token, id, maxRows);
     },
     enabled: !!id,
+  });
+}
+
+export function useImportDataset(projectId: string) {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation<DatasetImportResponse, Error, { file: File; name?: string }>({
+    mutationFn: async ({ file, name }) => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.datasets.import(token, projectId, file, name);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    },
   });
 }
 

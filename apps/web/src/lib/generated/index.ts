@@ -38,6 +38,8 @@ export type { CreateEvaluationRequest } from "./CreateEvaluationRequest";
 export type { CreateProjectRequest } from "./CreateProjectRequest";
 export type { CreateTrainingJobRequest } from "./CreateTrainingJobRequest";
 export type { DatasetResponse } from "./DatasetResponse";
+export type { DatasetImportResponse } from "./DatasetImportResponse";
+export type { DatasetImportRowError } from "./DatasetImportRowError";
 export type { DatasetStatusCounts } from "./DatasetStatusCounts";
 export type { DeploymentStatusResponse } from "./DeploymentStatusResponse";
 export type { DocumentResponse } from "./DocumentResponse";

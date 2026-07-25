@@ -24,6 +24,7 @@ import { useModelCatalog } from "@/hooks/use-catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { DatasetImportCard } from "@/components/dataset-import-card";
 import {
   StatusBadge,
   DatasetStatusBadge,
@@ -557,11 +558,15 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Datasets section */}
-      {datasets.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
-            Datasets ({datasetsData?.total ?? datasets.length})
-          </h2>
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
+          Datasets{" "}
+          {datasets.length > 0 && `(${datasetsData?.total ?? datasets.length})`}
+        </h2>
+        <div className="mb-4">
+          <DatasetImportCard projectId={params.id} />
+        </div>
+        {datasets.length > 0 && (
           <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
             {datasets.map((ds) => (
               <Link
@@ -583,8 +588,8 @@ export default function ProjectDetailPage() {
               </Link>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Training Jobs section */}
       <div className="mb-8">

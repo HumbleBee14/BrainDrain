@@ -2,6 +2,7 @@ import type {
   ProjectResponse,
   DocumentResponse,
   DatasetResponse,
+  DatasetImportResponse,
   TrainingJobResponse,
   ModelResponse,
   EvaluationResponse,
@@ -76,6 +77,10 @@ export type {
 export type { ProjectResponse as Project } from "./generated";
 export type { DocumentResponse as Document } from "./generated";
 export type { DatasetResponse as Dataset } from "./generated";
+export type {
+  DatasetImportResponse,
+  DatasetImportRowError,
+} from "./generated";
 export type { TrainingJobResponse as TrainingJob } from "./generated";
 export type { ModelResponse as Model } from "./generated";
 export type { EvaluationResponse as Evaluation } from "./generated";
@@ -411,11 +416,11 @@ async function request<T>(
 
 // ── API methods ──
 
-async function uploadRequest(
+async function uploadRequest<T>(
   path: string,
   token: string,
   formData: FormData,
-): Promise<UploadResponse[]> {
+): Promise<T> {
   const res = await fetchWithRetry(`${API_URL}${path}`, {
     method: "POST",
     headers: {
@@ -549,7 +554,7 @@ export const api = {
       for (const file of files) {
         formData.append("files", file);
       }
-      return uploadRequest(
+      return uploadRequest<UploadResponse[]>(
         `/api/v1/projects/${projectId}/documents`,
         token,
         formData,
@@ -611,6 +616,17 @@ export const api = {
 
     get: (token: string, id: string) =>
       request<DatasetResponse>(`/api/v1/datasets/${id}`, { token }),
+
+    import: (token: string, projectId: string, file: File, name?: string) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (name?.trim()) formData.append("name", name.trim());
+      return uploadRequest<DatasetImportResponse>(
+        `/api/v1/projects/${projectId}/datasets/import`,
+        token,
+        formData,
+      );
+    },
 
     preview: (token: string, id: string, maxRows = 20) =>
       request<Record<string, unknown>[]>(
