@@ -50,6 +50,12 @@ class OpenAICompatibleProvider:
         max_tokens: int = 2000,
         temperature: float = 0.7,
     ) -> str:
+        # Name the missing setting instead of letting it surface as a bare 401.
+        if not (api_key or "").strip():
+            raise RuntimeError(
+                "No LLM API key configured. Add your provider key under Settings -> LLM."
+            )
+
         url = f"{api_base_url.rstrip('/')}/chat/completions"
         resp = await http.post(
             url,

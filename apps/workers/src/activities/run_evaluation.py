@@ -12,6 +12,7 @@ Scores and a detailed report are saved to DB and attached to the model record.
 Uses the unified LLMJudge protocol from llm_judge.py.
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -125,6 +126,19 @@ class RunEvaluationActivity:
                 default_model=self.infra.settings.llm_model,
                 encryption_key=self.infra.settings.settings_encryption_key,
                 settings=self.infra.settings,
+            )
+
+            # Every suite scores through the judge, so verify it before booking a
+            # GPU — otherwise a missing key costs minutes of GPU time to discover.
+            await asyncio.to_thread(
+                get_judge(
+                    self.infra.settings.judge_backend,
+                    api_base=input.judge_api_base or llm_config.api_base_url,
+                    api_key=llm_config.api_key,
+                    model=input.judge_model or llm_config.model,
+                    max_retries=self.infra.settings.judge_max_retries,
+                    on_failure=self.infra.settings.judge_on_failure,
+                ).preflight
             )
 
             # Dispatch the GPU work to the configured provider (local or Modal).

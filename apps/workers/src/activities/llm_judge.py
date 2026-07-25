@@ -65,6 +65,10 @@ class LLMJudge(Protocol):
         """Check if an answer matches the expected answer."""
         ...
 
+    def preflight(self) -> None:
+        """Raise JudgeUnavailableError unless configured and reachable."""
+        ...
+
 
 class OpenAICompatibleJudge:
     """LLM-as-Judge backed by any OpenAI-compatible API.
@@ -86,6 +90,8 @@ class OpenAICompatibleJudge:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=60.0,
         )
+        self.api_base = api_base
+        self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
         # "error"  → raise JudgeUnavailableError so the run fails loudly (default,
@@ -135,12 +141,39 @@ class OpenAICompatibleJudge:
             f"judge unavailable after {self.max_retries + 1} attempts: {last_err}"
         )
 
-    def _handle_failure(self, what: str, heuristic):
+    def preflight(self) -> None:
+        """Check the judge is configured and reachable before expensive work.
+
+        Evaluation spends GPU minutes generating answers before the first judge
+        call, so an unusable judge must surface here rather than at scoring time.
+        """
+        missing = [
+            name
+            for name, value in (
+                ("endpoint URL", self.api_base),
+                ("API key", self.api_key),
+                ("model", self.model),
+            )
+            if not (value or "").strip()
+        ]
+        if missing:
+            raise JudgeUnavailableError(
+                f"No judge LLM configured (missing {', '.join(missing)}). "
+                "Add your provider key under Settings -> LLM, then retry."
+            )
+        self._call("Reply with OK.", max_tokens=1)
+
+    def _handle_failure(self, what: str, heuristic, cause: Exception | None = None):
         """Apply the on_failure policy: raise (default) or log + heuristic."""
         if self.on_failure == "heuristic":
-            logger.warning("Judge %s failed; using heuristic (on_failure='heuristic')", what)
+            logger.warning(
+                "Judge %s failed; using heuristic (on_failure='heuristic'): %s", what, cause
+            )
             return heuristic()
-        raise JudgeUnavailableError(f"judge {what} produced no usable result")
+        # Keep the cause in the message: it names the actual fault (bad key,
+        # unreachable endpoint, unparseable reply) that the operator must fix.
+        detail = f": {cause}" if cause else ""
+        raise JudgeUnavailableError(f"judge {what} produced no usable result{detail}") from cause
 
     def score_response(self, prompt: str, response: str) -> float:
         """Score a response quality (1-10) using LLM judge.
@@ -162,10 +195,10 @@ class OpenAICompatibleJudge:
         try:
             result = self._call(judge_prompt, max_tokens=5)
             return max(1.0, min(10.0, float(result.strip().split()[0])))
-        except (ValueError, IndexError):
-            return self._handle_failure("score_response (unparseable)", _heuristic)
-        except JudgeUnavailableError:
-            return self._handle_failure("score_response", _heuristic)
+        except (ValueError, IndexError) as e:
+            return self._handle_failure("score_response (unparseable)", _heuristic, e)
+        except JudgeUnavailableError as e:
+            return self._handle_failure("score_response", _heuristic, e)
 
     def score_reasoning(self, completion: str) -> float:
         """Score reasoning quality, normalized to [-1, 1].
@@ -183,13 +216,13 @@ class OpenAICompatibleJudge:
             result = self._call(judge_prompt, max_tokens=5)
             raw_score = float(result.strip().split()[0])
             return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
             return self._handle_failure(
-                "score_reasoning (unparseable)", lambda: _heuristic_reasoning_score(completion)
+                "score_reasoning (unparseable)", lambda: _heuristic_reasoning_score(completion), e
             )
-        except JudgeUnavailableError:
+        except JudgeUnavailableError as e:
             return self._handle_failure(
-                "score_reasoning", lambda: _heuristic_reasoning_score(completion)
+                "score_reasoning", lambda: _heuristic_reasoning_score(completion), e
             )
 
     def score_domain(self, prompt: str, generated: str, expected: str) -> dict:
@@ -213,10 +246,10 @@ class OpenAICompatibleJudge:
 
         try:
             return json.loads(self._call(judge_prompt))
-        except (json.JSONDecodeError, TypeError):
-            return self._handle_failure("score_domain (unparseable)", _heuristic)
-        except JudgeUnavailableError:
-            return self._handle_failure("score_domain", _heuristic)
+        except (json.JSONDecodeError, TypeError) as e:
+            return self._handle_failure("score_domain (unparseable)", _heuristic, e)
+        except JudgeUnavailableError as e:
+            return self._handle_failure("score_domain", _heuristic, e)
 
     def compare_ab(self, prompt: str, response_a: str, response_b: str) -> str:
         """Blind A/B comparison. Returns 'A', 'B', or 'tie'."""
@@ -230,8 +263,8 @@ class OpenAICompatibleJudge:
         )
         try:
             result = self._call(judge_prompt, max_tokens=5).strip().upper()
-        except JudgeUnavailableError:
-            return self._handle_failure("compare_ab", lambda: "tie")
+        except JudgeUnavailableError as e:
+            return self._handle_failure("compare_ab", lambda: "tie", e)
         if result.startswith("A"):
             return "A"
         elif result.startswith("B"):
@@ -248,8 +281,8 @@ class OpenAICompatibleJudge:
         )
         try:
             result = self._call(judge_prompt, max_tokens=5)
-        except JudgeUnavailableError:
-            return self._handle_failure("check_correctness", lambda: False)
+        except JudgeUnavailableError as e:
+            return self._handle_failure("check_correctness", lambda: False, e)
         return result.strip().lower().startswith("y")
 
 

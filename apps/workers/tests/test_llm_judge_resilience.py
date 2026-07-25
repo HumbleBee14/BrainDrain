@@ -108,3 +108,32 @@ def test_compare_ab_parses_winner(monkeypatch):
     j = _judge()
     monkeypatch.setattr(j.client, "post", lambda *a, **k: _ok("A"))
     assert j.compare_ab("p", "gold", "sample") == "A"
+
+
+def test_preflight_names_missing_config_without_calling_api(monkeypatch):
+    j = OpenAICompatibleJudge("http://x", "", "m", max_retries=0)
+    monkeypatch.setattr(
+        j.client, "post", lambda *a, **k: pytest.fail("preflight must not call a keyless API")
+    )
+    with pytest.raises(JudgeUnavailableError, match="API key"):
+        j.preflight()
+
+
+def test_preflight_rejects_unreachable_judge(monkeypatch):
+    j = _judge(max_retries=0)
+    monkeypatch.setattr(j.client, "post", lambda *a, **k: _Resp(401, text="bad key"))
+    with pytest.raises(JudgeUnavailableError, match="401"):
+        j.preflight()
+
+
+def test_preflight_passes_when_judge_answers(monkeypatch):
+    j = _judge(max_retries=0)
+    monkeypatch.setattr(j.client, "post", lambda *a, **k: _ok("OK"))
+    j.preflight()
+
+
+def test_failure_message_keeps_root_cause(monkeypatch):
+    j = _judge(max_retries=0)
+    monkeypatch.setattr(j.client, "post", lambda *a, **k: _Resp(401, text="invalid api key"))
+    with pytest.raises(JudgeUnavailableError, match="invalid api key"):
+        j.score_domain("p", "g", "e")

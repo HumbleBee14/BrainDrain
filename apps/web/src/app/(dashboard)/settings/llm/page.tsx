@@ -32,6 +32,16 @@ const PROVIDERS = [
     models: ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
   },
   {
+    id: "anthropic",
+    label: "Anthropic",
+    defaultUrl: "https://api.anthropic.com/v1",
+    models: [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5",
+      "claude-opus-5",
+    ],
+  },
+  {
     id: "groq",
     label: "Groq",
     defaultUrl: "https://api.groq.com/openai/v1",
