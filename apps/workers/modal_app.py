@@ -23,6 +23,10 @@ import modal
 _HF_CACHE_PATH = "/root/.cache/huggingface"
 _weights_cache = modal.Volume.from_name("ekcron-model-cache", create_if_missing=True)
 
+# Public Redis URL + metrics backend, so per-step training metrics reach the
+# dashboard instead of the log-only fallback.
+_metrics_secret = modal.Secret.from_name("ekcron-metrics-secrets")
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     # GPU/ML stack — remote-only, absent from pyproject's runtime deps.
@@ -76,15 +80,9 @@ _secret = modal.Secret.from_name("platform-training-secrets")
 def _remote_env_setup():
     """Container-start env defaults shared by every remote function.
 
-    Metrics sink: a compose-internal Redis (redis://localhost:6379) is
-    unreachable from Modal, so DEFAULT to the log-only sink — but let the
-    secret override it: set APP_METRICS_BACKEND=redis AND a PUBLIC
-    APP_REDIS_URL (e.g. an Upstash rediss:// URL Modal can reach) in the
-    Modal secret to stream live per-step metrics instead. Using setdefault
-    (not hard assignment) preserves that override while keeping the safe
-    default when no reachable Redis is configured. Must run BEFORE
-    build_settings() reads WorkerSettings from the environment. Do not change
-    the local default in config.py.
+    setdefault, so a secret providing a Modal-reachable Redis keeps live
+    metrics; falls back to log-only otherwise. Must run before
+    build_settings() reads the environment.
     """
     import os
 
@@ -95,7 +93,7 @@ def _remote_env_setup():
     image=image,
     gpu="A10",
     timeout=86400,
-    secrets=[_secret],
+    secrets=[_secret, _metrics_secret],
     volumes={_HF_CACHE_PATH: _weights_cache},
 )
 async def train(payload: dict) -> dict:
@@ -128,7 +126,7 @@ async def train(payload: dict) -> dict:
     image=image,
     gpu="A10",
     timeout=86400,
-    secrets=[_secret],
+    secrets=[_secret, _metrics_secret],
     volumes={_HF_CACHE_PATH: _weights_cache},
 )
 async def train_sft_round(payload: dict) -> dict:
@@ -159,7 +157,7 @@ async def train_sft_round(payload: dict) -> dict:
     image=image,
     gpu="A10",
     timeout=86400,
-    secrets=[_secret],
+    secrets=[_secret, _metrics_secret],
     volumes={_HF_CACHE_PATH: _weights_cache},
 )
 async def evaluate_holdout(payload: dict) -> dict:
@@ -186,7 +184,7 @@ async def evaluate_holdout(payload: dict) -> dict:
     image=image,
     gpu="A10",
     timeout=86400,
-    secrets=[_secret],
+    secrets=[_secret, _metrics_secret],
     volumes={_HF_CACHE_PATH: _weights_cache},
 )
 async def run_evaluation(payload: dict) -> dict:

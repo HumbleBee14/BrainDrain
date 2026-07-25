@@ -4,9 +4,18 @@ name: ekcron
 # managed (Neon/Upstash/R2) and injected via env; GPU/vLLM runs on Modal.
 # Build contexts are relative to this file (repo root is ../../..).
 
+# json-file is unbounded by default and would fill the boot volume.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    tag: "{{.Name}}"
+
 services:
   temporal-postgres:
     image: postgres:16-alpine
+    logging: *default-logging
     restart: unless-stopped
     environment:
       POSTGRES_DB: temporal
@@ -22,6 +31,7 @@ services:
 
   temporal:
     image: temporalio/auto-setup:1.29.3
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "7233:7233"
@@ -51,6 +61,7 @@ services:
   # advisory locks need session state a pooler can't guarantee).
   migrate:
     image: ghcr.io/humblebee14/ekcron-api:${IMAGE_TAG:-latest}
+    logging: *default-logging
     entrypoint: ["platform-migrate"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
@@ -58,6 +69,7 @@ services:
 
   api:
     image: ghcr.io/humblebee14/ekcron-api:${IMAGE_TAG:-latest}
+    logging: *default-logging
     restart: unless-stopped
     expose:
       - "8000"
@@ -109,6 +121,7 @@ services:
   # challenge reaches the box directly.
   caddy:
     image: caddy:2
+    logging: *default-logging
     restart: unless-stopped
     ports:
       - "80:80"
@@ -122,6 +135,7 @@ services:
 
   workers:
     image: ghcr.io/humblebee14/ekcron-workers:${IMAGE_TAG:-latest}
+    logging: *default-logging
     restart: unless-stopped
     environment:
       APP_TEMPORAL_ADDRESS: temporal:7233
