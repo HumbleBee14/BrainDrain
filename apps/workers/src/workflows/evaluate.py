@@ -52,6 +52,7 @@ class EvaluateWorkflow:
             start_to_close_timeout=timeouts.eval_activity(),
             heartbeat_timeout=timeouts.eval_heartbeat(),
             retry_policy=RetryPolicy(maximum_attempts=2),
+            result_type=RunEvaluationOutput,
         )
 
         return result

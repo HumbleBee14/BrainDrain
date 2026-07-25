@@ -53,6 +53,7 @@ class TrainReasoningWorkflow:
             start_to_close_timeout=timeouts.train_activity(),
             heartbeat_timeout=timeouts.train_heartbeat(),
             retry_policy=RetryPolicy(maximum_attempts=2),
+            result_type=StartTrainingOutput,
         )
 
         workflow.set_current_details("Reasoning training complete")

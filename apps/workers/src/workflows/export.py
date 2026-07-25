@@ -43,6 +43,7 @@ class ExportWorkflow:
             start_to_close_timeout=timeouts.export_activity(),
             heartbeat_timeout=timeouts.export_heartbeat(),
             retry_policy=RetryPolicy(maximum_attempts=2),
+            result_type=ExportGgufOutput,
         )
 
         return result

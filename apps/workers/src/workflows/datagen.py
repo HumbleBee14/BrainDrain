@@ -20,14 +20,20 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput
-    from src.activities.chunk_text import ChunkTextInput
+    from src.activities.chunk_text import ChunkTextInput, ChunkTextOutput
     from src.activities.datagen_activities import (
         GenerateFacetsInput,
+        GenerateFacetsOutput,
         GeneratePreviewInput,
+        GeneratePreviewOutput,
         RefineGuidanceInput,
+        RefineGuidanceOutput,
         UpdateDataGuideInput,
     )
-    from src.activities.generate_pairs import GenerateSyntheticPairsInput
+    from src.activities.generate_pairs import (
+        GenerateSyntheticPairsInput,
+        GenerateSyntheticPairsOutput,
+    )
 
 
 async def _mark_failed(tenant_id: str, data_guide_id: str) -> None:
@@ -81,6 +87,7 @@ class GenerateFacetsWorkflow:
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
                 retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=GenerateFacetsOutput,
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -127,6 +134,7 @@ class GeneratePreviewWorkflow:
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
                 retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=GeneratePreviewOutput,
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -170,6 +178,7 @@ class RefineGuidanceWorkflow:
                 ),
                 start_to_close_timeout=timeouts.datagen_interactive_activity(),
                 retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=RefineGuidanceOutput,
             )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)
@@ -230,6 +239,7 @@ class GenerateDatasetWorkflow:
                 ),
                 start_to_close_timeout=timeouts.chunk_activity(),
                 retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=ChunkTextOutput,
             )
 
             dataset_id: str | None = None
@@ -251,6 +261,7 @@ class GenerateDatasetWorkflow:
                     start_to_close_timeout=timeouts.generate_pairs_activity(),
                     retry_policy=RetryPolicy(maximum_attempts=2),
                     heartbeat_timeout=timeouts.generate_pairs_heartbeat(),
+                    result_type=GenerateSyntheticPairsOutput,
                 )
 
                 if pairs_result.pair_count == 0:
@@ -270,6 +281,7 @@ class GenerateDatasetWorkflow:
                         ),
                         start_to_close_timeout=timeouts.build_dataset_activity(),
                         retry_policy=RetryPolicy(maximum_attempts=2),
+                        result_type=BuildDatasetOutput,
                     )
         except Exception:
             await _mark_failed(tenant_id, data_guide_id)

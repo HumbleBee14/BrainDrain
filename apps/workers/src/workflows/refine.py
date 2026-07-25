@@ -10,8 +10,11 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.build_dataset import BuildDatasetInput, BuildDatasetOutput
-    from src.activities.chunk_text import ChunkTextInput
-    from src.activities.generate_pairs import GenerateSyntheticPairsInput
+    from src.activities.chunk_text import ChunkTextInput, ChunkTextOutput
+    from src.activities.generate_pairs import (
+        GenerateSyntheticPairsInput,
+        GenerateSyntheticPairsOutput,
+    )
 
 
 @workflow.defn
@@ -43,6 +46,7 @@ class RefineWorkflow:
             ),
             start_to_close_timeout=timeouts.chunk_activity(),
             retry_policy=RetryPolicy(maximum_attempts=3),
+            result_type=ChunkTextOutput,
         )
 
         if chunk_result.chunk_count == 0:
@@ -66,6 +70,7 @@ class RefineWorkflow:
             start_to_close_timeout=timeouts.generate_pairs_activity(),
             retry_policy=RetryPolicy(maximum_attempts=2),
             heartbeat_timeout=timeouts.generate_pairs_heartbeat(),
+            result_type=GenerateSyntheticPairsOutput,
         )
 
         if pairs_result.pair_count == 0:
@@ -88,6 +93,7 @@ class RefineWorkflow:
             ),
             start_to_close_timeout=timeouts.build_dataset_activity(),
             retry_policy=RetryPolicy(maximum_attempts=2),
+            result_type=BuildDatasetOutput,
         )
 
         return dataset_result

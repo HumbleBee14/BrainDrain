@@ -183,6 +183,7 @@ class TrainIterativeWorkflow:
                 start_to_close_timeout=timeouts.train_iterative_activity(),
                 heartbeat_timeout=timeouts.train_heartbeat(),
                 retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=TrainSftRoundOutput,
             )
 
             all_metrics[f"iter_{iteration}"] = sft_result.metrics
@@ -206,6 +207,7 @@ class TrainIterativeWorkflow:
                     start_to_close_timeout=timeouts.holdout_eval_activity(),
                     heartbeat_timeout=timeouts.holdout_eval_heartbeat(),
                     retry_policy=RetryPolicy(maximum_attempts=2),
+                    result_type=EvaluateHoldoutOutput,
                 )
                 raw_eval_loss = eval_result.eval_loss
                 all_metrics[f"iter_{iteration}_eval"] = eval_result.metrics

@@ -13,7 +13,7 @@ from temporalio.exceptions import ApplicationError
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.pipeline_records import CreateEvaluationInput, CreateTrainingJobInput
-    from src.activities.stubs import DeployModelInput
+    from src.activities.stubs import DeployModelInput, DeployModelOutput
     from src.workflows.evaluate import EvaluateWorkflow
     from src.workflows.ingest import IngestWorkflow
     from src.workflows.refine import RefineWorkflow
@@ -146,6 +146,7 @@ class FullPipelineWorkflow:
                 # workflow's own queue, where it is not registered, and never runs.
                 task_queue="ml-pipeline-gpu",
                 start_to_close_timeout=timedelta(minutes=10),
+                result_type=DeployModelOutput,
             )
 
         return {
