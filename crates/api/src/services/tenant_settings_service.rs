@@ -122,36 +122,42 @@ impl TenantSettingsService {
             .build()
             .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
 
-        let mut req = client.get(&url);
-        if !api_key.is_empty() {
-            req = req.bearer_auth(&api_key);
+        let mut sent = Self::probe_models(&client, &url, &api_key, AuthStyle::Bearer).await;
+        if !api_key.is_empty() && matches!(&sent, Ok(r) if r.status() == 401 || r.status() == 403) {
+            sent = Self::probe_models(&client, &url, &api_key, AuthStyle::ApiKeyHeader).await;
         }
 
-        match req.send().await {
+        match sent {
             Ok(resp) => {
                 let code = resp.status().as_u16();
-                let (success, message) = if resp.status().is_success() {
-                    (
-                        true,
-                        "Connection successful — the provider is reachable and the API key is valid."
-                            .to_string(),
-                    )
+                let ok = resp.status().is_success();
+                let detail = resp
+                    .text()
+                    .await
+                    .ok()
+                    .map(|body| provider_error_detail(&body))
+                    .unwrap_or_default();
+
+                let message = if ok {
+                    "Connection successful — the provider is reachable and the API key is valid."
+                        .to_string()
                 } else if code == 401 || code == 403 {
-                    (
-                        false,
-                        "Authentication failed — check your API key.".to_string(),
-                    )
+                    with_detail("Authentication failed — check your API key.", &detail)
                 } else if code == 404 {
-                    (
-                        false,
-                        "Endpoint reachable, but /models was not found — verify the base URL is OpenAI-compatible."
-                            .to_string(),
+                    with_detail(
+                        "Endpoint reachable, but /models was not found — verify the base URL is OpenAI-compatible.",
+                        &detail,
                     )
                 } else {
-                    (false, format!("Provider returned HTTP {code}."))
+                    with_detail(&format!("Provider returned HTTP {code}."), &detail)
                 };
+
+                if !ok {
+                    tracing::warn!(%tenant_id, code, detail = %detail, "LLM connection test failed");
+                }
+
                 Ok(LlmTestResponse {
-                    success,
+                    success: ok,
                     message,
                     status_code: Some(code),
                 })
@@ -171,6 +177,24 @@ impl TenantSettingsService {
                 })
             }
         }
+    }
+
+    async fn probe_models(
+        client: &reqwest::Client,
+        url: &str,
+        api_key: &str,
+        style: AuthStyle,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let mut req = client.get(url);
+        if !api_key.is_empty() {
+            req = match style {
+                AuthStyle::Bearer => req.bearer_auth(api_key),
+                AuthStyle::ApiKeyHeader => req
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01"),
+            };
+        }
+        req.send().await
     }
 
     /// Update the LLM provider settings for a tenant.
@@ -441,6 +465,50 @@ impl TenantSettingsService {
     }
 }
 
+enum AuthStyle {
+    Bearer,
+    ApiKeyHeader,
+}
+
+const PROVIDER_DETAIL_MAX: usize = 200;
+
+/// Pull the human-readable message out of a provider error body, whether it is
+/// `{"error":{"message":..}}`, `{"error":".."}`, `{"message":".."}`, or plain text.
+fn provider_error_detail(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let extracted = serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| {
+            let err = v.get("error");
+            err.and_then(|e| e.get("message"))
+                .or_else(|| err.filter(|e| e.is_string()))
+                .or_else(|| v.get("message"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        });
+
+    let text = extracted.unwrap_or_else(|| trimmed.to_string());
+    let text = text.trim();
+    if text.chars().count() > PROVIDER_DETAIL_MAX {
+        let cut: String = text.chars().take(PROVIDER_DETAIL_MAX).collect();
+        format!("{cut}...")
+    } else {
+        text.to_string()
+    }
+}
+
+fn with_detail(message: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        message.to_string()
+    } else {
+        format!("{message} Provider said: {detail}")
+    }
+}
+
 /// Extract an optional string from a JSON value by key.
 fn json_str(val: &serde_json::Value, key: &str) -> Option<String> {
     val.get(key)
@@ -467,5 +535,43 @@ mod tests {
         assert_eq!(json_str(&val, "provider"), Some("openai".into()));
         assert_eq!(json_str(&val, "model"), None); // empty string → None
         assert_eq!(json_str(&val, "missing"), None);
+    }
+
+    #[test]
+    fn extracts_nested_provider_message() {
+        let body = r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#;
+        assert_eq!(provider_error_detail(body), "invalid x-api-key");
+    }
+
+    #[test]
+    fn extracts_openai_style_and_flat_shapes() {
+        assert_eq!(
+            provider_error_detail(r#"{"error":{"message":"Incorrect API key provided"}}"#),
+            "Incorrect API key provided"
+        );
+        assert_eq!(
+            provider_error_detail(r#"{"error":"forbidden"}"#),
+            "forbidden"
+        );
+        assert_eq!(provider_error_detail(r#"{"message":"nope"}"#), "nope");
+    }
+
+    #[test]
+    fn falls_back_to_raw_text_and_truncates() {
+        assert_eq!(provider_error_detail("  upstream down  "), "upstream down");
+        assert_eq!(provider_error_detail(""), "");
+        let long = "x".repeat(PROVIDER_DETAIL_MAX + 50);
+        let out = provider_error_detail(&long);
+        assert_eq!(out.chars().count(), PROVIDER_DETAIL_MAX + 3);
+        assert!(out.ends_with("..."));
+    }
+
+    #[test]
+    fn with_detail_omits_empty() {
+        assert_eq!(with_detail("Auth failed.", ""), "Auth failed.");
+        assert_eq!(
+            with_detail("Auth failed.", "bad key"),
+            "Auth failed. Provider said: bad key"
+        );
     }
 }

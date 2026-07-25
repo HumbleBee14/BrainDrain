@@ -27,6 +27,7 @@ from src.datagen.registry import (
     get_guidance_refiner,
     get_pair_generator,
 )
+from src.failure_message import NO_LLM_KEY
 from src.infra import InfraContainer
 from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 
@@ -61,10 +62,7 @@ async def _resolve_tenant_llm(
         encryption_key=settings.settings_encryption_key,
     )
     if not llm_config.api_key:
-        raise ValueError(
-            "LLM API key not configured. Set per-tenant LLM settings via "
-            "PUT /api/v1/settings/llm or set APP_LLM_API_KEY environment variable."
-        )
+        raise ValueError(NO_LLM_KEY)
     provider = get_llm_provider(settings.llm_provider_backend)
     return llm_config, provider
 

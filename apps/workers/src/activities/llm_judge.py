@@ -22,6 +22,8 @@ from typing import Protocol
 
 import httpx
 
+from src.failure_message import NO_LLM_KEY
+
 logger = logging.getLogger("platform.judge")
 
 # HTTP statuses worth retrying (transient): rate limit + gateway/5xx.
@@ -157,10 +159,7 @@ class OpenAICompatibleJudge:
             if not (value or "").strip()
         ]
         if missing:
-            raise JudgeUnavailableError(
-                f"No judge LLM configured (missing {', '.join(missing)}). "
-                "Add your provider key under Settings -> LLM, then retry."
-            )
+            raise JudgeUnavailableError(f"{NO_LLM_KEY} (missing {', '.join(missing)})")
         self._call("Reply with OK.", max_tokens=1)
 
     def _handle_failure(self, what: str, heuristic, cause: Exception | None = None):

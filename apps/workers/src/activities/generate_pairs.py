@@ -23,6 +23,7 @@ from src.backends.llm_provider import get as get_llm_provider
 from src.circuit_breaker import CircuitBreakerOpen
 from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, PairGenerator
 from src.datagen.registry import get_facet_expander, get_faithfulness_scorer, get_pair_generator
+from src.failure_message import NO_LLM_KEY
 from src.infra import InfraContainer
 from src.tenant_config import get_tenant_llm_config
 
@@ -329,10 +330,7 @@ class GeneratePairsActivity:
         )
 
         if not llm_config.api_key:
-            raise ValueError(
-                "LLM API key not configured. Set per-tenant LLM settings via "
-                "PUT /api/v1/settings/llm or set APP_LLM_API_KEY environment variable."
-            )
+            raise ValueError(NO_LLM_KEY)
 
         if llm_config.is_custom:
             logger.info(

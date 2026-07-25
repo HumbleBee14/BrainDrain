@@ -340,16 +340,13 @@ export default function LlmSettingsPage() {
                 {selectedProvider && selectedProvider.models.length > 0 ? (
                   <div className="flex gap-2">
                     <select
-                      value={
-                        selectedProvider.models.includes(form.model)
-                          ? form.model
-                          : "__custom__"
+                      value={form.model === "" ? "__custom__" : form.model}
+                      onChange={(e) =>
+                        updateField(
+                          "model",
+                          e.target.value === "__custom__" ? "" : e.target.value,
+                        )
                       }
-                      onChange={(e) => {
-                        if (e.target.value !== "__custom__") {
-                          updateField("model", e.target.value);
-                        }
-                      }}
                       className="flex-1 bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-2 text-zinc-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     >
                       {selectedProvider.models.map((m) => (
@@ -357,9 +354,12 @@ export default function LlmSettingsPage() {
                           {m}
                         </option>
                       ))}
-                      {!selectedProvider.models.includes(form.model) && (
-                        <option value="__custom__">Custom: {form.model}</option>
-                      )}
+                      {form.model !== "" &&
+                        !selectedProvider.models.includes(form.model) && (
+                          <option value={form.model}>
+                            Custom: {form.model}
+                          </option>
+                        )}
                       <option value="__custom__">Other (type below)</option>
                     </select>
                     {(!selectedProvider.models.includes(form.model) ||
