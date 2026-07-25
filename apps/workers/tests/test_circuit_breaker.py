@@ -123,3 +123,66 @@ async def test_factory_returns_async_breaker_when_enabled():
     """create_circuit_breaker with enabled=True should return AsyncCircuitBreaker."""
     cb = create_circuit_breaker(name="test", enabled=True, fail_max=5, reset_timeout=30)
     assert isinstance(cb, AsyncCircuitBreaker)
+
+
+@pytest.mark.asyncio
+async def test_permanent_client_error_does_not_open_the_breaker():
+    """A bad model name is our fault, not an outage — it must not block callers."""
+
+    class _Permanent(Exception):
+        is_retryable = False
+
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=2, reset_timeout=30)
+
+    async def boom():
+        raise _Permanent("unknown model")
+
+    for _ in range(5):
+        with pytest.raises(_Permanent):
+            await breaker.call(boom)
+
+    assert breaker.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_retryable_error_still_opens_the_breaker():
+    class _Transient(Exception):
+        is_retryable = True
+
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=2, reset_timeout=30)
+
+    async def boom():
+        raise _Transient("503")
+
+    for _ in range(2):
+        with pytest.raises(_Transient):
+            await breaker.call(boom)
+
+    assert breaker.state == "open"
+
+
+@pytest.mark.asyncio
+async def test_unclassified_error_still_opens_the_breaker():
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=1, reset_timeout=30)
+
+    async def boom():
+        raise TimeoutError("no response")
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(boom)
+
+    assert breaker.state == "open"
+
+
+@pytest.mark.asyncio
+async def test_open_message_is_user_facing():
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=1, reset_timeout=30)
+
+    async def boom():
+        raise TimeoutError("x")
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(boom)
+
+    with pytest.raises(CircuitBreakerOpen, match="temporarily unavailable"):
+        await breaker.call(boom)

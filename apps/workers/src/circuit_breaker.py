@@ -16,6 +16,15 @@ from typing import Any, Protocol, runtime_checkable
 logger = logging.getLogger("platform.circuit_breaker")
 
 
+def _counts_as_outage(exc: Exception) -> bool:
+    """A breaker guards against an unhealthy dependency, not against our own
+    malformed request. An error that reports itself as non-retryable (a 4xx such
+    as an unknown model) would otherwise trip the breaker and block every caller.
+    """
+    retryable = getattr(exc, "is_retryable", None)
+    return retryable is not False
+
+
 class CircuitBreakerOpen(Exception):
     """Raised when the circuit breaker is open and rejecting calls."""
 
@@ -78,12 +87,16 @@ class AsyncCircuitBreaker:
         current = self.state
 
         if current == "open":
-            raise CircuitBreakerOpen(f"Circuit breaker '{self._name}' is open")
+            raise CircuitBreakerOpen(
+                f"The {self._name} provider is temporarily unavailable after repeated "
+                f"failures. Retry in about {self._reset_timeout} seconds."
+            )
 
         try:
             result = await func(*args, **kwargs)
-        except Exception:
-            self._record_failure()
+        except Exception as exc:
+            if _counts_as_outage(exc):
+                self._record_failure()
             raise
 
         self._record_success()
