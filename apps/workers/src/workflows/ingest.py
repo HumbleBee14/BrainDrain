@@ -13,6 +13,7 @@ with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.parse_document import ParseDocumentInput
     from src.activities.stubs import DocumentInfo, GetDocumentInfoInput
+    from src.failure_message import root_cause_message
 
 
 @workflow.defn
@@ -56,8 +57,9 @@ class IngestWorkflow:
                 successes.append(doc_id)
 
             except Exception as e:
-                workflow.logger.error("Failed to parse document %s: %s", doc_id, str(e))
-                failures.append({"doc_id": doc_id, "error": str(e)[:200]})
+                reason = root_cause_message(e, "Parse failed")
+                workflow.logger.error("Failed to parse document %s: %s", doc_id, reason)
+                failures.append({"doc_id": doc_id, "error": reason[:200]})
 
         # Partial failure is tolerated, total failure is not: reporting success
         # with zero parsed documents leaves the user staring at an idle pipeline

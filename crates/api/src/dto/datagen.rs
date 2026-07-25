@@ -34,6 +34,7 @@ pub struct DataGuideResponse {
     pub project_id: String,
     pub task_type: TaskType,
     pub status: DataGuideStatus,
+    pub error: Option<String>,
     pub guidance: String,
     /// Optional system prompt baked into every training example and reused as
     /// the serving default. Empty means the neutral built-in default.
@@ -50,6 +51,7 @@ impl From<DataGuide> for DataGuideResponse {
         Self {
             id: g.id.to_string(),
             project_id: g.project_id.to_string(),
+            error: g.error,
             task_type: g.task_type.parse().unwrap_or(TaskType::QuestionAnswering),
             status: g.status.parse().unwrap_or(DataGuideStatus::Draft),
             guidance: g.guidance,
@@ -137,6 +139,7 @@ mod tests {
             project_id: String::new(),
             task_type: TaskType::QuestionAnswering,
             status: DataGuideStatus::Draft,
+            error: None,
             guidance: String::new(),
             system_prompt: String::new(),
             facets: Vec::new(),

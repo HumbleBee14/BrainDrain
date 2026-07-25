@@ -75,6 +75,7 @@ pub struct DataGuide {
     pub project_id: Uuid,
     pub task_type: String,
     pub status: String,
+    pub error: Option<String>,
     pub guidance: String,
     pub system_prompt: String,
     pub facets: serde_json::Value,

@@ -7,7 +7,7 @@ import type { TaskType } from "./TaskType";
 /**
  * Data guide information returned by API.
  */
-export type DataGuideResponse = { id: string, project_id: string, task_type: TaskType, status: DataGuideStatus, guidance: string, 
+export type DataGuideResponse = { id: string, project_id: string, task_type: TaskType, status: DataGuideStatus, error: string | null, guidance: string, 
 /**
  * Optional system prompt baked into every training example and reused as
  * the serving default. Empty means the neutral built-in default.

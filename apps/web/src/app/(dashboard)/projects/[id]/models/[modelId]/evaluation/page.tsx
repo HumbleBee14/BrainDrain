@@ -90,6 +90,14 @@ function ScoreCard({
   );
 }
 
+// The failing activity records the reason under `report.error`.
+function evaluationError(evaluation: Evaluation): string | null {
+  const report = evaluation.report;
+  if (!report || typeof report !== "object" || Array.isArray(report)) return null;
+  const error = (report as Record<string, unknown>).error;
+  return typeof error === "string" && error.trim() ? error : null;
+}
+
 function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
   const scores = evaluation.scores;
 
@@ -106,6 +114,18 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
               Comparison, Safety
             </p>
           </div>
+        </div>
+      );
+    }
+    if (evaluation.status === "failed") {
+      return (
+        <div className="rounded-lg border border-red-200 bg-red-50/40 p-6 dark:border-red-800 dark:bg-red-900/10">
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">
+            Evaluation failed
+          </p>
+          <p className="mt-2 break-words text-sm text-red-600 dark:text-red-300">
+            {evaluationError(evaluation) ?? "No reason was recorded."}
+          </p>
         </div>
       );
     }

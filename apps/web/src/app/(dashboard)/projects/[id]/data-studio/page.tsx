@@ -388,10 +388,14 @@ export default function DataStudioPage() {
         <div className="space-y-8">
           {guide.status === "failed" && (
             <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-4">
-              <p className="text-sm text-red-700 dark:text-red-400">
-                This guided session failed and cannot be resumed. Start a new
-                project or contact support if this persists.
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                This guided session failed and cannot be resumed.
               </p>
+              {guide.error && (
+                <p className="mt-2 break-words text-sm text-red-600 dark:text-red-300">
+                  {guide.error}
+                </p>
+              )}
             </div>
           )}
 

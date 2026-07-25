@@ -355,6 +355,7 @@ class UpdateDataGuideInput:
     guidance: str | None = None
     refinement_history_entry: dict | None = None
     dataset_id: str | None = None
+    error: str | None = None
 
 
 class UpdateDataGuideActivity:
@@ -389,6 +390,9 @@ class UpdateDataGuideActivity:
         if input.dataset_id is not None:
             params.append(input.dataset_id)
             set_clauses.append(f"dataset_id = ${len(params)}::uuid")
+        if input.error is not None:
+            params.append(input.error[:2000])
+            set_clauses.append(f"error = ${len(params)}")
 
         query = f"UPDATE data_guides SET {', '.join(set_clauses)} WHERE id = $1 AND tenant_id = $2"
         result = await self.infra.db.execute(query, *params)

@@ -24,6 +24,7 @@ with workflow.unsafe.imports_passed_through():
         TrainSftRoundInput,
         TrainSftRoundOutput,
     )
+    from src.failure_message import root_cause_message
 
 
 # -- Best-checkpoint selection (pure helpers, unit-tested without Temporal) --
@@ -224,7 +225,9 @@ class TrainIterativeWorkflow:
                     str(e),
                 )
                 eval_loss, recorded_loss = effective_eval_loss(None, eval_failed=True)
-                all_metrics[f"iter_{iteration}_eval_failed"] = str(e)[:200]
+                all_metrics[f"iter_{iteration}_eval_failed"] = root_cause_message(
+                    e, "Holdout eval failed"
+                )[:200]
 
             all_metrics[f"iter_{iteration}_eval_loss"] = recorded_loss
 

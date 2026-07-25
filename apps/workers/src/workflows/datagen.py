@@ -34,9 +34,10 @@ with workflow.unsafe.imports_passed_through():
         GenerateSyntheticPairsInput,
         GenerateSyntheticPairsOutput,
     )
+    from src.failure_message import root_cause_message
 
 
-async def _mark_failed(tenant_id: str, data_guide_id: str) -> None:
+async def _mark_failed(tenant_id: str, data_guide_id: str, error: str) -> None:
     """Best-effort write of `status="failed"` onto the data guide.
 
     Called from an `except` block right before re-raising. Swallows its own
@@ -49,6 +50,7 @@ async def _mark_failed(tenant_id: str, data_guide_id: str) -> None:
                 tenant_id=tenant_id,
                 data_guide_id=data_guide_id,
                 status="failed",
+                error=error,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
             retry_policy=RetryPolicy(maximum_attempts=3),
@@ -89,8 +91,8 @@ class GenerateFacetsWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
                 result_type=GenerateFacetsOutput,
             )
-        except Exception:
-            await _mark_failed(tenant_id, data_guide_id)
+        except Exception as e:
+            await _mark_failed(tenant_id, data_guide_id, root_cause_message(e))
             raise
 
         await workflow.execute_activity(
@@ -136,8 +138,8 @@ class GeneratePreviewWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
                 result_type=GeneratePreviewOutput,
             )
-        except Exception:
-            await _mark_failed(tenant_id, data_guide_id)
+        except Exception as e:
+            await _mark_failed(tenant_id, data_guide_id, root_cause_message(e))
             raise
 
         await workflow.execute_activity(
@@ -180,8 +182,8 @@ class RefineGuidanceWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
                 result_type=RefineGuidanceOutput,
             )
-        except Exception:
-            await _mark_failed(tenant_id, data_guide_id)
+        except Exception as e:
+            await _mark_failed(tenant_id, data_guide_id, root_cause_message(e))
             raise
 
         history_entry = {
@@ -283,8 +285,8 @@ class GenerateDatasetWorkflow:
                         retry_policy=RetryPolicy(maximum_attempts=2),
                         result_type=BuildDatasetOutput,
                     )
-        except Exception:
-            await _mark_failed(tenant_id, data_guide_id)
+        except Exception as e:
+            await _mark_failed(tenant_id, data_guide_id, root_cause_message(e))
             raise
 
         await workflow.execute_activity(
