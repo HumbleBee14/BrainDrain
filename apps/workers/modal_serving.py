@@ -23,7 +23,15 @@ VLLM_VERSION = "v0.8.5"
 # (or redeploy a variant) to serve a different catalog base model.
 DEFAULT_BASE_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 
-_resolver_src = Path(__file__).resolve().parents[2] / "infra/serving/vllm_s3_lora_resolver"
+_RESOLVER_REMOTE_PATH = "/opt/vllm_s3_lora_resolver"
+
+# Remotely this module is imported from /root, where the repo layout is absent;
+# the already-installed copy in the image stands in for the source directory.
+_resolver_src = (
+    Path(__file__).resolve().parents[2] / "infra/serving/vllm_s3_lora_resolver"
+    if modal.is_local()
+    else Path(_RESOLVER_REMOTE_PATH)
+)
 
 # Mirrors infra/serving/Dockerfile.vllm: the vLLM OpenAI image + our resolver
 # plugin, with runtime LoRA updating enabled.
@@ -38,9 +46,9 @@ serving_image = (
             "VLLM_LORA_RESOLVER_CACHE_DIR": "/var/lora-cache",
         }
     )
-    .add_local_dir(_resolver_src, remote_path="/opt/vllm_s3_lora_resolver", copy=True)
+    .add_local_dir(_resolver_src, remote_path=_RESOLVER_REMOTE_PATH, copy=True)
     .run_commands(
-        "pip install --no-cache-dir /opt/vllm_s3_lora_resolver",
+        f"pip install --no-cache-dir {_RESOLVER_REMOTE_PATH}",
         "mkdir -p /var/lora-cache",
     )
 )
