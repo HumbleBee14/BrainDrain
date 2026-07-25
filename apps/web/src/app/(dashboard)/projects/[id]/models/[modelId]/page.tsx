@@ -387,6 +387,7 @@ export default function ModelDetailPage() {
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Deployment</h2>
         <DeploymentPanel
+          playgroundHref={`/projects/${params.id}/models/${params.modelId}/playground`}
           isActive={isActive}
           isDeploying={isDeploying}
           onDeploy={() => deployModel.mutate()}

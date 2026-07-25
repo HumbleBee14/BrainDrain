@@ -15,6 +15,7 @@ LLMJudge protocol for scoring, and Redis streams for real-time metrics.
 
 import json
 import logging
+import math
 import tempfile
 import time
 import uuid
@@ -48,6 +49,9 @@ from src.notifications import EVENT_TRAINING_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig
 
 logger = logging.getLogger("platform.training")
+
+# Warmup beyond this fraction of a run leaves the LR ramping for most of it.
+_MAX_WARMUP_FRACTION = 0.1
 
 
 class StartTrainingActivity:
@@ -951,6 +955,17 @@ def _train_sft(
     CallbackClass = _build_callback_class()
     callback = CallbackClass(job_id, phase=phase or "sft")
 
+    batch_size = hp.get("per_device_train_batch_size", 2)
+    grad_accum = hp.get("gradient_accumulation_steps", 4)
+    epochs = hp.get("num_train_epochs", 3)
+    warmup_steps = _resolve_warmup_steps(
+        configured=hp.get("warmup_steps", 10),
+        dataset_rows=len(dataset),
+        batch_size=batch_size,
+        grad_accum=grad_accum,
+        epochs=epochs,
+    )
+
     save_steps = hp.get("save_steps", 100)
     enable_checkpoints = tenant_id is not None
     callbacks = [callback]
@@ -960,10 +975,10 @@ def _train_sft(
 
     training_args = SFTConfig(
         output_dir=f"/tmp/sft-{job_id[:8]}",
-        per_device_train_batch_size=hp.get("per_device_train_batch_size", 2),
-        gradient_accumulation_steps=hp.get("gradient_accumulation_steps", 4),
-        num_train_epochs=hp.get("num_train_epochs", 3),
-        warmup_steps=hp.get("warmup_steps", 10),
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=grad_accum,
+        num_train_epochs=epochs,
+        warmup_steps=warmup_steps,
         learning_rate=hp.get("learning_rate", 2e-4),
         optim=hp.get("optim", "adamw_8bit"),
         lr_scheduler_type=hp.get("lr_scheduler_type", "cosine"),
@@ -1207,6 +1222,36 @@ def _get_gpu_metrics() -> dict:
         }
     except Exception:
         return {}
+
+
+def _resolve_warmup_steps(
+    *,
+    configured: int,
+    dataset_rows: int,
+    batch_size: int,
+    grad_accum: int,
+    epochs: float,
+) -> int:
+    """Cap warmup so it never swallows a short run.
+
+    A fixed warmup (e.g. 10) exceeds the total step count on small datasets, so
+    the learning rate never leaves its ramp and the adapter learns almost
+    nothing. Keep warmup at a fraction of the actual schedule.
+    """
+    effective_batch = max(1, batch_size * grad_accum)
+    steps_per_epoch = max(1, math.ceil(dataset_rows / effective_batch))
+    total_steps = max(1, int(steps_per_epoch * epochs))
+    capped = max(1, int(total_steps * _MAX_WARMUP_FRACTION))
+    resolved = min(configured, capped)
+    if resolved != configured:
+        logger.info(
+            "Capped warmup %d -> %d (total_steps=%d, rows=%d)",
+            configured,
+            resolved,
+            total_steps,
+            dataset_rows,
+        )
+    return resolved
 
 
 def _build_callback_class():

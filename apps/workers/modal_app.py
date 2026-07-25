@@ -90,7 +90,6 @@ app = modal.App("platform-training")
 _secret = modal.Secret.from_name("platform-training-secrets")
 
 
-
 def _remote_env_setup():
     """Container-start env defaults shared by every remote function.
 

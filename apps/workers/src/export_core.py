@@ -30,9 +30,7 @@ def _resolve_tool(name: str, candidates: tuple[str, ...]) -> str:
     for candidate in candidates:
         if Path(candidate).exists():
             return candidate
-    raise RuntimeError(
-        f"{name} not found. Install llama.cpp and put {name} on PATH."
-    )
+    raise RuntimeError(f"{name} not found. Install llama.cpp and put {name} on PATH.")
 
 
 def _s3_client():
@@ -85,9 +83,7 @@ def _merge_lora(adapter_dir: str, base_model: str, output_dir: str) -> None:
 
 
 def _run_tool(cmd: list[str], failure: str) -> None:
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=3600, check=False
-    )
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"{failure}: {result.stderr[:500]}")
 

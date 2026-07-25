@@ -8,6 +8,8 @@ import { useCreateApiKey } from "@/hooks/use-api-keys";
 import { useDeploymentStatus } from "@/hooks/use-deployments";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { ErrorState } from "@/components/error-state";
+import { Button } from "@/components/ui/button";
+import { ChatMessageBubble } from "@/components/chat-message";
 import {
   getStoredPlaygroundKey,
   storePlaygroundKey,
@@ -232,7 +234,7 @@ export default function PlaygroundPage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)]">
+    <div className="flex h-full min-h-[32rem] flex-col">
       {/* Header */}
       <div className="mb-4 shrink-0">
         <Breadcrumbs
@@ -318,20 +320,7 @@ export default function PlaygroundPage() {
         ) : (
           <div className="p-4 space-y-4">
             {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 text-sm ${
-                    msg.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200"
-                  }`}
-                >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                </div>
-              </div>
+              <ChatMessageBubble key={i} role={msg.role} content={msg.content} />
             ))}
             {isLoading &&
               messages[messages.length - 1]?.role !== "assistant" && (
@@ -357,16 +346,17 @@ export default function PlaygroundPage() {
           onKeyDown={handleKeyDown}
           placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
           rows={2}
-          className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm text-zinc-900 dark:text-white resize-none focus:border-blue-500 focus:outline-none transition"
+          className="flex-1 resize-none rounded-lg border border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 transition focus:border-violet-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
           disabled={isLoading}
         />
-        <button
+        <Button
           onClick={handleSend}
-          disabled={!input.trim() || isLoading}
-          className="rounded-lg bg-blue-600 px-6 py-3 text-sm font-medium text-white hover:bg-blue-500 transition disabled:opacity-50 self-end"
+          disabled={!input.trim()}
+          loading={isLoading}
+          className="self-end px-6 py-3"
         >
           Send
-        </button>
+        </Button>
       </div>
 
       {/* Clear button */}

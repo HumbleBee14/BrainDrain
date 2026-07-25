@@ -66,6 +66,7 @@ modal-deploy:
 # Install git pre-commit hook (auto-formats Rust, Python, syncs constants)
 setup-hooks:
 	git config core.hooksPath .githooks
+	chmod +x .githooks/*
 	@echo "Git hooks installed — pre-commit will auto-format before every commit"
 
 # Clean build artifacts

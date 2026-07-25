@@ -109,7 +109,6 @@ class GpuProvider(Protocol):
         """
         ...
 
-
     async def run_export_gguf(
         self,
         *,
@@ -416,7 +415,6 @@ async def cancel_orphaned_gpu_calls(infra) -> int:
                 continue
         await db.execute(_ORPHAN_CLEAR_SQL[row["tbl"]], row["id"], row["tenant_id"])
     return cancelled
-
 
     async def run_export_gguf(
         self,
@@ -757,7 +755,6 @@ class ModalGpuProvider:
             label="evaluation",
             clear_after=False,
         )
-
 
     async def run_export_gguf(
         self,
