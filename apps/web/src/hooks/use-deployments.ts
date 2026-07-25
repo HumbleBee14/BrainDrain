@@ -21,13 +21,16 @@ export function useDeploymentStatus(modelId: string, enabled = true) {
       return api.deployments.status(token, modelId);
     },
     enabled: !!modelId && enabled,
+    // Deploy now completes server-side, so the UI must converge on its own.
+    refetchInterval: (query) =>
+      query.state.data?.deployment_status === "deploying" ? 5000 : false,
   });
 
-  const isActive = query.data?.deployment_status === "deploying";
+  const isDeploying = query.data?.deployment_status === "deploying";
 
   useStatusStream<DeploymentStatusResponse>(
     modelId ? `/api/v1/models/${modelId}/deployment/stream` : null,
-    !!modelId && enabled && isActive,
+    !!modelId && enabled && isDeploying,
     (data) => {
       queryClient.setQueryData(["deployment-status", modelId], data);
     },

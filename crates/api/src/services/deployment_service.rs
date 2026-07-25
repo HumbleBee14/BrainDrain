@@ -348,26 +348,61 @@ impl DeploymentService {
             });
         }
 
+        // Loading the adapter can take minutes on a scale-to-zero engine, so it
+        // runs detached: the claimed 'deploying' row is the durable record, and a
+        // crash mid-load is recovered by reap_stale_deployments.
+        let task_state = state.clone();
+        let base_model = model.base_model.clone();
+        let adapter_path = adapter_path.to_string();
+        let system_prompt = system_prompt.to_string();
+        tokio::spawn(async move {
+            Self::complete_single_instance_deploy(
+                task_state,
+                tenant_id,
+                model_id,
+                base_model,
+                adapter_path,
+                system_prompt,
+            )
+            .await;
+        });
+
+        let mut deploying = model.clone();
+        deploying.deployment_status = DeploymentStatus::Deploying.to_string();
+        Ok(deploying.into())
+    }
+
+    /// Adapter load + finalize for a claimed deployment. Runs outside the request
+    /// so a disconnected client cannot cancel it; every exit path either activates
+    /// the model or releases the claim.
+    async fn complete_single_instance_deploy(
+        state: AppState,
+        tenant_id: Uuid,
+        model_id: Uuid,
+        base_model: String,
+        adapter_path: String,
+        system_prompt: String,
+    ) {
         let backend = state.inference_backend();
-        let handle = match backend.load_adapter(model_id, adapter_path).await {
+        let handle = match backend.load_adapter(model_id, &adapter_path).await {
             Ok(handle) => handle,
             Err(error) => {
-                Self::reset_model_deployment(state.db(), tenant_id, model_id).await?;
                 tracing::error!(model_id = %model_id, backend = backend.name(), error = %error, "Adapter load failed");
-                return Err(error);
+                let _ = Self::reset_model_deployment(state.db(), tenant_id, model_id).await;
+                return;
             }
         };
 
         let mut deployment_config = serde_json::json!({
             "adapter_ref": handle.adapter_ref,
             "adapter_path": adapter_path,
-            "base_model": model.base_model,
+            "base_model": base_model,
             "backend": backend.name(),
             "backend_meta": handle.metadata,
         });
-        Self::attach_system_prompt(&mut deployment_config, system_prompt);
+        Self::attach_system_prompt(&mut deployment_config, &system_prompt);
 
-        match Self::finalize_deploy(
+        if let Err(error) = Self::finalize_deploy(
             state.db(),
             tenant_id,
             model_id,
@@ -378,12 +413,9 @@ impl DeploymentService {
         )
         .await
         {
-            Ok(model) => Ok(model.into()),
-            Err(error) => {
-                let _ = backend.unload_adapter(&handle.adapter_ref).await;
-                let _ = Self::reset_model_deployment(state.db(), tenant_id, model_id).await;
-                Err(error)
-            }
+            tracing::error!(model_id = %model_id, error = %error, "Deploy finalize failed");
+            let _ = backend.unload_adapter(&handle.adapter_ref).await;
+            let _ = Self::reset_model_deployment(state.db(), tenant_id, model_id).await;
         }
     }
 

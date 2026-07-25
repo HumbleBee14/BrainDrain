@@ -22,6 +22,14 @@ export function useModelExports(modelId: string) {
       return api.exports.list(token, modelId);
     },
     enabled: !!modelId,
+    // The SSE stream below is best-effort; polling guarantees a terminal
+    // status (including failures) reaches the UI without a manual reload.
+    refetchInterval: (query) =>
+      query.state.data?.some(
+        (e) => e.status === "pending" || e.status === "processing",
+      )
+        ? 5000
+        : false,
   });
 
   const hasActive = query.data?.some(

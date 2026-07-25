@@ -36,6 +36,9 @@ export function useEvaluation(id: string, enabled = true) {
       return api.evaluations.get(token, id);
     },
     enabled: !!id && enabled,
+    refetchInterval: (query) => {
+      return query.state.data?.status === "running" ? 5000 : false;
+    },
   });
 
   const isActive = query.data?.status === "running";

@@ -225,6 +225,8 @@ export interface InferenceUsageDay {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Deploy blocks on a warmup request that waits out a scale-to-zero GPU boot.
+const GPU_COLDSTART_TIMEOUT_MS = 600_000;
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 
@@ -293,6 +295,28 @@ async function parseErrorBody(res: Response): Promise<ApiError> {
   return { error: { code: "http_error", message: fallbackMessage } };
 }
 
+/**
+ * Turns a raw DOMException ("signal is aborted without reason") into something a
+ * user can act on, distinguishing our own timeout from a caller cancellation.
+ */
+function normalizeAbortError(
+  error: unknown,
+  timeoutMs: number,
+  callerSignal?: AbortSignal | null,
+): unknown {
+  const isAbort =
+    error instanceof DOMException && error.name === "AbortError";
+  if (!isAbort) return error;
+  if (callerSignal?.aborted) return error;
+
+  return new ApiClientError(408, {
+    error: {
+      code: "timeout",
+      message: `Request timed out after ${Math.round(timeoutMs / 1000)}s. If a GPU was starting from cold, it may still be finishing — reload in a minute.`,
+    },
+  });
+}
+
 function isRetryable(error: unknown): boolean {
   if (error instanceof ApiClientError) {
     return error.status >= 500;
@@ -346,10 +370,10 @@ async function fetchWithRetry(
 
       return res;
     } catch (error) {
-      lastError = error;
+      lastError = normalizeAbortError(error, timeoutMs, init?.signal);
 
       if (!isRetryable(error) || attempt >= MAX_RETRIES) {
-        throw error;
+        throw lastError;
       }
 
       await sleep(BASE_BACKOFF_MS * 2 ** attempt);
@@ -369,9 +393,9 @@ async function fetchWithRetry(
  */
 async function request<T>(
   path: string,
-  options?: RequestInit & { token?: string },
+  options?: RequestInit & { token?: string; timeoutMs?: number },
 ): Promise<T> {
-  const { token, ...fetchOptions } = options || {};
+  const { token, timeoutMs, ...fetchOptions } = options || {};
 
   const headers: Record<string, string> = {
     ...(fetchOptions.headers as Record<string, string>),
@@ -397,10 +421,11 @@ async function request<T>(
     headers["Idempotency-Key"] = crypto.randomUUID();
   }
 
-  const res = await fetchWithRetry(`${API_URL}${path}`, {
-    ...fetchOptions,
-    headers,
-  });
+  const res = await fetchWithRetry(
+    `${API_URL}${path}`,
+    { ...fetchOptions, headers },
+    timeoutMs,
+  );
 
   if (!res.ok) {
     const body = await parseErrorBody(res);
@@ -915,6 +940,7 @@ export const api = {
   deployments: {
     deploy: (token: string, modelId: string) =>
       request<ModelResponse>(`/api/v1/models/${modelId}/deploy`, {
+        timeoutMs: GPU_COLDSTART_TIMEOUT_MS,
         token,
         method: "POST",
         body: JSON.stringify({}),

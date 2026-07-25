@@ -42,6 +42,7 @@ from src.activities.training_engine import (
 )
 from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
 from src.gpu_provider import GpuProvider
+from src.heartbeat import safe_heartbeat
 from src.infra import InfraContainer
 from src.notifications import EVENT_TRAINING_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig
@@ -776,10 +777,7 @@ async def run_evaluate_holdout_core(
 
         model = PeftModel.from_pretrained(model, str(adapter_dir))
 
-        try:
-            activity.heartbeat(f"eval_iter_{iteration}_running")
-        except Exception:
-            pass
+        safe_heartbeat(f"eval_iter_{iteration}_running")
 
         # Evaluate
         eval_loss = _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length)
@@ -1274,10 +1272,7 @@ def _build_callback_class():
             except Exception as e:
                 logger.warning("Failed to stream metrics: %s", e)
 
-            try:
-                activity.heartbeat(f"step={current_step}/{max_steps}")
-            except Exception:
-                pass
+            safe_heartbeat(f"step={current_step}/{max_steps}")
 
         def on_train_begin(self, args, state, control, **kwargs):
             self._start_time = time.monotonic()

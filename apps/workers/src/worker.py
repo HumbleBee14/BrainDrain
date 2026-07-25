@@ -172,7 +172,7 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
         FinalizeIterativeTrainingActivity(infra).run,
         RunEvaluationActivity(infra, gpu_provider=gpu_provider).run,
         DeployModelActivity(infra).run,
-        ExportGgufActivity(infra).run,
+        ExportGgufActivity(infra, gpu_provider=gpu_provider).run,
     ]
 
     return cpu_activities, gpu_activities

@@ -68,6 +68,7 @@ class WorkerSettings(BaseSettings):
     modal_sft_round_function_name: str = "train_sft_round"
     modal_evaluate_holdout_function_name: str = "evaluate_holdout"
     modal_evaluation_function_name: str = "run_evaluation"
+    modal_export_function_name: str = "export_gguf"
     modal_secret_name: str = "platform-training-secrets"
     modal_poll_interval_secs: int = 15
     # How often to sweep for orphaned Modal calls — remote GPU calls whose job

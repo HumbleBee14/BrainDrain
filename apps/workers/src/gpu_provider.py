@@ -110,6 +110,23 @@ class GpuProvider(Protocol):
         ...
 
 
+    async def run_export_gguf(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        export_id: str,
+        adapter_path: str,
+        base_model: str,
+        quant_type: str,
+    ) -> dict:
+        """Merge the adapter and produce a quantized GGUF in object storage.
+
+        Returns: dict with keys storage_path, file_size_bytes.
+        """
+        ...
+
+
 class LocalGpuProvider:
     """Run GPU work on the local worker's GPU.
 
@@ -401,6 +418,34 @@ async def cancel_orphaned_gpu_calls(infra) -> int:
     return cancelled
 
 
+    async def run_export_gguf(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        export_id: str,
+        adapter_path: str,
+        base_model: str,
+        quant_type: str,
+    ) -> dict:
+        import asyncio
+
+        from src.export_core import run_export_core
+
+        logger.info("Exporting GGUF locally (export=%s, %s)", export_id[:8], quant_type)
+        return await asyncio.to_thread(
+            run_export_core,
+            {
+                "tenant_id": tenant_id,
+                "model_id": model_id,
+                "export_id": export_id,
+                "adapter_path": adapter_path,
+                "base_model": base_model,
+                "quant_type": quant_type,
+            },
+        )
+
+
 class ModalGpuProvider:
     """Run GPU work on Modal serverless GPUs via a pre-deployed app.
 
@@ -465,7 +510,7 @@ class ModalGpuProvider:
         *,
         function_name: str,
         payload: dict,
-        gpu: str,
+        gpu: str | None,
         table: str,
         row_id: str,
         tenant_id: str,
@@ -516,7 +561,9 @@ class ModalGpuProvider:
         else:
             fn = modal.Function.from_name(settings.modal_app_name, function_name)
             logger.info("Spawning Modal %s (row=%s, gpu=%s)", label, row_id[:8], gpu)
-            fc = await fn.with_options(gpu=gpu).spawn.aio(payload)
+            # gpu=None keeps the function's declared resources (CPU-only work).
+            target = fn.with_options(gpu=gpu) if gpu else fn
+            fc = await target.spawn.aio(payload)
             # A stale, mismatched reservation (if any) is overwritten here — safe,
             # because at most one remote call is ever in flight per row.
             await db.execute(
@@ -708,6 +755,36 @@ class ModalGpuProvider:
             row_id=evaluation_id,
             tenant_id=tenant_id,
             label="evaluation",
+            clear_after=False,
+        )
+
+
+    async def run_export_gguf(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        export_id: str,
+        adapter_path: str,
+        base_model: str,
+        quant_type: str,
+    ) -> dict:
+        payload = {
+            "tenant_id": tenant_id,
+            "model_id": model_id,
+            "export_id": export_id,
+            "adapter_path": adapter_path,
+            "base_model": base_model,
+            "quant_type": quant_type,
+        }
+        return await self._run_remote(
+            function_name=self.infra.settings.modal_export_function_name,
+            payload=payload,
+            gpu=None,
+            table="model_exports",
+            row_id=export_id,
+            tenant_id=tenant_id,
+            label="gguf-export",
             clear_after=False,
         )
 

@@ -28,6 +28,7 @@ from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
 from src.backends.judge import get as get_judge
 from src.constants import EvaluationStatus
 from src.gpu_provider import GpuProvider
+from src.heartbeat import safe_heartbeat
 from src.infra import InfraContainer
 from src.notifications import EVENT_EVALUATION_COMPLETE, enqueue_notification
 from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
@@ -273,7 +274,7 @@ async def run_evaluation_core(
         )
         model_base = engine.prepare_for_inference(model_base)
 
-        activity.heartbeat("models_loaded")
+        safe_heartbeat("models_loaded")
 
         # Create judge from the resolved per-tenant LLM config.
         # Workflow-level overrides still take precedence over tenant config.
@@ -321,7 +322,7 @@ async def run_evaluation_core(
         report = {}
 
         for suite in suites:
-            activity.heartbeat(f"suite_{suite.name}")
+            safe_heartbeat(f"suite_{suite.name}")
             suite_scores, suite_report = suite.run(
                 model_ft,
                 tokenizer,
@@ -471,7 +472,7 @@ class GeneralCapabilitySuite:
             )
 
             if len(details) % 20 == 0:
-                activity.heartbeat(f"general_{len(details)}/{len(benchmark)}")
+                safe_heartbeat(f"general_{len(details)}/{len(benchmark)}")
 
         ft_total = sum(ft_correct.values())
         base_total = sum(base_correct.values())
@@ -574,7 +575,7 @@ class ABComparisonSuite:
             )
 
             if total % 10 == 0:
-                activity.heartbeat(f"ab_{total}/{len(samples)}")
+                safe_heartbeat(f"ab_{total}/{len(samples)}")
 
         if skipped:
             logger.warning(

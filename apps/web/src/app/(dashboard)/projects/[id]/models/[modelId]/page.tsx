@@ -24,6 +24,7 @@ import {
   useOllamaRecipe,
 } from "@/hooks/use-exports";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { DeploymentPanel } from "@/components/deployment-panel";
 import { AdapterDownloadButton } from "@/components/adapter-download-button";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -385,55 +386,16 @@ export default function ModelDetailPage() {
       {/* Deployment section */}
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Deployment</h2>
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <p className="text-sm text-zinc-900 dark:text-white">
-                {isActive
-                  ? "Model is actively serving requests"
-                  : isDeploying
-                    ? "Model is being deployed..."
-                    : "Model is not deployed"}
-              </p>
-              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">
-                {isActive
-                  ? "Inference API is available. Create API keys to start using it."
-                  : "Deploy the model to make it available for inference."}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              {isActive ? (
-                <button
-                  onClick={() => undeployModel.mutate()}
-                  disabled={undeployModel.isPending}
-                  className="rounded-lg border border-red-200 dark:border-red-800 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition disabled:opacity-50"
-                >
-                  {undeployModel.isPending ? "Undeploying..." : "Undeploy"}
-                </button>
-              ) : (
-                <button
-                  onClick={() => deployModel.mutate()}
-                  disabled={deployModel.isPending || isDeploying}
-                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50"
-                >
-                  {deployModel.isPending || isDeploying
-                    ? "Deploying..."
-                    : "Deploy Model"}
-                </button>
-              )}
-            </div>
-          </div>
-          {deployModel.isError && (
-            <p className="text-sm text-red-600 dark:text-red-400 mt-3">
-              {deployModel.error.message}
-            </p>
-          )}
-          {undeployModel.isError && (
-            <p className="text-sm text-red-600 dark:text-red-400 mt-3">
-              {undeployModel.error.message}
-            </p>
-          )}
-        </div>
+        <DeploymentPanel
+          isActive={isActive}
+          isDeploying={isDeploying}
+          onDeploy={() => deployModel.mutate()}
+          onUndeploy={() => undeployModel.mutate()}
+          deployPending={deployModel.isPending}
+          undeployPending={undeployModel.isPending}
+          deployError={deployModel.isError ? deployModel.error.message : null}
+          undeployError={undeployModel.isError ? undeployModel.error.message : null}
+        />
       </div>
 
       {/* API Keys section */}

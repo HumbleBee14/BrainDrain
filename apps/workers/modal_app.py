@@ -27,7 +27,7 @@ _weights_cache = modal.Volume.from_name("ekcron-model-cache", create_if_missing=
 # dashboard instead of the log-only fallback.
 _metrics_secret = modal.Secret.from_name("ekcron-metrics-secrets")
 
-image = (
+_base_image = (
     modal.Image.debian_slim(python_version="3.11")
     # GPU/ML stack — remote-only, absent from pyproject's runtime deps.
     .pip_install(
@@ -64,8 +64,22 @@ image = (
         "opentelemetry-instrumentation-logging>=0.50b0",
     )
     .env({"HF_HOME": _HF_CACHE_PATH})
-    # Make our own `src` package importable remotely (replaces removed auto-mount).
-    # Must be the last layer since copy defaults to False (mounted, not built).
+)
+
+# `src` is mounted, not built, so it must be the final layer of any derived image.
+image = _base_image.add_local_python_source("src")
+
+
+# Export needs the same torch/peft stack plus llama.cpp's converter and quantizer.
+export_image = (
+    _base_image.apt_install("git", "cmake", "build-essential")
+    .run_commands(
+        "git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp",
+        "pip install --no-cache-dir -r"
+        " /opt/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt",
+        "cmake -S /opt/llama.cpp -B /opt/llama.cpp/build -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF",
+        "cmake --build /opt/llama.cpp/build --target llama-quantize -j 4",
+    )
     .add_local_python_source("src")
 )
 
@@ -207,3 +221,20 @@ async def run_evaluation(payload: dict) -> dict:
         llm_config=TenantLlmConfig(**payload["llm_config"]),
     )
     return {"scores": result.scores, "report": result.report}
+
+
+@app.function(
+    image=export_image,
+    cpu=4.0,
+    memory=32768,
+    timeout=7200,
+    secrets=[_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
+def export_gguf(payload: dict) -> dict:
+    """Merge + quantize on CPU; no GPU is needed for either step."""
+    _remote_env_setup()
+
+    from src.export_core import run_export_core
+
+    return run_export_core(payload)
