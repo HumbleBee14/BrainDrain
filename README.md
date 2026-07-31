@@ -1,12 +1,21 @@
-# Ekcron
+<div align="center">
 
-**Turn a large, expensive model into a small, cheap one that's just as good at your task.**
+# [Ekcron](https://ekcron.com)
 
-Frontier models are excellent generalists and terrible economics. Most production workloads are narrow — one domain, one format, one set of tools — and pay generalist prices on every call. Ekcron closes that gap: it distills the behaviour you actually need into a small model you own, then serves it behind an OpenAI-compatible endpoint.
+**Turn a large, expensive model into a small, efficient one that's just as good at your task.**
 
-You bring documents or examples. The platform produces training data, fine-tunes a small model, measures it against the model it's replacing, and deploys it. No ML expertise required, no notebooks.
+[![CI](https://github.com/HumbleBee14/Ekcron/actions/workflows/ci.yml/badge.svg)](https://github.com/HumbleBee14/Ekcron/actions/workflows/ci.yml)
+&nbsp;![Status](https://img.shields.io/badge/status-in%20development-3178C6)
 
-**Live:** [ekcron.com](https://ekcron.com) · dashboard at [app.ekcron.com](https://app.ekcron.com) · API at `api.ekcron.com`
+Live at **[ekcron.com](https://ekcron.com)**
+
+</div>
+
+---
+
+Frontier models are excellent generalists and terrible economics: most production workloads are narrow — one domain, one format, one set of tools — yet pay generalist prices on every call. Ekcron closes that gap — it turns the behaviour you actually need into a small model you own, served behind an OpenAI-compatible endpoint.
+
+You bring documents or examples; the platform generates training data, fine-tunes a small model, measures it against the model it's replacing, and deploys it. No ML expertise, no notebooks.
 
 ## Why this shape
 
@@ -26,7 +35,7 @@ Every stage is a durable Temporal workflow: retryable, observable, and safe to r
 
 ## How it runs in production
 
-Two independent planes, so idle cost stays near zero.
+Two independent planes: the orchestration layer stays always-on, and GPUs run only while a job does.
 
 **Control plane — one small ARM VM (OCI), always on**
 
@@ -44,7 +53,7 @@ GPUs are rented per job and released. Nothing runs between jobs.
 
 The worker dispatches GPU work through a provider interface, so the same activity code runs against a local GPU or a cloud one.
 
-**Serving detail worth knowing:** one vLLM instance serves many fine-tunes. Adapters are fetched lazily from object storage on first use and addressed by the `model` field, so a new fine-tune costs no new GPU — it joins the running instance.
+**Serving detail worth knowing:** one vLLM instance serves many fine-tunes. Adapters are fetched lazily from object storage on first use and addressed by the `model` field, so a new fine-tune needs no new GPU — it joins the running instance.
 
 ```
 Browser ─→ app.ekcron.com (Next.js, edge)
@@ -64,6 +73,28 @@ Browser ─→ app.ekcron.com (Next.js, edge)
 | **Web** | Next.js 15 | Dashboard, live training metrics, playground |
 
 Independently deployable, own containers, no runtime coupling. Rust API types are the single source of truth — TypeScript is generated from them.
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| **Control plane** | Rust (Axum, SQLx, Tokio), PostgreSQL, Redis, S3-compatible object storage |
+| **Orchestration** | Temporal durable workflows driving Python workers |
+| **ML** | Python, Unsloth, TRL, PyTorch · LoRA/QLoRA (SFT · DPO · GRPO) · vLLM multi-LoRA serving · GGUF export |
+| **GPU** | Modal (scale-to-zero) behind a pluggable provider interface (local CUDA or cloud) |
+| **Web** | Next.js 15, React 19, Tailwind, Clerk · TypeScript generated from Rust via ts-rs |
+| **Infra / ops** | Docker Compose, OCI ARM, Terraform (IaC), Caddy TLS, GitHub Actions → GHCR, pgBouncer, Postgres PITR (WAL archiving) |
+| **Observability** | OpenTelemetry, Prometheus, Grafana, Loki, Tempo |
+
+## Engineering Guidelines
+
+- **Durable by design** — every multi-step job is a Temporal workflow with per-chunk checkpointing and bounded retries; safe to resume after a crash.
+- **Correctness over convenience** — reservation-pattern writes for billing and GPU time so no run is lost or double-billed; related state changes are transactional.
+- **Fault isolation** — a circuit breaker trips on provider outages instead of hammering a dead upstream, and permanent vs. transient errors are handled distinctly.
+- **Multi-tenancy at the database** — every query is tenant-scoped and enforced by Postgres row-level security, not just application checks.
+- **Type safety across the stack** — Rust DTOs are the single source of truth; the TypeScript client is generated, so the API and frontend can't drift.
+- **Efficient serving** — one vLLM instance hosts many adapters, fetched lazily and addressed by the `model` field, so a new fine-tune needs no dedicated GPU.
+- **Quality gates** — zero-warning `clippy`/lint and a broad Rust + Python test suite in CI.
 
 ## Roadmap
 
