@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+use crate::services::teacher::config::{
+    TeacherConfigDto, TeacherProvenance, provenance_from_config,
+};
+
 /// Request to create a new training job.
 #[derive(Debug, Deserialize, TS, ToSchema)]
 #[ts(export)]
@@ -20,6 +24,10 @@ pub struct CreateTrainingJobRequest {
     pub hyperparams: Option<Hyperparams>,
     #[ts(optional)]
     pub gpu_class: Option<String>,
+    /// Distill mode: the teacher recorded on the job. Optional — when absent
+    /// the teacher is taken from the dataset's provenance.
+    #[ts(optional)]
+    pub teacher: Option<TeacherConfigDto>,
 }
 
 /// Training job information returned by API.
@@ -41,6 +49,8 @@ pub struct TrainingJobResponse {
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub error_message: Option<String>,
+    /// Distill mode: teacher provenance (host + model only — never the key).
+    pub teacher: Option<TeacherProvenance>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -73,6 +83,7 @@ impl From<TrainingJob> for TrainingJobResponse {
             started_at: j.started_at,
             completed_at: j.completed_at,
             error_message: j.error_message,
+            teacher: j.teacher_config.as_ref().and_then(provenance_from_config),
             created_at: j.created_at,
             updated_at: j.updated_at,
         }

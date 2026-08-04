@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+use crate::services::teacher::config::TeacherConfigDto;
+use crate::services::teacher::policy::ProviderPolicy;
+
 /// Response from triggering document parsing.
 #[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
@@ -19,6 +22,9 @@ pub struct TriggerRefineRequest {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub config: serde_json::Value,
+    /// Distillation: the external model that writes the training examples.
+    #[ts(optional)]
+    pub teacher: Option<TeacherConfigDto>,
 }
 
 /// Response from triggering data refinement.
@@ -27,6 +33,8 @@ pub struct TriggerRefineRequest {
 pub struct TriggerRefineResponse {
     pub workflow_id: String,
     pub document_count: usize,
+    /// Provider policy of the teacher this run uses (badge state for the UI).
+    pub teacher_policy: Option<ProviderPolicy>,
 }
 
 /// Response from triggering training.
@@ -51,6 +59,10 @@ pub struct TriggerFullPipelineRequest {
     #[serde(default)]
     #[schema(value_type = Object)]
     pub training_config: serde_json::Value,
+    /// Distillation: the external model that writes the training examples.
+    /// Required when `training_config.mode` is `"distill"`.
+    #[ts(optional)]
+    pub teacher: Option<TeacherConfigDto>,
 }
 
 /// Response from triggering the full pipeline.
@@ -59,6 +71,8 @@ pub struct TriggerFullPipelineRequest {
 pub struct TriggerFullPipelineResponse {
     pub workflow_id: String,
     pub document_count: usize,
+    /// Provider policy of the teacher this run uses (badge state for the UI).
+    pub teacher_policy: Option<ProviderPolicy>,
 }
 
 /// Aggregate pipeline status for a project.

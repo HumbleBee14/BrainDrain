@@ -5,6 +5,8 @@ use serde::Serialize;
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+use crate::services::teacher::config::{TeacherProvenance, provenance_from_config};
+
 /// Dataset information returned by API.
 #[derive(Debug, Serialize, TS, ToSchema)]
 #[ts(export)]
@@ -18,6 +20,8 @@ pub struct DatasetResponse {
     #[schema(value_type = Object)]
     pub stats: serde_json::Value,
     pub error: Option<String>,
+    /// Present when a teacher model generated this dataset (distillation).
+    pub teacher: Option<TeacherProvenance>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -33,6 +37,7 @@ impl From<Dataset> for DatasetResponse {
             error: d.error,
             pair_count: d.pair_count,
             stats: d.stats,
+            teacher: provenance_from_config(&d.config),
             created_at: d.created_at,
             updated_at: d.updated_at,
         }
