@@ -273,6 +273,48 @@ class TestExtractionStatus:
         ]
         assert statuses == [TeacherExtractionStatus.RUNNING, TeacherExtractionStatus.COMPLETED]
 
+    def test_the_completed_transition_carries_what_the_pass_measured(self, monkeypatch, recorded):
+        """The terminal write is what bills the GPU, so it has to be handed the
+        runtimes — without them the charge falls back to the estimate."""
+
+        async def measured_activity(name, arg=None, **kwargs):
+            recorded.append((name, arg, kwargs))
+            if name == "extract_teacher_logprobs":
+                return ExtractTeacherLogprobsOutput(
+                    manifest_path="p/manifest.json",
+                    artifact_prefix="p/",
+                    records=1,
+                    scored_positions=1,
+                    skipped_records=0,
+                    shards=1,
+                    metrics={"teacher_load_seconds": 30.0, "scoring_seconds": 90.0},
+                )
+            if name == "start_training":
+                return StartTrainingOutput(adapter_path="a", adapter_size_bytes=1, metrics={})
+            return None
+
+        monkeypatch.setattr(train_wf.workflow, "execute_activity", measured_activity)
+        run_train(teacher_config={"extraction": PLAN})
+
+        statuses = [arg for name, arg, _ in recorded if name == "set_teacher_extraction_status"]
+        assert statuses[0].metrics is None
+        assert statuses[1].metrics == {"teacher_load_seconds": 30.0, "scoring_seconds": 90.0}
+
+    def test_a_failed_pass_reports_no_runtime_to_bill_from(self, monkeypatch, recorded):
+        async def failing_activity(name, arg=None, **kwargs):
+            recorded.append((name, arg, kwargs))
+            if name == "extract_teacher_logprobs":
+                raise ApplicationError("teacher OOM")
+            return None
+
+        monkeypatch.setattr(train_wf.workflow, "execute_activity", failing_activity)
+
+        with pytest.raises(ApplicationError):
+            run_train(teacher_config={"extraction": PLAN})
+
+        statuses = [arg for name, arg, _ in recorded if name == "set_teacher_extraction_status"]
+        assert [status.metrics for status in statuses] == [None, None]
+
     def test_the_status_write_is_tenant_scoped(self, recorded):
         run_train(teacher_config={"extraction": PLAN})
 
