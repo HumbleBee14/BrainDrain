@@ -143,6 +143,7 @@ impl DeploymentService {
             state.config().deploy_min_ab_win_rate,
             state.config().deploy_max_benchmark_regression,
             state.config().deploy_min_doc_knowledge_lift,
+            state.config().deploy_min_teacher_parity,
         );
         if !policy.is_enabled() {
             return Ok(());

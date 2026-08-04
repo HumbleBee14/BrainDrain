@@ -78,6 +78,8 @@ pub enum TrainingMode {
     Reasoning,
     /// Multiple train-eval-improve iterations
     Iterative,
+    /// SFT on teacher-generated data, evaluated for teacher parity
+    Distill,
 }
 
 /// Deployment status for a trained model.

@@ -24,7 +24,7 @@ export const createTrainingJobSchema = z.object({
   dataset_id: z.string().uuid("Invalid dataset"),
   base_model: z.string().min(1, "Base model is required"),
   method: z.enum(["qlora", "lora"]).optional(),
-  mode: z.enum(["quick", "aligned", "reasoning", "iterative"]).optional(),
+  mode: z.enum(["quick", "aligned", "reasoning", "iterative", "distill"]).optional(),
   hyperparams: z.record(z.unknown()).optional(),
   gpu_class: z.string().optional(),
 });
