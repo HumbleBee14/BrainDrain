@@ -291,6 +291,13 @@ class TrainWorkflow:
         deliberately does not catch: a cancelled extraction stays RUNNING, which is
         the fact that tells an operator (and the orphan sweep) the GPU still owed
         money was the teacher's and was never given a chance to stop on its own.
+        Its charge is not lost with it — the RUNNING transition reserved one, and
+        the API's outbox relay bills that reservation at the admitted estimate once
+        the pass cannot plausibly still be running.
+
+        The terminal transitions differ in what they can pay for: a completed pass
+        hands over the runtimes it measured, a failed one has no result to hand
+        over and is billed from how long its reservation stood.
         """
         reason = unsupported_plan_reason(plan, mode)
         if reason is not None:
@@ -323,7 +330,10 @@ class TrainWorkflow:
             raise
 
         await self._set_extraction_status(
-            tenant_id, training_job_id, TeacherExtractionStatus.COMPLETED
+            tenant_id,
+            training_job_id,
+            TeacherExtractionStatus.COMPLETED,
+            metrics=result.metrics,
         )
         workflow.logger.info(
             "Teacher scored %d records (%d positions) for job %s",
@@ -333,11 +343,13 @@ class TrainWorkflow:
         )
         return hyperparams_with_artifacts(hyperparams, result.artifact_prefix)
 
-    async def _set_extraction_status(self, tenant_id: str, job_id: str, status: str) -> None:
+    async def _set_extraction_status(
+        self, tenant_id: str, job_id: str, status: str, metrics: dict | None = None
+    ) -> None:
         await workflow.execute_activity(
             "set_teacher_extraction_status",
             SetTeacherExtractionStatusInput(
-                tenant_id=tenant_id, training_job_id=job_id, status=status
+                tenant_id=tenant_id, training_job_id=job_id, status=status, metrics=metrics
             ),
             start_to_close_timeout=timeouts.db_lookup(),
             retry_policy=RetryPolicy(maximum_attempts=3),
