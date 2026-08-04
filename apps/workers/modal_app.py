@@ -45,6 +45,7 @@ _RUNTIME_DEPS = (
     "redis>=5.0.0",
     "httpx>=0.27.0",
     "cryptography>=42.0.0",
+    "numpy>=1.26.0",
     "python-json-logger>=3.2.0",
     "opentelemetry-sdk>=1.29.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.29.0",

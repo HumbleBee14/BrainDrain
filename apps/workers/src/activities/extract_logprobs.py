@@ -52,15 +52,12 @@ from src.teacher.artifacts import (
     manifest_matches,
     write_shard,
 )
+from src.teacher.messages import TOKENIZER_MISMATCH_MESSAGE
 from src.teacher.rendering import RenderedRecord, render_dataset, rendering_fingerprint
 from src.teacher.tokenizer_identity import check_tokenizer_identity
 
 logger = logging.getLogger("platform.teacher.extract")
 
-TOKENIZER_MISMATCH_MESSAGE = (
-    "These two models read text differently, so high-fidelity training isn't "
-    "possible between them. Standard distillation works — switch and re-run."
-)
 
 MANIFEST_NAME = "manifest.json"
 
@@ -784,6 +781,9 @@ def _verify_tokenizer_identity(input: ExtractTeacherLogprobsInput, settings, fet
             ", ".join(identity.mismatched_artifacts),
         )
         raise ApplicationError(TOKENIZER_MISMATCH_MESSAGE, non_retryable=True)
+    # The teacher's hash IS the student's here: the compatibility check above
+    # refuses unless they are equal, and training compares this manifest value
+    # against the *student* it is about to train. Two names for one proven value.
     return identity.teacher.combined_hash
 
 
