@@ -11,8 +11,8 @@ use crate::repositories::traits::{
 use crate::services::plan_service::PlanService;
 use crate::services::secret_cipher::SecretCipher;
 use crate::services::teacher::config::{
-    NOT_TEACHER_DATASET_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE, provenance_from_config,
-    validate_teacher_for_launch,
+    NOT_TEACHER_DATASET_MESSAGE, TEACHER_MISMATCH_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE,
+    provenance_from_config, validate_teacher_for_launch,
 };
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
@@ -92,22 +92,30 @@ impl TrainingJobService {
         let mode_str = mode.to_string();
 
         // Distill contract: the student trains on teacher-written data, so the
-        // dataset must carry teacher provenance. The job records its teacher —
-        // from the request when supplied, else inherited from the dataset.
+        // dataset must carry teacher provenance, and that provenance is what the
+        // job records. Training never calls the teacher itself (Stage 1 distill
+        // is plain SFT over the generated pairs), so an explicit teacher here can
+        // only ever restate the dataset's — never redirect it to another
+        // provider, which would misreport where the training data came from.
         let teacher_config = if mode == TrainingMode::Distill {
-            if provenance_from_config(&dataset.config).is_none() {
+            let Some(provenance) = provenance_from_config(&dataset.config) else {
                 return Err(AppError::BadRequest {
                     message: NOT_TEACHER_DATASET_MESSAGE.to_string(),
                 });
+            };
+            if let Some(dto) = &req.teacher {
+                let requested = validate_teacher_for_launch(dto, cipher).await?;
+                if requested.host() != provenance.host || requested.model != provenance.model {
+                    return Err(AppError::BadRequest {
+                        message: TEACHER_MISMATCH_MESSAGE.to_string(),
+                    });
+                }
             }
-            match &req.teacher {
-                Some(dto) => Some(
-                    validate_teacher_for_launch(dto, cipher)
-                        .await?
-                        .workflow_value(),
-                ),
-                None => dataset.config.get("teacher").cloned(),
-            }
+            Some(serde_json::to_value(&provenance).map_err(|e| {
+                AppError::Internal(anyhow::anyhow!(
+                    "failed to serialize teacher provenance: {e}"
+                ))
+            })?)
         } else {
             if req.teacher.is_some() {
                 return Err(AppError::BadRequest {

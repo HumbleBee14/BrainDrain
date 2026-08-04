@@ -56,7 +56,10 @@ make dev-web        # dashboard
    win/tie/loss bar; the model page shows the parity tile.
 4. **Deploy gate** — deploy works with `DEPLOY_MIN_TEACHER_PARITY` unset
    (report-only default). Set `DEPLOY_MIN_TEACHER_PARITY=0.99`, restart the
-   API, deploy again → blocked with the teacher-parity reason. Unset it after.
+   API, deploy again → blocked with the teacher-parity reason. With the
+   threshold still armed, deploy a **quick-mode** model → must succeed: the
+   rule is scoped to the modes whose evaluation produces the metric. Unset it
+   after.
 5. **Policy enforcement** — pick a restricted-host teacher
    (e.g. base URL `https://api.openai.com/v1`) without ticking the
    acknowledgment → blocked; with the checkbox ticked → proceeds.

@@ -90,6 +90,8 @@ export type { GeneratePreviewRequest } from "./GeneratePreviewRequest";
 export type { RateSamplesRequest } from "./RateSamplesRequest";
 export type { UpdateGuidanceRequest } from "./UpdateGuidanceRequest";
 export type { GenerateDatasetRequest } from "./GenerateDatasetRequest";
+export type { TriggerFullPipelineRequest } from "./TriggerFullPipelineRequest";
+export type { TriggerFullPipelineResponse } from "./TriggerFullPipelineResponse";
 
 // Model catalog
 export type { CatalogModel } from "./CatalogModel";
