@@ -346,20 +346,12 @@ class GeneratePairsActivity:
         bucket = self.infra.s3_bucket
         settings = self.infra.settings
 
-        # A malformed or unsafe teacher never fixes itself on retry — fail the
-        # run immediately with the reason instead of burning attempts.
+        # A malformed teacher never fixes itself on retry — fail the run
+        # immediately with the reason instead of burning attempts.
         try:
             teacher_config = parse_teacher_config(input.teacher)
         except ValueError as e:
             raise ApplicationError(str(e), non_retryable=True) from e
-        teacher_client = (
-            TeacherClient(teacher_config, settings) if teacher_config is not None else None
-        )
-        if teacher_client is not None:
-            try:
-                await teacher_client.ensure_url_allowed()
-            except UnsafeUrlError as e:
-                raise ApplicationError(str(e), non_retryable=True) from e
 
         # Resolve LLM config for this tenant (DB lookup, falls back to env var defaults)
         llm_config = await get_tenant_llm_config(
@@ -375,6 +367,23 @@ class GeneratePairsActivity:
 
         if not llm_config.api_key:
             raise ValueError(NO_LLM_KEY)
+
+        # "Use my configured LLM" sends a keyless teacher block. The tenant
+        # key may stand in ONLY when the teacher endpoint IS the tenant's own
+        # endpoint — a keyless foreign endpoint must never receive it.
+        teacher_client = None
+        if teacher_config is not None:
+            same_endpoint = teacher_config.api_base_url.rstrip("/") == (
+                llm_config.api_base_url or ""
+            ).rstrip("/")
+            fallback_key = (
+                llm_config.api_key if not teacher_config.api_key and same_endpoint else ""
+            )
+            teacher_client = TeacherClient(teacher_config, settings, fallback_api_key=fallback_key)
+            try:
+                await teacher_client.ensure_url_allowed()
+            except UnsafeUrlError as e:
+                raise ApplicationError(str(e), non_retryable=True) from e
 
         if llm_config.is_custom:
             logger.info(

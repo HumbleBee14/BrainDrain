@@ -379,6 +379,17 @@ export default function ModelDetailPage() {
                   <p className="text-xs text-zinc-500 mt-1">Overall</p>
                 </div>
               )}
+              {typeof model.eval_scores.teacher_parity?.parity === "number" && (
+                <div
+                  className="rounded-lg border border-violet-200 dark:border-violet-900 p-4 text-center"
+                  title="Share of held-out tasks where this model matched or beat its teacher under a blind judge"
+                >
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-white">
+                    {Math.round(model.eval_scores.teacher_parity.parity * 100)}%
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-1">Teacher parity</p>
+                </div>
+              )}
             </div>
           </div>
         )}

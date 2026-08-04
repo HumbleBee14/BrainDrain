@@ -213,6 +213,38 @@ class TestTeacherRouting:
         assert all(c["model"] == TENANT_MODEL for c in routing_provider.calls)
 
     @pytest.mark.asyncio
+    async def test_keyless_teacher_on_tenant_endpoint_uses_tenant_key(self, routing_provider):
+        settings = _settings(faithfulness_gate_enabled=False)
+        activity = GeneratePairsActivity(
+            _infra(settings, FakeS3({"chunks.jsonl": _chunks_jsonl()}), FakeDB(TENANT_SETTINGS))
+        )
+        env = ActivityEnvironment()
+        teacher = _teacher_block(
+            api_base_url="https://tenant.example.com/v1", model=TEACHER_MODEL, api_key=None
+        )
+        output = await env.run(activity.run, _input(teacher=teacher))
+        assert output.pair_count == 1
+        generation_calls = [c for c in routing_provider.calls if c["model"] == TEACHER_MODEL]
+        assert generation_calls
+        assert all(c["api_key"] == TENANT_KEY for c in generation_calls)
+
+    @pytest.mark.asyncio
+    async def test_keyless_teacher_on_foreign_endpoint_never_gets_tenant_key(
+        self, routing_provider
+    ):
+        settings = _settings(faithfulness_gate_enabled=False)
+        activity = GeneratePairsActivity(
+            _infra(settings, FakeS3({"chunks.jsonl": _chunks_jsonl()}), FakeDB(TENANT_SETTINGS))
+        )
+        env = ActivityEnvironment()
+        teacher = _teacher_block(api_key=None)
+        output = await env.run(activity.run, _input(teacher=teacher))
+        generation_calls = [c for c in routing_provider.calls if c["model"] == TEACHER_MODEL]
+        for call in generation_calls:
+            assert call["api_key"] == ""
+        assert output is not None
+
+    @pytest.mark.asyncio
     async def test_malformed_teacher_is_non_retryable(self, routing_provider):
         activity = GeneratePairsActivity(
             _infra(_settings(), FakeS3({"chunks.jsonl": _chunks_jsonl()}), FakeDB(TENANT_SETTINGS))
@@ -226,8 +258,11 @@ class TestTeacherRouting:
     @pytest.mark.asyncio
     async def test_unsafe_teacher_url_is_non_retryable(self, routing_provider):
         settings = _settings(url_guard_enabled=True)
+        # Tenant settings without a custom base URL: only the teacher URL is
+        # guarded, so the failure is attributable to the teacher endpoint.
+        tenant_settings = {"llm": {"api_key": TENANT_KEY, "model": TENANT_MODEL}}
         activity = GeneratePairsActivity(
-            _infra(settings, FakeS3({"chunks.jsonl": _chunks_jsonl()}), FakeDB(None))
+            _infra(settings, FakeS3({"chunks.jsonl": _chunks_jsonl()}), FakeDB(tenant_settings))
         )
         env = ActivityEnvironment()
         with pytest.raises(ApplicationError) as exc_info:

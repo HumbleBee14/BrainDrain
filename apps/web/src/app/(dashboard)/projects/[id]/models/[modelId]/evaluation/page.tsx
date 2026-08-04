@@ -98,6 +98,95 @@ function evaluationError(evaluation: Evaluation): string | null {
   return typeof error === "string" && error.trim() ? error : null;
 }
 
+function teacherParityNote(evaluation: Evaluation): string | null {
+  const report = evaluation.report;
+  if (!report || typeof report !== "object" || Array.isArray(report)) return null;
+  const section = (report as Record<string, unknown>).teacher_parity;
+  if (!section || typeof section !== "object" || Array.isArray(section)) return null;
+  const note = (section as Record<string, unknown>).note;
+  return typeof note === "string" && note.trim() ? note : null;
+}
+
+function TeacherParitySection({ evaluation }: { evaluation: Evaluation }) {
+  const parity = evaluation.scores?.teacher_parity;
+  const note = teacherParityNote(evaluation);
+
+  if (parity && typeof parity.parity === "number") {
+    const pct = Math.round(parity.parity * 100);
+    const winPct = Math.round((parity.win_rate ?? 0) * 100);
+    const tiePct = Math.round((parity.tie_rate ?? 0) * 100);
+    const lossPct = Math.max(0, 100 - winPct - tiePct);
+    return (
+      <div className="rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50/30 dark:bg-violet-900/10 p-6">
+        <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+          Teacher Parity
+        </p>
+        <p className="text-xl md:text-2xl font-semibold text-zinc-900 dark:text-white">
+          Matches the teacher on {pct}% of held-out tasks.
+        </p>
+        <div className="mt-4 space-y-3">
+          <div
+            className="flex h-2.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+            title="Student vs teacher, judged blind on held-out tasks"
+          >
+            <div
+              className="bg-emerald-500"
+              style={{ width: `${winPct}%` }}
+              title="Win: an independent judge preferred your small model's answer"
+            />
+            <div
+              className="bg-violet-400"
+              style={{ width: `${tiePct}%` }}
+              title="Tie: the judge found both answers equally good"
+            />
+            <div
+              className="bg-zinc-400 dark:bg-zinc-600"
+              style={{ width: `${lossPct}%` }}
+              title="Loss: the judge preferred the teacher's answer"
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500">
+            <span title="An independent judge preferred your small model's answer">
+              Win {winPct}%
+            </span>
+            <span title="The judge found both answers equally good">
+              Tie {tiePct}%
+            </span>
+            <span title="The judge preferred the teacher's answer">
+              Loss {lossPct}%
+            </span>
+            {typeof parity.agreement === "number" && (
+              <span title="Share of answers the judge marked as saying the same thing as the teacher's">
+                Answer agreement {Math.round(parity.agreement * 100)}%
+              </span>
+            )}
+            {typeof parity.n === "number" && (
+              <span title="Held-out tasks compared">n = {parity.n}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (note) {
+    return (
+      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5">
+        <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">
+          Teacher Parity
+        </p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          No held-out set was kept for this run, so there&apos;s no teacher
+          comparison. Re-run data generation with a held-out share to get a
+          parity report.
+        </p>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
   const scores = evaluation.scores;
 
@@ -146,6 +235,9 @@ function EvaluationDetail({ evaluation }: { evaluation: Evaluation }) {
         <p className="text-3xl md:text-5xl font-bold text-zinc-900 dark:text-white">{scores.overall}</p>
         <p className="text-zinc-500 text-sm mt-1">out of 100</p>
       </div>
+
+      {/* Teacher parity (distill mode) */}
+      <TeacherParitySection evaluation={evaluation} />
 
       {/* Suite scores grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">

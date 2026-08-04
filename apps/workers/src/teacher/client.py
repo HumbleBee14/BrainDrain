@@ -85,9 +85,15 @@ class TeacherClient:
     judge and facet calls (and vice versa).
     """
 
-    def __init__(self, config: TeacherConfig, settings):
+    def __init__(self, config: TeacherConfig, settings, fallback_api_key: str = ""):
+        """`fallback_api_key` (plaintext, in-memory only) is used when the
+        teacher block carries no key of its own — the "use my configured LLM"
+        path, where the caller has already verified the teacher endpoint IS
+        the tenant's endpoint. Never set it for any other endpoint.
+        """
         self._config = config
         self._settings = settings
+        self._fallback_api_key = fallback_api_key
         self._provider = get_llm_provider(settings.llm_provider_backend)
         self._url_checked = False
 
@@ -122,9 +128,9 @@ class TeacherClient:
         self._url_checked = True
 
     def _plaintext_key(self) -> str:
-        """Decrypt at call time; the plaintext is never stored on the instance."""
+        """Decrypt at call time; the decrypted key is never stored on the instance."""
         if not self._config.api_key:
-            return ""
+            return self._fallback_api_key
         return decrypt_secret(self._config.api_key, self._settings.settings_encryption_key)
 
     def make_llm_call(self, http: httpx.AsyncClient, temperature: float):
