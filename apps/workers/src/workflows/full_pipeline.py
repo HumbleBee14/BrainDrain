@@ -85,6 +85,10 @@ class FullPipelineWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
+        # The pipeline's teacher block is not forwarded to TrainWorkflow: only the
+        # per-stage training route plans a fidelity upgrade and admits its cost
+        # against the tenant's teacher-GPU cap. Passing this caller-supplied
+        # config through would let an `extraction` block reach the GPU unpriced.
         train_result = await workflow.execute_child_workflow(
             TrainWorkflow.run,
             args=[

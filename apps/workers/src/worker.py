@@ -134,12 +134,14 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
         UpdateDataGuideActivity,
     )
     from src.activities.export_gguf import ExportGgufActivity
+    from src.activities.extract_logprobs import ExtractTeacherLogprobsActivity
     from src.activities.generate_pairs import GeneratePairsActivity
     from src.activities.parse_document import ParseDocumentActivity
     from src.activities.pipeline_records import (
         CreateEvaluationActivity,
         CreateTrainingJobActivity,
         MarkDatasetFailedActivity,
+        SetTeacherExtractionStatusActivity,
     )
     from src.activities.run_evaluation import RunEvaluationActivity
     from src.activities.stubs import DeployModelActivity, GetDocumentInfoActivity
@@ -164,10 +166,15 @@ def build_activity_lists(infra: InfraContainer, gpu_provider: object) -> tuple[l
         CreateTrainingJobActivity(infra).run,
         CreateEvaluationActivity(infra).run,
         MarkDatasetFailedActivity(infra).run,
+        SetTeacherExtractionStatusActivity(infra).run,
     ]
 
-    # GPU-bound activities (training, evaluation)
+    # GPU-bound activities (training, evaluation). Teacher extraction belongs
+    # here and nowhere else: it loads a model larger than the student onto the
+    # same physical GPU, so it must queue behind the GPU semaphore rather than
+    # run beside a training job.
     gpu_activities = [
+        ExtractTeacherLogprobsActivity(infra, gpu_provider=gpu_provider).run,
         StartTrainingActivity(infra, gpu_provider=gpu_provider).run,
         TrainSftRoundActivity(infra, gpu_provider=gpu_provider).run,
         EvaluateHoldoutActivity(infra, gpu_provider=gpu_provider).run,

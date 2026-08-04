@@ -239,7 +239,9 @@ impl TrainingJobService {
             platform_shared::s3_paths::dataset_path(tenant_id, project_id, dataset_id)
         });
 
-        // Start TrainWorkflow via orchestrator
+        // Start TrainWorkflow via orchestrator. The teacher config travels from
+        // the persisted row rather than from the request, so the workflow can only
+        // ever act on the extraction plan this job was actually admitted for.
         let result = orchestrator
             .start_train(
                 tenant_id,
@@ -250,6 +252,7 @@ impl TrainingJobService {
                 &mode_str,
                 hyperparams,
                 req.gpu_class.as_deref(),
+                job.teacher_config.as_ref(),
                 trace_ctx,
             )
             .await
@@ -409,6 +412,7 @@ impl TrainingJobService {
                 &job.mode,
                 job.hyperparams.clone(),
                 job.gpu_class.as_deref(),
+                job.teacher_config.as_ref(),
                 trace_ctx,
             )
             .await

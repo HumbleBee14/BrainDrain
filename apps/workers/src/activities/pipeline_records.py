@@ -45,6 +45,27 @@ class MarkDatasetFailedInput:
     error: str
 
 
+class TeacherExtractionStatus:
+    """Lifecycle of the teacher scoring pass, tracked apart from the training run.
+
+    A job that never asks for a fidelity upgrade leaves the column NULL. A run
+    abandoned mid-scoring keeps RUNNING on purpose: that is what tells an operator
+    (and the orphan sweep) that the GPU still owed money was the teacher's, not
+    the student's.
+    """
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class SetTeacherExtractionStatusInput:
+    tenant_id: str
+    training_job_id: str
+    status: str
+
+
 class CreateTrainingJobActivity:
     def __init__(self, infra: InfraContainer):
         self.infra = infra
@@ -88,6 +109,24 @@ class CreateEvaluationActivity:
         )
         logger.info("Pipeline created evaluation %s for model %s", eval_id, input.model_id)
         return str(eval_id)
+
+
+class SetTeacherExtractionStatusActivity:
+    def __init__(self, infra: InfraContainer):
+        self.infra = infra
+
+    @activity.defn(name="set_teacher_extraction_status")
+    async def run(self, input: SetTeacherExtractionStatusInput) -> None:
+        """Record where the teacher scoring pass got to on the job row."""
+        await self.infra.db.execute(
+            """UPDATE training_jobs
+            SET teacher_extraction_status = $3
+            WHERE id = $1::uuid AND tenant_id = $2::uuid""",
+            input.training_job_id,
+            input.tenant_id,
+            input.status,
+        )
+        logger.info("Teacher extraction for job %s is %s", input.training_job_id, input.status)
 
 
 class MarkDatasetFailedActivity:
