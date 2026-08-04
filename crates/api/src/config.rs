@@ -209,6 +209,19 @@ pub struct Config {
     #[serde(default)]
     pub teacher_gpu_spend_cap_pro: Option<f64>,
 
+    /// Path to a JSON array of hosted teacher entries, replacing the built-in
+    /// catalog. Open-weight families turn over in months, so which teachers we
+    /// can run is deployment data — adding next year's model is a config change,
+    /// not a release. Unset uses the shipped defaults.
+    #[serde(default)]
+    pub hosted_teacher_catalog_path: Option<String>,
+
+    /// Comma-separated hosts whose terms restrict training on their outputs,
+    /// replacing the built-in list. Providers revise their terms independently of
+    /// our release cycle. An empty value means "restrict nothing".
+    #[serde(default)]
+    pub restricted_teacher_hosts: Option<String>,
+
     /// Inference instance health probe interval in seconds.
     #[serde(default = "default_inference_instance_health_poll_interval_secs")]
     pub inference_instance_health_poll_interval_secs: u64,

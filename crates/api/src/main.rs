@@ -44,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
     // Initialize structured logging with optional OTEL export
     init_tracing(&config)?;
 
+    // Teacher policy and the hosted-model allowlist are deployment data. Loaded
+    // before anything can read them, and a bad override fails startup rather
+    // than silently leaving the defaults in place — an operator who edited the
+    // catalog must not discover at request time that it was ignored.
+    init_teacher_policy(&config)?;
+
     tracing::info!(
         app = %config.app_name,
         env = %config.environment,
@@ -313,6 +319,36 @@ async fn main() -> anyhow::Result<()> {
 /// Application code uses `tracing::info!()` / `tracing::span!()` exclusively.
 /// When `otel_enabled=true`, spans are bridged to OTEL via `tracing-opentelemetry`.
 /// Swapping OTEL for Datadog/New Relic means changing only this function.
+/// Install operator overrides for the hosted-teacher allowlist and the
+/// restricted-provider list.
+fn init_teacher_policy(config: &Config) -> anyhow::Result<()> {
+    if let Some(path) = &config.hosted_teacher_catalog_path {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("cannot read hosted teacher catalog {path}: {e}"))?;
+        let entries = serde_json::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("hosted teacher catalog {path} is not valid: {e}"))?;
+        services::teacher::hosted::init_hosted_catalog(entries)
+            .map_err(|e| anyhow::anyhow!("hosted teacher catalog {path} rejected: {e}"))?;
+        tracing::info!(
+            path = %path,
+            teachers = services::teacher::hosted::hosted_catalog().len(),
+            "Loaded operator hosted-teacher catalog"
+        );
+    }
+
+    if let Some(hosts) = &config.restricted_teacher_hosts {
+        let hosts: Vec<String> = hosts.split(',').map(str::to_string).collect();
+        services::teacher::policy::init_restricted_hosts(hosts)
+            .map_err(|_| anyhow::anyhow!("restricted teacher hosts already initialized"))?;
+        tracing::info!(
+            hosts = services::teacher::policy::restricted_hosts().len(),
+            "Loaded operator restricted-provider list"
+        );
+    }
+
+    Ok(())
+}
+
 fn init_tracing(config: &Config) -> anyhow::Result<()> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
