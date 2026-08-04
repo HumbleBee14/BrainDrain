@@ -82,6 +82,63 @@ pub enum TrainingMode {
     Distill,
 }
 
+/// How much of the teacher a distill run learns from.
+///
+/// Orthogonal to [`TrainingMethod`] (which is about how the student's weights
+/// are updated) and to [`TrainingMode`] (which stays `distill` either way):
+/// `Text` trains on the teacher's written answers, `Logit` additionally trains
+/// on its per-token confidence.
+/// `Text` is the default everywhere: higher fidelity costs GPU time, so it is
+/// only ever entered deliberately.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    TS,
+    ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum DistillMethod {
+    #[default]
+    Text,
+    Logit,
+}
+
+/// Weight precision a hosted teacher is loaded at, trading accuracy for GPU
+/// memory and throughput.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Display,
+    EnumString,
+    TS,
+    ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum TeacherPrecision {
+    #[default]
+    Fp8,
+    Int4,
+    Bf16,
+}
+
 /// Deployment status for a trained model.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,

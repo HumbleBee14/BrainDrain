@@ -6,6 +6,29 @@
 
 ---
 
+## 0a. Decisions taken during execution (supersede the text below)
+
+**Measured vLLM behavior:** see [STAGE2-SPIKE-FINDINGS.md](STAGE2-SPIKE-FINDINGS.md).
+The load-bearing correction: support size per position is **`k` or `k+1`** (vLLM
+appends the actual token when it falls outside the top-k), so artifact arrays are
+width `k+1`, not `k`.
+
+**The hosted teacher scores; it does not generate.** A hosted teacher is a
+self-contained batch job, so it cannot serve Stage 1's datagen, which calls an
+OpenAI-compatible endpoint. Putting hosted models in the *teacher picker* would
+therefore offer a teacher that cannot write a dataset. Instead the hosted scorer
+is **derived from the dataset's own recorded provenance**: a fidelity upgrade is
+offered when `datasets.config.teacher.model` matches a hosted catalog entry —
+"you generated this with Qwen2.5-32B, and we can run that same model to score
+it." This removes the whose-knowledge-is-this ambiguity (the text and the
+distributions come from one model), removes a second teacher picker from the UI,
+and needs no server topology (still deferred to Stage 3).
+
+Consequences: no `TeacherKind` enum (nothing in Stage 2 selects between kinds);
+eligibility in the API is advisory (catalog pairing) with the authoritative
+tokenizer-hash check in the extraction workflow, so a UI hint never costs a
+Temporal round-trip.
+
 ## 0. What Stage 2 adds on top of Stage 1
 
 Stage 1 gives us: teacher abstraction (+ policy/provenance/encryption), `distill` mode, teacher-driven datagen, `TeacherParitySuite`, parity UI. Stage 2 reuses **all** of it and adds exactly four new things:

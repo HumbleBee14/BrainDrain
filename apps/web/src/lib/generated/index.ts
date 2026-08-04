@@ -102,6 +102,13 @@ export type { ProviderPolicy } from "./ProviderPolicy";
 export type { ClassifyTeacherRequest } from "./ClassifyTeacherRequest";
 export type { ClassifyTeacherResponse } from "./ClassifyTeacherResponse";
 export type { TeacherParityScores } from "./TeacherParityScores";
+export type { DistillMethod } from "./DistillMethod";
+export type { TeacherPrecision } from "./TeacherPrecision";
+export type { HostedTeacherEntry } from "./HostedTeacherEntry";
+export type { EstimateBasis } from "./EstimateBasis";
+export type { ExtractionEstimate } from "./ExtractionEstimate";
+export type { TeacherCostEstimateRequest } from "./TeacherCostEstimateRequest";
+export type { TeacherCostEstimateResponse } from "./TeacherCostEstimateResponse";
 export type { CatalogResponse } from "./CatalogResponse";
 
 // Feedback / data flywheel (from crates/api/src/dto/feedback.rs)

@@ -64,6 +64,12 @@ pub struct Dataset {
     pub stats: serde_json::Value,
     pub config: serde_json::Value,
     pub error: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    /// Completion positions a teacher would score. Meaningful only alongside
+    /// `token_count_tokenizer_hash`.
+    pub scored_completion_tokens: Option<i64>,
+    pub token_count_tokenizer_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
