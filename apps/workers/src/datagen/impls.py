@@ -79,10 +79,15 @@ def _parse_json_object(raw: str, *, required_keys: tuple[str, ...]) -> dict:
 
 
 class LlmPairGenerator:
-    """Default PairGenerator: renders the grounded Q&A prompt and parses pairs."""
+    """Default PairGenerator: renders the grounded Q&A prompt and parses pairs.
 
-    def __init__(self, llm_call: LlmCall):
+    `include_cot` asks the model to show its reasoning inside each answer —
+    used when distilling reasoning behavior from a teacher. Off by default.
+    """
+
+    def __init__(self, llm_call: LlmCall, include_cot: bool = False):
         self.llm_call = llm_call
+        self.include_cot = include_cot
 
     async def generate(
         self,
@@ -96,6 +101,12 @@ class LlmPairGenerator:
     ) -> list[GeneratedPair]:
         prompt = PromptLibrary.qna_grounded_prompt(guidance)
         avoid_text = "\n".join(xml_escape(item) for item in avoid) if avoid else "(none)"
+        cot_text = (
+            "\n- Each answer must show the step-by-step reasoning that leads to it, "
+            "then state the final answer.\n"
+            if self.include_cot
+            else ""
+        )
         message = f"""{prompt}
 
 ## Document Text
@@ -105,7 +116,7 @@ class LlmPairGenerator:
 
 ## Generation Parameters
 - Number of Q&A pairs to generate: {count}
-- Facet to focus on: {facet.label if facet else "(none — cover the document generally)"}
+- Facet to focus on: {facet.label if facet else "(none — cover the document generally)"}{cot_text}
 - Avoid generating queries similar to:
 <avoid_questions>
 {avoid_text}

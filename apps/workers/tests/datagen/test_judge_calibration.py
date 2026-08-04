@@ -140,5 +140,6 @@ class TestBackCompat:
 
     def test_workflow_rated_param_defaults_to_none(self):
         params = inspect.signature(GenerateDatasetWorkflow.run).parameters
-        assert list(params)[-1] == "rated"
+        assert list(params)[-2:] == ["rated", "teacher"]
         assert params["rated"].default is None
+        assert params["teacher"].default is None

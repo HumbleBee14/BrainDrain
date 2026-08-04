@@ -106,6 +106,7 @@ class RefineWorkflow:
                 facets=config.get("facets"),
                 golden_holdout_ratio=config.get("golden_holdout_ratio", 0.1),
                 facet_subtopics=config.get("facet_subtopics", 3),
+                teacher=config.get("teacher"),
             ),
             start_to_close_timeout=timeouts.generate_pairs_activity(),
             retry_policy=RetryPolicy(maximum_attempts=2),
@@ -118,7 +119,10 @@ class RefineWorkflow:
                 "The generator produced no usable training pairs", non_retryable=True
             )
 
-        # Stage 3: Build the dataset (filter, format, split)
+        # Stage 3: Build the dataset (filter, format, split). The teacher block
+        # goes along key-stripped — build_dataset records provenance, and
+        # provenance must never carry credentials.
+        teacher = config.get("teacher")
         dataset_result = await workflow.execute_activity(
             "build_dataset",
             BuildDatasetInput(
@@ -128,6 +132,7 @@ class RefineWorkflow:
                 pairs_storage_path=pairs_result.storage_path,
                 system_prompt=config.get("system_prompt", ""),
                 golden_storage_path=pairs_result.golden_storage_path,
+                teacher={k: v for k, v in teacher.items() if k != "api_key"} if teacher else None,
             ),
             start_to_close_timeout=timeouts.build_dataset_activity(),
             retry_policy=RetryPolicy(maximum_attempts=2),

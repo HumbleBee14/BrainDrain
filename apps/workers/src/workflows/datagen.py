@@ -230,6 +230,7 @@ class GenerateDatasetWorkflow:
         document_ids: list[str],
         system_prompt: str = "",
         rated: list[dict] | None = None,
+        teacher: dict | None = None,
     ) -> BuildDatasetOutput:
         try:
             chunk_result = await workflow.execute_activity(
@@ -259,6 +260,7 @@ class GenerateDatasetWorkflow:
                         guidance=guidance,
                         facets=facets,
                         rated=rated or [],
+                        teacher=teacher,
                     ),
                     start_to_close_timeout=timeouts.generate_pairs_activity(),
                     retry_policy=RetryPolicy(maximum_attempts=2),
@@ -280,6 +282,11 @@ class GenerateDatasetWorkflow:
                             pairs_storage_path=pairs_result.storage_path,
                             system_prompt=system_prompt,
                             golden_storage_path=pairs_result.golden_storage_path,
+                            teacher=(
+                                {k: v for k, v in teacher.items() if k != "api_key"}
+                                if teacher
+                                else None
+                            ),
                         ),
                         start_to_close_timeout=timeouts.build_dataset_activity(),
                         retry_policy=RetryPolicy(maximum_attempts=2),
