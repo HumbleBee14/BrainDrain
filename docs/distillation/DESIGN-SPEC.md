@@ -1,6 +1,6 @@
 # Distillation — Design Spec
 
-> Status: draft for review. Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
+> Status: **Stage 1 implemented** (`feat/distillation-stage1`); Stages 2–3 planned. Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
 > Scope: multi-tenant, production-grade distillation as a first-class training capability.
 
 ---
