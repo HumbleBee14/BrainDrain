@@ -93,6 +93,13 @@ export type { GenerateDatasetRequest } from "./GenerateDatasetRequest";
 
 // Model catalog
 export type { CatalogModel } from "./CatalogModel";
+export type { TeacherConfigDto } from "./TeacherConfigDto";
+export type { TeacherProvenance } from "./TeacherProvenance";
+export type { TeacherCatalogEntry } from "./TeacherCatalogEntry";
+export type { ProviderPolicy } from "./ProviderPolicy";
+export type { ClassifyTeacherRequest } from "./ClassifyTeacherRequest";
+export type { ClassifyTeacherResponse } from "./ClassifyTeacherResponse";
+export type { TeacherParityScores } from "./TeacherParityScores";
 export type { CatalogResponse } from "./CatalogResponse";
 
 // Feedback / data flywheel (from crates/api/src/dto/feedback.rs)

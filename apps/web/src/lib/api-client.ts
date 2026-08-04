@@ -71,6 +71,12 @@ export type {
   PaginatedResponse,
   CatalogModel,
   CatalogResponse,
+  TeacherConfigDto,
+  TeacherProvenance,
+  TeacherCatalogEntry,
+  TeacherParityScores,
+  ProviderPolicy,
+  ClassifyTeacherResponse,
 } from "./generated";
 
 // Response types with frontend-friendly aliases
@@ -161,11 +167,13 @@ export interface TriggerFullPipelineRequest {
   task_type?: string;
   base_model: string;
   training_config: Record<string, unknown>;
+  teacher?: import("./generated").TeacherConfigDto;
 }
 
 export interface TriggerFullPipelineResponse {
   workflow_id: string;
   document_count: number;
+  teacher_policy?: import("./generated").ProviderPolicy | null;
 }
 
 // ── Frontend-only types (not in Rust DTOs) ──
@@ -630,6 +638,24 @@ export const api = {
       request<ProjectPipelineStatus>(`/api/v1/projects/${projectId}/status`, {
         token,
       }),
+  },
+
+  teachers: {
+    catalog: (token: string) =>
+      request<import("./generated").TeacherCatalogEntry[]>(
+        "/api/v1/teachers/catalog",
+        { token },
+      ),
+
+    classify: (token: string, apiBaseUrl: string, model: string) =>
+      request<import("./generated").ClassifyTeacherResponse>(
+        "/api/v1/teachers/classify",
+        {
+          token,
+          method: "POST",
+          body: JSON.stringify({ api_base_url: apiBaseUrl, model }),
+        },
+      ),
   },
 
   datasets: {
