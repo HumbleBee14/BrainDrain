@@ -23,6 +23,10 @@ dependencies = [
     "httpx>=0.27.0",
     # AES-256-GCM decryption of tenant API keys stored encrypted by the API
     "cryptography>=42.0.0",
+    # Teacher logprob artifacts are columnar arrays; extract_logprobs imports
+    # this at module level, so it is a runtime need on the worker, not just in
+    # the ml extra where torch would otherwise drag it in.
+    "numpy>=1.26.0",
     # Structured logging
     "python-json-logger>=3.2.0",
     # Observability (OpenTelemetry)

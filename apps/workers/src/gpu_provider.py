@@ -429,10 +429,20 @@ async def _cancel_function_call(fc) -> None:
 # A user cancel terminates the workflow -> status 'cancelled'; the reaper marks
 # a stuck job 'failed'. Neither clears modal_call_id, and neither stops the
 # remote call. Completed rows are excluded — their call has already finished.
+# A job reserves two independent GPU calls over its life — the teacher scoring
+# pass and the training run — so both columns are swept. Selecting the same row
+# twice under different `tbl` keys is intentional: each reservation is cancelled
+# and cleared on its own, and a job abandoned between the two must not leave the
+# scoring GPU running just because the training call was already clear.
 _ORPHAN_SWEEP_QUERY = """
     SELECT id, tenant_id, modal_call_id, 'training_jobs' AS tbl
     FROM training_jobs
     WHERE status IN ('cancelled', 'failed') AND modal_call_id IS NOT NULL
+    UNION ALL
+    SELECT id, tenant_id, teacher_extraction_modal_call_id AS modal_call_id,
+           'training_jobs_extraction' AS tbl
+    FROM training_jobs
+    WHERE status IN ('cancelled', 'failed') AND teacher_extraction_modal_call_id IS NOT NULL
     UNION ALL
     SELECT id, tenant_id, modal_call_id, 'evaluations' AS tbl
     FROM evaluations
@@ -442,6 +452,10 @@ _ORPHAN_SWEEP_QUERY = """
 _ORPHAN_CLEAR_SQL = {
     "training_jobs": (
         "UPDATE training_jobs SET modal_call_id = NULL WHERE id = $1 AND tenant_id = $2"
+    ),
+    "training_jobs_extraction": (
+        "UPDATE training_jobs SET teacher_extraction_modal_call_id = NULL"
+        " WHERE id = $1 AND tenant_id = $2"
     ),
     "evaluations": ("UPDATE evaluations SET modal_call_id = NULL WHERE id = $1 AND tenant_id = $2"),
 }

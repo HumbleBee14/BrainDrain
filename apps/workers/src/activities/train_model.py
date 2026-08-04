@@ -55,6 +55,7 @@ from src.gpu_provider import GpuProvider
 from src.heartbeat import safe_heartbeat
 from src.infra import InfraContainer
 from src.notifications import EVENT_TRAINING_COMPLETE, enqueue_notification
+from src.teacher.messages import TOKENIZER_MISMATCH_MESSAGE as _TEACHER_ARTIFACT_MISMATCH
 from src.tenant_config import TenantLlmConfig
 
 logger = logging.getLogger("platform.training")
@@ -73,11 +74,6 @@ _DEFAULT_DISTILL_METHOD = "text"
 _DISTILL_STRATEGY_KEYS = {"text": "distill", "logit": "distill_logit"}
 
 _TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
-
-_TEACHER_ARTIFACT_MISMATCH = (
-    "These two models read text differently, so high-fidelity training isn't "
-    "possible between them. Standard distillation works — switch and re-run."
-)
 
 
 def resolve_strategy_key(mode: str, distill_method: str | None) -> str:
