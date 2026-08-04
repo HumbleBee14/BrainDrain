@@ -103,6 +103,7 @@ export type { ClassifyTeacherRequest } from "./ClassifyTeacherRequest";
 export type { ClassifyTeacherResponse } from "./ClassifyTeacherResponse";
 export type { TeacherParityScores } from "./TeacherParityScores";
 export type { DistillMethod } from "./DistillMethod";
+export type { DistillOptionsDto } from "./DistillOptionsDto";
 export type { TeacherPrecision } from "./TeacherPrecision";
 export type { HostedTeacherEntry } from "./HostedTeacherEntry";
 export type { EstimateBasis } from "./EstimateBasis";

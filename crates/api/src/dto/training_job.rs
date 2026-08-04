@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 use crate::services::teacher::config::{
     TeacherConfigDto, TeacherProvenance, provenance_from_config,
 };
+use crate::services::teacher::extraction::DistillOptionsDto;
 
 /// Request to create a new training job.
 #[derive(Debug, Deserialize, TS, ToSchema)]
@@ -28,6 +29,9 @@ pub struct CreateTrainingJobRequest {
     /// the teacher is taken from the dataset's provenance.
     #[ts(optional)]
     pub teacher: Option<TeacherConfigDto>,
+    /// Distill mode: fidelity options. Absent means the text path.
+    #[ts(optional)]
+    pub distill: Option<DistillOptionsDto>,
 }
 
 /// Training job information returned by API.

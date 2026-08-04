@@ -14,6 +14,7 @@ use crate::services::teacher::config::{
     NOT_TEACHER_DATASET_MESSAGE, TEACHER_MISMATCH_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE,
     provenance_from_config, validate_teacher_for_launch,
 };
+use crate::services::teacher::extraction::{admit_extraction, plan_extraction};
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -39,6 +40,7 @@ impl TrainingJobService {
         req: CreateTrainingJobRequest,
         max_models: Option<i64>,
         cost_approval_threshold: Option<f64>,
+        teacher_gpu_spend_cap: Option<f64>,
         trace_ctx: TraceContext,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
@@ -143,6 +145,34 @@ impl TrainingJobService {
         );
         let hours = estimate_gpu_hours(&req.base_model, dataset.pair_count, &mode, epochs);
         let cost_estimate = (hours * gpu_rate * 100.0).round() / 100.0;
+
+        // A fidelity upgrade puts a hosted teacher on our own GPU, so it is
+        // admitted against its own budget before the job row exists — a refusal
+        // then leaves nothing half-started.
+        let extraction = match &req.distill {
+            Some(options) if options.wants_logits() => {
+                let plan = plan_extraction(&dataset, &req.base_model, options, |gpu_class| {
+                    resolve_gpu_rate(&admin_config.gpu_rates, gpu_class)
+                })
+                .map_err(|reason| AppError::BadRequest {
+                    message: reason.to_string(),
+                })?;
+                admit_extraction(billing_repo, tenant_id, teacher_gpu_spend_cap, &plan).await?;
+                Some(plan)
+            }
+            _ => None,
+        };
+
+        // Recorded alongside the teacher rather than in its own column: the
+        // extraction plan is entirely a statement about this job's teacher, and
+        // the teacher module owns that column.
+        let teacher_config = match (teacher_config, &extraction) {
+            (Some(mut block), Some(plan)) => {
+                block["extraction"] = plan.workflow_value();
+                Some(block)
+            }
+            (block, _) => block,
+        };
 
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
@@ -977,6 +1007,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
             teacher: None,
+            distill: None,
         };
         assert!(req.base_model.trim().is_empty());
     }
@@ -991,6 +1022,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
             teacher: None,
+            distill: None,
         };
         assert!(req.dataset_id.parse::<uuid::Uuid>().is_err());
     }
@@ -1006,6 +1038,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
             teacher: None,
+            distill: None,
         };
         assert_eq!(req.dataset_id.parse::<uuid::Uuid>().unwrap(), id);
     }
@@ -1020,6 +1053,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
             teacher: None,
+            distill: None,
         };
         let method = req.method.unwrap_or(TrainingMethod::Qlora);
         assert_eq!(method, TrainingMethod::Qlora);
@@ -1035,6 +1069,7 @@ mod tests {
             hyperparams: None,
             gpu_class: None,
             teacher: None,
+            distill: None,
         };
         let mode = req.mode.unwrap_or(TrainingMode::Quick);
         assert_eq!(mode, TrainingMode::Quick);
