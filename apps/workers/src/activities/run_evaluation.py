@@ -59,9 +59,9 @@ class EvaluationContext:
 
 def _build_context(input: RunEvaluationInput) -> EvaluationContext:
     return EvaluationContext(
-        mode=getattr(input, "mode", "") or "",
-        dataset_config=getattr(input, "dataset_config", None) or {},
-        job_config=getattr(input, "job_config", None) or {},
+        mode=input.mode or "",
+        dataset_config=input.dataset_config or {},
+        job_config=input.job_config or {},
     )
 
 
@@ -180,6 +180,9 @@ class RunEvaluationActivity:
                     judge_api_base=input.judge_api_base,
                     gpu_class=input.gpu_class,
                     llm_config=asdict(llm_config),
+                    mode=input.mode,
+                    dataset_config=input.dataset_config,
+                    job_config=input.job_config,
                 )
                 scores, report = result_dict["scores"], result_dict["report"]
             else:
@@ -856,6 +859,113 @@ class DocumentKnowledgeSuite:
                 "num_samples": len(ft_means),
             },
             {"num_samples": len(samples), "skipped_samples": skipped, "samples": samples[:10]},
+        )
+
+
+# -- Suite 6: Teacher Parity (distill mode only) --
+
+
+@register_suite
+class TeacherParitySuite:
+    """How close the distilled student gets to its teacher.
+
+    Runs only for distill-mode jobs. The golden holdout's expected answers
+    ARE teacher outputs by construction (the teacher wrote the dataset), so
+    parity needs no extra storage and no live teacher: the student answers
+    each held-out prompt, a blind judge compares student vs teacher answer
+    (randomized positions), and `check_correctness` measures answer
+    agreement. Report-only — weight 0 keeps it out of the overall score, and
+    the deploy gate ignores it unless DEPLOY_MIN_TEACHER_PARITY is set.
+    """
+
+    name = "teacher_parity"
+    weight = 0.0
+
+    MAX_SAMPLES = 30
+
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
+        if context is None or context.mode != "distill":
+            # Not a distillation — contribute no scores (not zeros).
+            return {}, {}
+        if not golden_dataset:
+            return (
+                {},
+                {"note": "No golden holdout was kept for this run — no teacher comparison"},
+            )
+
+        position_rng = random.Random(_AB_POSITION_SEED)
+        wins = ties = losses = agreements = 0
+        samples = []
+        skipped = 0
+
+        for i, item in enumerate(golden_dataset[: self.MAX_SAMPLES]):
+            if i % 10 == 0:
+                safe_heartbeat(f"teacher_parity_{i}")
+            split = _prompt_and_expected(item)
+            if split is None:
+                skipped += 1
+                continue
+            prompt_msgs, teacher_answer, tools = split
+
+            prompt_text = _render_eval_prompt(tok_ft, prompt_msgs, tools)
+            student_answer = _generate(model_ft, tok_ft, prompt_text)
+
+            # Blind comparison: the judge never knows which side is the
+            # student; positions randomized (seeded for reproducibility).
+            student_is_a = position_rng.random() < 0.5
+            if student_is_a:
+                verdict = judge.compare_ab(prompt_text, student_answer, teacher_answer)
+            else:
+                verdict = judge.compare_ab(prompt_text, teacher_answer, student_answer)
+
+            if verdict == "tie":
+                ties += 1
+            elif (verdict == "A") == student_is_a:
+                wins += 1
+            else:
+                losses += 1
+
+            agrees = judge.check_correctness(student_answer, teacher_answer)
+            if agrees:
+                agreements += 1
+
+            samples.append(
+                {
+                    "prompt": prompt_text[:200],
+                    "teacher_answer": teacher_answer[:200],
+                    "student_answer": student_answer[:200],
+                    "verdict": verdict,
+                    "student_was_a": student_is_a,
+                    "agreement": agrees,
+                }
+            )
+
+        n = wins + ties + losses
+        if n == 0:
+            return (
+                {},
+                {"note": "No golden sample could be compared", "skipped_samples": skipped},
+            )
+
+        return (
+            {
+                "parity": round((wins + ties) / n, 3),
+                "win_rate": round(wins / n, 3),
+                "tie_rate": round(ties / n, 3),
+                "agreement": round(agreements / n, 3),
+                "n": n,
+            },
+            {"num_samples": n, "skipped_samples": skipped, "samples": samples[:10]},
         )
 
 

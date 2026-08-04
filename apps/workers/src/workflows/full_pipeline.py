@@ -114,6 +114,10 @@ class FullPipelineWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
+        # Evaluation context: mode drives mode-specific suites (teacher
+        # parity); the teacher goes along key-stripped — evaluation compares
+        # against stored golden answers and never calls the teacher.
+        teacher = training_config.get("teacher")
         eval_result = await workflow.execute_child_workflow(
             EvaluateWorkflow.run,
             args=[
@@ -126,6 +130,17 @@ class FullPipelineWorkflow:
                 "",  # judge_model — use tenant/default config
                 "",  # judge_api_base — use tenant/default config
                 training_config.get("gpu_class"),  # eval on the same GPU class as training
+                training_config.get("mode", "quick"),
+                (
+                    {"teacher": {k: v for k, v in teacher.items() if k != "api_key"}}
+                    if teacher
+                    else None
+                ),
+                {
+                    "mode": training_config.get("mode", "quick"),
+                    "method": training_config.get("method", "qlora"),
+                    "gpu_class": training_config.get("gpu_class"),
+                },
             ],
             id=f"evaluate-{project_id}",
         )

@@ -152,6 +152,12 @@ class RunEvaluationInput:
     judge_model: str = ""
     judge_api_base: str = ""
     gpu_class: str | None = None
+    # Job context for mode-specific suites (e.g. teacher parity runs only for
+    # distill jobs). Trailing optionals — payloads queued before these fields
+    # existed still deserialize.
+    mode: str = ""
+    dataset_config: dict | None = None
+    job_config: dict | None = None
 
 
 @dataclass

@@ -148,6 +148,10 @@ pub trait WorkflowOrchestrator: Send + Sync {
         dataset_path: &str,
         judge_model: Option<&str>,
         judge_api_base: Option<&str>,
+        gpu_class: Option<&str>,
+        mode: &str,
+        dataset_config: serde_json::Value,
+        job_config: serde_json::Value,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
@@ -582,6 +586,10 @@ impl WorkflowOrchestrator for TemporalClient {
         dataset_path: &str,
         judge_model: Option<&str>,
         judge_api_base: Option<&str>,
+        gpu_class: Option<&str>,
+        mode: &str,
+        dataset_config: serde_json::Value,
+        job_config: serde_json::Value,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let adapter_path = adapter_path.to_string();
@@ -589,12 +597,17 @@ impl WorkflowOrchestrator for TemporalClient {
         let dataset_path = dataset_path.to_string();
         let judge_model = judge_model.map(|s| s.to_string());
         let judge_api_base = judge_api_base.map(|s| s.to_string());
+        let gpu_class = gpu_class.map(|s| s.to_string());
+        let mode = mode.to_string();
         Box::pin(async move {
             let workflow_id = format!(
                 "evaluate-{evaluation_id}-{}",
                 chrono::Utc::now().timestamp()
             );
 
+            // Trailing args appended for in-flight compatibility; gpu_class
+            // occupies the 9th slot to keep mode/config aligned with the
+            // workflow signature.
             self.start_workflow_on_queue(
                 "EvaluateWorkflow",
                 &workflow_id,
@@ -607,6 +620,10 @@ impl WorkflowOrchestrator for TemporalClient {
                     dataset_path,
                     judge_model.as_deref().unwrap_or(""),
                     judge_api_base.as_deref().unwrap_or(""),
+                    gpu_class,
+                    mode,
+                    dataset_config,
+                    job_config,
                 ]),
                 None, // default queue — GPU activities pin their own
                 &trace_ctx,
