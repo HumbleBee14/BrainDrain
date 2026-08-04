@@ -90,6 +90,7 @@ pub async fn create_training_job(
     let trace_ctx = TraceContext::from_headers(&headers);
     // Atomic limit check: INSERT ... WHERE count < max — no TOCTOU race.
     let limits = PlanService::get_limits(state.tenant_repo(), user.tenant_id).await?;
+    let plan = PlanService::get_plan(state.tenant_repo(), user.tenant_id).await?;
     let base_model = body.base_model.clone();
     let result = TrainingJobService::create(
         state.training_job_repo(),
@@ -103,6 +104,7 @@ pub async fn create_training_job(
         body,
         Some(limits.max_models),
         None, // use default cost approval threshold
+        state.config().teacher_gpu_spend_cap(&plan),
         trace_ctx,
     )
     .await?;

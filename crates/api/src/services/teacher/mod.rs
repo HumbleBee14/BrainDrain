@@ -15,6 +15,7 @@
 pub mod billing;
 pub mod config;
 pub mod cost;
+pub mod extraction;
 pub mod fidelity;
 pub mod hosted;
 pub mod policy;

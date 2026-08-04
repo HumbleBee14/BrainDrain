@@ -38,10 +38,6 @@ pub fn teacher_gpu_spend_would_exceed_cap(
 /// teacher-GPU spend this month over its configured cap. `cap` is resolved by
 /// the caller (`Config::teacher_gpu_spend_cap`) from the tenant's plan, since
 /// this module has no `Config` dependency of its own.
-///
-/// Not yet called from a route — the extraction-admission endpoint that
-/// invokes this lands in a later Stage 2 task.
-#[allow(dead_code)]
 pub async fn check_teacher_gpu_spend_cap(
     billing_repo: &dyn BillingEventRepository,
     tenant_id: Uuid,

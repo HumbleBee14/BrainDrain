@@ -151,6 +151,18 @@ impl PlanService {
         tenant_repo: &dyn TenantRepository,
         tenant_id: Uuid,
     ) -> AppResult<PlanLimits> {
+        Ok(PlanLimits::for_plan(
+            &Self::get_plan(tenant_repo, tenant_id).await?,
+        ))
+    }
+
+    /// The tenant's plan tier, for limits that live in config rather than in
+    /// [`PlanLimits`] (an operator-tunable ceiling is deployment policy, not a
+    /// property of the plan itself).
+    pub async fn get_plan(
+        tenant_repo: &dyn TenantRepository,
+        tenant_id: Uuid,
+    ) -> AppResult<String> {
         let tenant = tenant_repo
             .get_by_id(tenant_id)
             .await?
@@ -158,7 +170,7 @@ impl PlanService {
                 message: "Tenant not found".into(),
             })?;
 
-        Ok(PlanLimits::for_plan(&tenant.plan))
+        Ok(tenant.plan)
     }
 
     /// Reject an upload that would push the tenant's stored bytes over its plan

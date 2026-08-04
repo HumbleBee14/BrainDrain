@@ -257,6 +257,7 @@ fn v1_router() -> Router<AppState> {
         crate::services::teacher::cost::EstimateBasis,
         crate::services::teacher::cost::ExtractionEstimate,
         crate::services::teacher::hosted::HostedTeacherEntry,
+        crate::services::teacher::extraction::DistillOptionsDto,
         // Pipeline
         crate::dto::pipeline::TriggerParseResponse,
         crate::dto::pipeline::TriggerRefineRequest,
