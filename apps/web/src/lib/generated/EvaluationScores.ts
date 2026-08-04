@@ -4,8 +4,9 @@ import type { DocKnowledgeScores } from "./DocKnowledgeScores";
 import type { DomainScores } from "./DomainScores";
 import type { GeneralScores } from "./GeneralScores";
 import type { SafetyScores } from "./SafetyScores";
+import type { TeacherParityScores } from "./TeacherParityScores";
 
 /**
  * Evaluation scores (stored in models.eval_scores and evaluations.scores).
  */
-export type EvaluationScores = { domain: DomainScores | null, general: GeneralScores | null, ab_comparison: ABComparisonScores | null, safety: SafetyScores | null, doc_knowledge: DocKnowledgeScores | null, overall: number | null, };
+export type EvaluationScores = { domain: DomainScores | null, general: GeneralScores | null, ab_comparison: ABComparisonScores | null, safety: SafetyScores | null, doc_knowledge: DocKnowledgeScores | null, teacher_parity: TeacherParityScores | null, overall: number | null, };

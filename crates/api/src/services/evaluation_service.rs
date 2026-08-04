@@ -50,26 +50,33 @@ impl EvaluationService {
                 message: "Training job for this model not found".to_string(),
             })?;
 
-        // Build dataset path from training job's dataset
-        let dataset_path = {
-            let dataset = dataset_repo
-                .get_by_id(tenant_id, training_job.dataset_id)
-                .await?
-                .ok_or(AppError::NotFound {
-                    message: "Dataset for this model's training job not found".to_string(),
-                })?;
-
-            dataset.storage_path.unwrap_or_else(|| {
-                platform_shared::s3_paths::dataset_path(
-                    tenant_id,
-                    training_job.project_id,
-                    training_job.dataset_id,
-                )
-            })
-        };
+        // Build dataset path from training job's dataset; keep the dataset
+        // row for the evaluation context (teacher provenance).
+        let dataset = dataset_repo
+            .get_by_id(tenant_id, training_job.dataset_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Dataset for this model's training job not found".to_string(),
+            })?;
+        let dataset_path = dataset.storage_path.clone().unwrap_or_else(|| {
+            platform_shared::s3_paths::dataset_path(
+                tenant_id,
+                training_job.project_id,
+                training_job.dataset_id,
+            )
+        });
 
         // Create evaluation record
         let eval = eval_repo.create(tenant_id, model_id).await?;
+
+        // Job context so mode-specific suites (teacher parity for distill
+        // jobs) know what they are evaluating. The dataset config carries
+        // credential-free teacher provenance only.
+        let job_config = serde_json::json!({
+            "mode": training_job.mode,
+            "method": training_job.method,
+            "gpu_class": training_job.gpu_class,
+        });
 
         // Start EvaluateWorkflow via orchestrator
         let result = orchestrator
@@ -82,6 +89,10 @@ impl EvaluationService {
                 &dataset_path,
                 req.judge_model.as_deref(),
                 req.judge_api_base.as_deref(),
+                training_job.gpu_class.as_deref(),
+                &training_job.mode,
+                dataset.config,
+                job_config,
                 trace_ctx,
             )
             .await

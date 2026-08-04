@@ -34,6 +34,9 @@ class EvaluateWorkflow:
         judge_model: str = "",
         judge_api_base: str = "",
         gpu_class: str | None = None,
+        mode: str = "",
+        dataset_config: dict | None = None,
+        job_config: dict | None = None,
     ) -> RunEvaluationOutput:
         result = await workflow.execute_activity(
             "run_evaluation",
@@ -47,6 +50,9 @@ class EvaluateWorkflow:
                 judge_model=judge_model,
                 judge_api_base=judge_api_base,
                 gpu_class=gpu_class,
+                mode=mode,
+                dataset_config=dataset_config,
+                job_config=job_config,
             ),
             task_queue="ml-pipeline-gpu",
             start_to_close_timeout=timeouts.eval_activity(),

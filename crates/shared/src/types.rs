@@ -121,7 +121,28 @@ pub struct EvaluationScores {
     #[serde(default)]
     pub doc_knowledge: Option<DocKnowledgeScores>,
     #[serde(default)]
+    pub teacher_parity: Option<TeacherParityScores>,
+    #[serde(default)]
     pub overall: Option<f64>,
+}
+
+/// Teacher-parity scores from a distill-mode evaluation: the student judged
+/// blind against the teacher answers stored in the golden holdout. `parity`
+/// is the share of tasks where the student matched or beat the teacher.
+/// Report-only — absent for every other training mode.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TeacherParityScores {
+    #[serde(default)]
+    pub parity: Option<f64>,
+    #[serde(default)]
+    pub win_rate: Option<f64>,
+    #[serde(default)]
+    pub tie_rate: Option<f64>,
+    #[serde(default)]
+    pub agreement: Option<f64>,
+    #[serde(default)]
+    pub n: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
@@ -291,6 +312,13 @@ mod tests {
                 base_mean: Some(2.1),
                 knowledge_lift: Some(2.4),
                 num_samples: Some(24),
+            }),
+            teacher_parity: Some(TeacherParityScores {
+                parity: Some(0.92),
+                win_rate: Some(0.4),
+                tie_rate: Some(0.52),
+                agreement: Some(0.88),
+                n: Some(25),
             }),
             overall: Some(78.5),
         };

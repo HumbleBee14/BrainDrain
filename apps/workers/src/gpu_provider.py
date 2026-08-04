@@ -102,6 +102,9 @@ class GpuProvider(Protocol):
         judge_api_base: str,
         gpu_class: str | None,
         llm_config: dict,
+        mode: str = "",
+        dataset_config: dict | None = None,
+        job_config: dict | None = None,
     ) -> dict:
         """Run the full evaluation suite on a fine-tuned model.
 
@@ -284,6 +287,9 @@ class LocalGpuProvider:
         judge_api_base: str,
         gpu_class: str | None,
         llm_config: dict,
+        mode: str = "",
+        dataset_config: dict | None = None,
+        job_config: dict | None = None,
     ) -> dict:
         logger.info("Running evaluation locally (eval=%s, model=%s)", evaluation_id[:8], base_model)
 
@@ -301,6 +307,9 @@ class LocalGpuProvider:
             judge_model=judge_model,
             judge_api_base=judge_api_base,
             gpu_class=gpu_class,
+            mode=mode,
+            dataset_config=dataset_config,
+            job_config=job_config,
         )
         result = await run_evaluation_core(
             input_data,
@@ -730,6 +739,9 @@ class ModalGpuProvider:
         judge_api_base: str,
         gpu_class: str | None,
         llm_config: dict,
+        mode: str = "",
+        dataset_config: dict | None = None,
+        job_config: dict | None = None,
     ) -> dict:
         payload = {
             "input": {
@@ -742,6 +754,9 @@ class ModalGpuProvider:
                 "judge_model": judge_model,
                 "judge_api_base": judge_api_base,
                 "gpu_class": gpu_class,
+                "mode": mode,
+                "dataset_config": dataset_config,
+                "job_config": job_config,
             },
             "llm_config": llm_config,
         }
