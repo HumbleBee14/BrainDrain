@@ -33,6 +33,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
+        teacher_config: Option<serde_json::Value>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>> {
         let base_model = base_model.to_string();
         let method = method.to_string();
@@ -43,8 +44,8 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 INSERT INTO training_jobs
-                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate, teacher_config)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING *
                 "#,
             )
@@ -57,6 +58,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(hyperparams)
             .bind(gpu_class.as_deref())
             .bind(cost_estimate)
+            .bind(teacher_config)
             .fetch_one(&mut *tx)
             .await?;
 
@@ -77,6 +79,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
+        teacher_config: Option<serde_json::Value>,
         max_models: i64,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         let base_model = base_model.to_string();
@@ -88,9 +91,9 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             let job = sqlx::query_as::<_, TrainingJob>(
                 r#"
                 INSERT INTO training_jobs
-                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate)
-                SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
-                WHERE (SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1) < $10
+                    (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate, teacher_config)
+                SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                WHERE (SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1) < $11
                 RETURNING *
                 "#,
             )
@@ -103,6 +106,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(hyperparams)
             .bind(gpu_class.as_deref())
             .bind(cost_estimate)
+            .bind(teacher_config)
             .bind(max_models)
             .fetch_optional(&mut *tx)
             .await?;

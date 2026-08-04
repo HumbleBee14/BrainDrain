@@ -117,6 +117,7 @@ impl TrainingJobService {
                     hyperparams.clone(),
                     req.gpu_class.as_deref(),
                     Some(cost_estimate),
+                    None,
                     max,
                 )
                 .await?
@@ -138,6 +139,7 @@ impl TrainingJobService {
                     hyperparams.clone(),
                     req.gpu_class.as_deref(),
                     Some(cost_estimate),
+                    None,
                 )
                 .await?
         };
