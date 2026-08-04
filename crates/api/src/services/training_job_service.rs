@@ -9,6 +9,11 @@ use crate::repositories::traits::{
     BillingEventRepository, DatasetRepository, TenantRepository, TrainingJobRepository,
 };
 use crate::services::plan_service::PlanService;
+use crate::services::secret_cipher::SecretCipher;
+use crate::services::teacher::config::{
+    NOT_TEACHER_DATASET_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE, provenance_from_config,
+    validate_teacher_for_launch,
+};
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -28,6 +33,7 @@ impl TrainingJobService {
         tenant_repo: &dyn TenantRepository,
         billing_repo: &dyn BillingEventRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
+        cipher: &SecretCipher,
         tenant_id: Uuid,
         project_id: Uuid,
         req: CreateTrainingJobRequest,
@@ -85,6 +91,32 @@ impl TrainingJobService {
         let method_str = method.to_string();
         let mode_str = mode.to_string();
 
+        // Distill contract: the student trains on teacher-written data, so the
+        // dataset must carry teacher provenance. The job records its teacher —
+        // from the request when supplied, else inherited from the dataset.
+        let teacher_config = if mode == TrainingMode::Distill {
+            if provenance_from_config(&dataset.config).is_none() {
+                return Err(AppError::BadRequest {
+                    message: NOT_TEACHER_DATASET_MESSAGE.to_string(),
+                });
+            }
+            match &req.teacher {
+                Some(dto) => Some(
+                    validate_teacher_for_launch(dto, cipher)
+                        .await?
+                        .workflow_value(),
+                ),
+                None => dataset.config.get("teacher").cloned(),
+            }
+        } else {
+            if req.teacher.is_some() {
+                return Err(AppError::BadRequest {
+                    message: TEACHER_NOT_APPLICABLE_MESSAGE.to_string(),
+                });
+            }
+            None
+        };
+
         // Merge user hyperparams with defaults
         let hyperparams = merge_hyperparams(
             req.hyperparams
@@ -117,7 +149,7 @@ impl TrainingJobService {
                     hyperparams.clone(),
                     req.gpu_class.as_deref(),
                     Some(cost_estimate),
-                    None,
+                    teacher_config.clone(),
                     max,
                 )
                 .await?
@@ -139,7 +171,7 @@ impl TrainingJobService {
                     hyperparams.clone(),
                     req.gpu_class.as_deref(),
                     Some(cost_estimate),
-                    None,
+                    teacher_config,
                 )
                 .await?
         };
@@ -936,6 +968,7 @@ mod tests {
             mode: None,
             hyperparams: None,
             gpu_class: None,
+            teacher: None,
         };
         assert!(req.base_model.trim().is_empty());
     }
@@ -949,6 +982,7 @@ mod tests {
             mode: None,
             hyperparams: None,
             gpu_class: None,
+            teacher: None,
         };
         assert!(req.dataset_id.parse::<uuid::Uuid>().is_err());
     }
@@ -963,6 +997,7 @@ mod tests {
             mode: None,
             hyperparams: None,
             gpu_class: None,
+            teacher: None,
         };
         assert_eq!(req.dataset_id.parse::<uuid::Uuid>().unwrap(), id);
     }
@@ -976,6 +1011,7 @@ mod tests {
             mode: None,
             hyperparams: None,
             gpu_class: None,
+            teacher: None,
         };
         let method = req.method.unwrap_or(TrainingMethod::Qlora);
         assert_eq!(method, TrainingMethod::Qlora);
@@ -990,6 +1026,7 @@ mod tests {
             mode: None,
             hyperparams: None,
             gpu_class: None,
+            teacher: None,
         };
         let mode = req.mode.unwrap_or(TrainingMode::Quick);
         assert_eq!(mode, TrainingMode::Quick);

@@ -97,6 +97,7 @@ pub async fn create_training_job(
         state.tenant_repo(),
         state.billing_event_repo(),
         state.orchestrator(),
+        state.secret_cipher(),
         user.tenant_id,
         project_id,
         body,
@@ -106,13 +107,22 @@ pub async fn create_training_job(
     )
     .await?;
 
+    let mut audit_meta = serde_json::json!({
+        "base_model": base_model,
+        "project_id": project_id.to_string(),
+        "mode": result.mode.to_string(),
+    });
+    if let Some(teacher) = &result.teacher {
+        audit_meta["teacher_host"] = serde_json::json!(teacher.host);
+        audit_meta["teacher_model"] = serde_json::json!(teacher.model);
+    }
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
         "create",
         "training_job",
         result.id.parse().ok(),
-        serde_json::json!({"base_model": base_model, "project_id": project_id.to_string()}),
+        audit_meta,
     )
     .await;
 

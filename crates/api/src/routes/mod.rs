@@ -18,6 +18,7 @@ pub mod notifications;
 pub mod pipeline;
 pub mod projects;
 pub mod stripe_webhooks;
+pub mod teacher;
 pub mod team;
 pub mod tenant_settings;
 pub mod training;
@@ -73,6 +74,7 @@ fn v1_router() -> Router<AppState> {
         .merge(datasets::router())
         .merge(training::router())
         .merge(catalog::router())
+        .merge(teacher::router())
         .merge(evaluations::router())
         .merge(exports::router())
         .merge(feedback::router())
@@ -139,6 +141,9 @@ fn v1_router() -> Router<AppState> {
         training::download_adapter,
         // Catalog
         catalog::get_catalog,
+        // Teacher picker
+        teacher::get_teacher_catalog,
+        teacher::classify_teacher,
         // Evaluations
         evaluations::create_evaluation,
         evaluations::list_evaluations,
@@ -239,6 +244,13 @@ fn v1_router() -> Router<AppState> {
         crate::dto::datagen::RateSamplesRequest,
         crate::dto::datagen::UpdateGuidanceRequest,
         crate::dto::datagen::GenerateDatasetRequest,
+        // Teacher picker
+        crate::services::teacher::config::TeacherConfigDto,
+        crate::services::teacher::config::TeacherProvenance,
+        crate::services::teacher::policy::ProviderPolicy,
+        crate::services::teacher::policy::TeacherCatalogEntry,
+        teacher::ClassifyTeacherRequest,
+        teacher::ClassifyTeacherResponse,
         // Pipeline
         crate::dto::pipeline::TriggerParseResponse,
         crate::dto::pipeline::TriggerRefineRequest,

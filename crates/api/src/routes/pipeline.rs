@@ -20,7 +20,14 @@ use crate::error::AppResult;
 use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::pipeline_service::PipelineService;
+use crate::services::teacher::config::TeacherConfigDto;
+use crate::services::teacher::policy::host_of;
 use crate::temporal::TraceContext;
+
+/// Audit entries record the teacher's host, never a full endpoint URL.
+fn teacher_host_for_audit(teacher: &TeacherConfigDto) -> String {
+    host_of(&teacher.api_base_url).unwrap_or_else(|| "invalid".to_string())
+}
 
 /// Pipeline trigger and status routes.
 pub fn router() -> Router<AppState> {
@@ -106,26 +113,40 @@ pub async fn trigger_refine(
     let trace_ctx = TraceContext::from_headers(&headers);
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
+    let teacher_audit = body
+        .teacher
+        .as_ref()
+        .map(|t| (teacher_host_for_audit(t), t.model.clone()));
     let result = PipelineService::trigger_refine(
         state.document_repo(),
         state.dataset_repo(),
         state.orchestrator(),
+        state.secret_cipher(),
         user.tenant_id,
         project_id,
         task_type,
         body.config,
+        body.teacher,
         state.config().generation_stale_minutes,
         trace_ctx,
     )
     .await?;
 
+    let mut audit_meta = serde_json::json!({
+        "task_type": task_type,
+        "document_count": result.document_count,
+    });
+    if let Some((host, model)) = teacher_audit {
+        audit_meta["teacher_host"] = serde_json::json!(host);
+        audit_meta["teacher_model"] = serde_json::json!(model);
+    }
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
         "trigger_refine",
         "project",
         Some(project_id),
-        serde_json::json!({"task_type": task_type, "document_count": result.document_count}),
+        audit_meta,
     )
     .await;
 
@@ -156,28 +177,39 @@ pub async fn trigger_full_pipeline(
     let trace_ctx = TraceContext::from_headers(&headers);
     let task_type = body.task_type.as_deref().unwrap_or("question_answering");
 
+    let teacher_audit = body
+        .teacher
+        .as_ref()
+        .map(|t| (teacher_host_for_audit(t), t.model.clone()));
     let result = PipelineService::trigger_full_pipeline(
         state.document_repo(),
         state.orchestrator(),
+        state.secret_cipher(),
         user.tenant_id,
         project_id,
         task_type,
         &body.base_model,
         body.training_config,
+        body.teacher,
         trace_ctx,
     )
     .await?;
 
+    let mut audit_meta = serde_json::json!({
+        "base_model": body.base_model,
+        "document_count": result.document_count,
+    });
+    if let Some((host, model)) = teacher_audit {
+        audit_meta["teacher_host"] = serde_json::json!(host);
+        audit_meta["teacher_model"] = serde_json::json!(model);
+    }
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
         "trigger_full_pipeline",
         "project",
         Some(project_id),
-        serde_json::json!({
-            "base_model": body.base_model,
-            "document_count": result.document_count,
-        }),
+        audit_meta,
     )
     .await;
 

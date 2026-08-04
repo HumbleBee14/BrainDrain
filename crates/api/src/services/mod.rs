@@ -31,9 +31,6 @@ pub mod reaper;
 pub mod secret_cipher;
 pub mod smtp_email;
 pub mod stripe_billing;
-// Extracted ahead of the distillation feature; the allow goes away once the
-// pipeline/training services consume it later on this branch.
-#[allow(dead_code)]
 pub mod teacher;
 pub mod team_service;
 pub mod tenant_erasure_service;
