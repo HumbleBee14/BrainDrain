@@ -72,10 +72,18 @@ impl EvaluationService {
         // Job context so mode-specific suites (teacher parity for distill
         // jobs) know what they are evaluating. The dataset config carries
         // credential-free teacher provenance only.
+        // The artifacts prefix comes from the training run's own metrics rather
+        // than its hyperparams: a high-fidelity run is the only thing that can
+        // know where the teacher's distributions were stored, and the fidelity
+        // metric has to read the same ones the student trained against.
         let job_config = serde_json::json!({
             "mode": training_job.mode,
             "method": training_job.method,
             "gpu_class": training_job.gpu_class,
+            "teacher_artifacts_prefix": training_job
+                .metrics
+                .get("teacher_artifacts_prefix")
+                .and_then(|value| value.as_str()),
         });
 
         // Start EvaluateWorkflow via orchestrator

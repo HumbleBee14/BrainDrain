@@ -64,6 +64,17 @@ class _BrokenJudge:
         raise JudgeUnavailableError("judge is down")
 
 
+class _FakeArtifacts:
+    teacher_model = "Qwen/Qwen3-32B"
+
+
+class _FakeMatch:
+    mean_kl = 0.08123
+    scored_positions = 40
+    records = 4
+    skipped_records = 1
+
+
 def _patch_generation(monkeypatch):
     monkeypatch.setattr(
         re_mod, "_generate", lambda model, tok, prompt, max_new_tokens=512: f"{model}: answer"
@@ -127,6 +138,63 @@ class TestTeacherParitySuite:
         )
         assert scores == {}
         assert report["skipped_samples"] == 1
+
+    def test_no_stored_distributions_means_no_fidelity_metric(self, monkeypatch):
+        _patch_generation(monkeypatch)
+        scores, report = TeacherParitySuite().run(
+            "student", None, None, None, _FakeJudge(), [], _golden(3), context=DISTILL
+        )
+        assert "teacher_student_kl" not in scores
+        assert "distribution_match" not in report
+
+    def test_stored_distributions_add_the_fidelity_metric(self, monkeypatch):
+        _patch_generation(monkeypatch)
+        monkeypatch.setattr(
+            re_mod,
+            "measure_distribution_match",
+            lambda model, artifacts, max_seq_length: _FakeMatch(),
+        )
+        context = EvaluationContext(mode="distill", teacher_artifacts=_FakeArtifacts())
+
+        scores, report = TeacherParitySuite().run(
+            "student", None, None, None, _FakeJudge(), [], _golden(3), context=context
+        )
+
+        assert scores["teacher_student_kl"] == 0.0812
+        assert report["distribution_match"]["scored_positions"] == 40
+        assert report["distribution_match"]["teacher_model"] == "Qwen/Qwen3-32B"
+
+    def test_a_broken_measurement_never_fails_the_evaluation(self, monkeypatch):
+        """Four other suites' results are worth more than this one number."""
+        _patch_generation(monkeypatch)
+
+        def explode(model, artifacts, max_seq_length):
+            raise RuntimeError("shard is unreadable")
+
+        monkeypatch.setattr(re_mod, "measure_distribution_match", explode)
+        context = EvaluationContext(mode="distill", teacher_artifacts=_FakeArtifacts())
+
+        scores, report = TeacherParitySuite().run(
+            "student", None, None, None, _FakeJudge(), [], _golden(3), context=context
+        )
+
+        assert scores["n"] == 3
+        assert "teacher_student_kl" not in scores
+
+    def test_a_non_distill_run_reports_nothing_even_with_artifacts(self, monkeypatch):
+        _patch_generation(monkeypatch)
+        monkeypatch.setattr(
+            re_mod,
+            "measure_distribution_match",
+            lambda model, artifacts, max_seq_length: _FakeMatch(),
+        )
+        context = EvaluationContext(mode="quick", teacher_artifacts=_FakeArtifacts())
+
+        scores, report = TeacherParitySuite().run(
+            "student", None, None, None, _FakeJudge(), [], _golden(3), context=context
+        )
+
+        assert (scores, report) == ({}, {})
 
     def test_report_only_never_moves_overall(self):
         suites = [

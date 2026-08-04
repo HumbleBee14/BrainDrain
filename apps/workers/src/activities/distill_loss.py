@@ -152,19 +152,16 @@ def distillation_loss(
     if supervised_tokens == 0:
         raise ValueError("batch has no supervised positions")
 
-    lane = torch.arange(width, device=student_logits.device)
     kd_sum = student_logits.new_zeros((), dtype=torch.float32)
     ce_sum = student_logits.new_zeros((), dtype=torch.float32)
 
     for start in range(0, supervised_tokens, config.chunk_rows):
         rows = positions[start : start + config.chunk_rows]
         logits = flat_logits.index_select(0, rows - 1).float()
-        support = flat_support.index_select(0, rows).long()
-        valid = lane[None, :] < support[:, None]
-        ids = flat_ids.index_select(0, rows).long()
-        # Padded lanes are pointed at a real support id so scattering them is
-        # idempotent; `valid` is what keeps them out of the sums.
-        ids = torch.where(valid, ids, ids[:, :1])
+        ids, valid = _support_lanes(
+            flat_ids.index_select(0, rows).long(),
+            flat_support.index_select(0, rows).long(),
+        )
         tempered_logprobs = torch.log_softmax(logits / config.temperature, dim=-1)
 
         kd_rows = _kd_rows(
@@ -192,6 +189,56 @@ def distillation_loss(
         ce=ce,
         supervised_tokens=supervised_tokens,
     )
+
+
+def forward_kl_rows(
+    *,
+    student_logits: "torch.Tensor",
+    teacher_token_ids: "torch.Tensor",
+    teacher_logprobs: "torch.Tensor",
+    teacher_support_len: "torch.Tensor",
+    teacher_tail_mass: "torch.Tensor",
+    config: DistillLossConfig | None = None,
+) -> "torch.Tensor":
+    """Forward KL(teacher ‖ student) per position, for rows already aligned.
+
+    The same quantity the KD term of `distillation_loss` minimizes, reached
+    through the same `_kd_rows`, for a caller that holds one flat block of scored
+    positions and applies the teacher/student shift itself. `student_logits` is
+    `[rows, vocab]` — the logits predicting each scored token — and every teacher
+    array is `[rows, ...]` straight out of `artifacts.record_view`.
+
+    Measuring fidelity through a second implementation of this formula would let
+    the reported number drift from the objective the model was trained against,
+    which is the one thing the number is for.
+    """
+    import torch
+
+    config = config or DistillLossConfig()
+    ids, valid = _support_lanes(teacher_token_ids.long(), teacher_support_len.long())
+    return _kd_rows(
+        tempered_logprobs=torch.log_softmax(student_logits.float() / config.temperature, dim=-1),
+        ids=ids,
+        valid=valid,
+        teacher_logprobs=teacher_logprobs.float(),
+        tail_mass=teacher_tail_mass.float(),
+        config=config,
+    )
+
+
+def _support_lanes(
+    ids: "torch.Tensor", support_len: "torch.Tensor"
+) -> tuple["torch.Tensor", "torch.Tensor"]:
+    """Which lanes of each row are real support, and ids safe to gather with.
+
+    Padded lanes are pointed at a real support id so gathering and scattering
+    them is idempotent; the mask is what keeps them out of the sums.
+    """
+    import torch
+
+    lane = torch.arange(ids.shape[1], device=ids.device)
+    valid = lane[None, :] < support_len[:, None]
+    return torch.where(valid, ids, ids[:, :1]), valid
 
 
 def _kd_rows(

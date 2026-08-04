@@ -6,4 +6,11 @@
  * is the share of tasks where the student matched or beat the teacher.
  * Report-only — absent for every other training mode.
  */
-export type TeacherParityScores = { parity: number | null, win_rate: number | null, tie_rate: number | null, agreement: number | null, n: number | null, };
+export type TeacherParityScores = { parity: number | null, win_rate: number | null, tie_rate: number | null, agreement: number | null, n: number | null, 
+/**
+ * High-fidelity distill runs only: mean per-token distance between the
+ * student's and the teacher's stored token distributions. **Lower is
+ * closer**, unlike every other figure here, and 0 would mean identical.
+ * Absent for runs that trained on the teacher's text alone.
+ */
+teacher_student_kl: number | null, };
