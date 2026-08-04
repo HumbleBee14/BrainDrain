@@ -310,6 +310,7 @@ pub trait TrainingJobRepository: Send + Sync {
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
+        teacher_config: Option<serde_json::Value>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
     /// Atomic create with plan limit enforcement.
@@ -326,6 +327,7 @@ pub trait TrainingJobRepository: Send + Sync {
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
+        teacher_config: Option<serde_json::Value>,
         max_models: i64,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 

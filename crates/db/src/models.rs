@@ -106,6 +106,9 @@ pub struct TrainingJob {
     pub completed_at: Option<DateTime<Utc>>,
     pub temporal_workflow_id: Option<String>,
     pub error_message: Option<String>,
+    /// Distill mode only: teacher endpoint/model block. Any api_key inside is
+    /// SecretCipher-encrypted (enc:v1) — never plaintext.
+    pub teacher_config: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
