@@ -135,6 +135,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         mode: &str,
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
+        teacher_config: Option<&serde_json::Value>,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
@@ -329,6 +330,38 @@ fn build_refine_guidance_workflow_id(data_guide_id: Uuid, timestamp: i64) -> Str
 
 fn build_generate_dataset_workflow_id(data_guide_id: Uuid, timestamp: i64) -> String {
     build_workflow_id("generate-dataset", data_guide_id, timestamp)
+}
+
+/// Positional arguments for `TrainWorkflow.run`.
+///
+/// Extracted so the order is testable, because the order *is* the contract: a
+/// Temporal payload is a positional array bound to the Python signature by
+/// index, so a value inserted anywhere but the end silently rebinds every
+/// argument after it and produces a run that looks healthy while training on the
+/// wrong thing. New arguments are appended, with a default on the Python side.
+#[allow(clippy::too_many_arguments)]
+fn train_workflow_args(
+    tenant_id: Uuid,
+    training_job_id: Uuid,
+    dataset_path: &str,
+    base_model: &str,
+    method: &str,
+    mode: &str,
+    hyperparams: serde_json::Value,
+    gpu_class: Option<&str>,
+    teacher_config: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!([
+        tenant_id.to_string(),
+        training_job_id.to_string(),
+        dataset_path,
+        base_model,
+        method,
+        mode,
+        hyperparams,
+        gpu_class,
+        teacher_config,
+    ])
 }
 
 impl WorkflowOrchestrator for TemporalClient {
@@ -546,6 +579,7 @@ impl WorkflowOrchestrator for TemporalClient {
         mode: &str,
         hyperparams: serde_json::Value,
         gpu_class: Option<&str>,
+        teacher_config: Option<&serde_json::Value>,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let dataset_path = dataset_path.to_string();
@@ -553,22 +587,24 @@ impl WorkflowOrchestrator for TemporalClient {
         let method = method.to_string();
         let mode = mode.to_string();
         let gpu_class = gpu_class.map(|s| s.to_string());
+        let teacher_config = teacher_config.cloned();
         Box::pin(async move {
             let workflow_id = format!("train-{training_job_id}-{}", chrono::Utc::now().timestamp());
 
             self.start_workflow_on_queue(
                 "TrainWorkflow",
                 &workflow_id,
-                serde_json::json!([
-                    tenant_id.to_string(),
-                    training_job_id.to_string(),
-                    dataset_path,
-                    base_model,
-                    method,
-                    mode,
+                train_workflow_args(
+                    tenant_id,
+                    training_job_id,
+                    &dataset_path,
+                    &base_model,
+                    &method,
+                    &mode,
                     hyperparams,
-                    gpu_class,
-                ]),
+                    gpu_class.as_deref(),
+                    teacher_config.as_ref(),
+                ),
                 None, // default queue — GPU activities pin their own
                 &trace_ctx,
             )
@@ -832,5 +868,46 @@ mod tests {
     fn facets_workflow_id_format() {
         let id = build_facets_workflow_id(uuid::Uuid::nil(), 123);
         assert!(id.starts_with("facets-"));
+    }
+
+    fn train_args(teacher_config: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
+        train_workflow_args(
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            "tenant/dataset.jsonl",
+            "Qwen/Qwen3-8B",
+            "qlora",
+            "distill",
+            serde_json::json!({"r": 16}),
+            Some("a10g"),
+            teacher_config,
+        )
+        .as_array()
+        .expect("args are a positional array")
+        .clone()
+    }
+
+    #[test]
+    fn train_argument_order_is_fixed() {
+        let args = train_args(None);
+
+        assert_eq!(args.len(), 9);
+        assert_eq!(args[2], "tenant/dataset.jsonl");
+        assert_eq!(args[3], "Qwen/Qwen3-8B");
+        assert_eq!(args[4], "qlora");
+        assert_eq!(args[5], "distill");
+        assert_eq!(args[6], serde_json::json!({"r": 16}));
+        assert_eq!(args[7], "a10g");
+    }
+
+    #[test]
+    fn teacher_config_is_the_trailing_argument() {
+        let plan = serde_json::json!({"extraction": {"distill_method": "logit"}});
+        let with_teacher = train_args(Some(&plan));
+        let without = train_args(None);
+
+        assert_eq!(with_teacher[8], plan);
+        assert_eq!(without[8], serde_json::Value::Null);
+        assert_eq!(with_teacher[..8], without[..8]);
     }
 }

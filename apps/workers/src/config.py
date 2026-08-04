@@ -128,6 +128,7 @@ class WorkerSettings(BaseSettings):
     timeout_generate_pairs_minutes: int = 30  # synthetic pair generation
     timeout_build_dataset_minutes: int = 15  # dataset assembly
     timeout_train_hours: int = 6  # single training run (SFT/DPO/GRPO)
+    timeout_teacher_extraction_hours: int = 6  # one teacher scoring pass over a dataset
     timeout_train_iterative_hours: int = 4  # one round of iterative training
     timeout_holdout_eval_hours: int = 1  # holdout validation during training
     timeout_eval_hours: int = 1  # full evaluation suite

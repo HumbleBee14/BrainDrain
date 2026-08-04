@@ -21,7 +21,7 @@ def test_all_registered_activities_are_valid_definitions():
     cpu_activities, gpu_activities = build_activity_lists(infra, gpu_provider)
 
     all_activities = cpu_activities + gpu_activities
-    assert len(all_activities) == 19
+    assert len(all_activities) == 21
 
     names = []
     for callable_ in all_activities:

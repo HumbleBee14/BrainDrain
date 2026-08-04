@@ -60,6 +60,15 @@ def train_heartbeat() -> timedelta:
     return timedelta(minutes=5)
 
 
+# Teacher logprob extraction (one scoring pass over a dataset)
+def teacher_extraction_activity() -> timedelta:
+    return timedelta(hours=_s().timeout_teacher_extraction_hours)
+
+
+def teacher_extraction_heartbeat() -> timedelta:
+    return timedelta(minutes=5)
+
+
 # Iterative training (one round)
 def train_iterative_activity() -> timedelta:
     return timedelta(hours=_s().timeout_train_iterative_hours)
