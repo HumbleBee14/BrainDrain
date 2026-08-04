@@ -4,6 +4,8 @@ Strategy-based modes (dispatched by start_training activity):
   - quick:     SFT only (fastest iteration)
   - aligned:   SFT → DPO (production quality alignment)
   - reasoning: SFT → GRPO (reward-guided reasoning optimization)
+  - distill:   SFT on teacher-written data, or KL against the teacher's stored
+               per-token distributions when the job's distill_method is 'logit'
 
 Workflow-based activities (called by TrainIterativeWorkflow):
   - train_sft_round:    Single SFT iteration with checkpoint save
@@ -27,6 +29,11 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src import s3_paths
+from src.activities.distill_loss import (
+    DistillLossConfig,
+    collate_distill_batch,
+    distillation_loss,
+)
 from src.activities.llm_judge import OpenAICompatibleJudge
 from src.activities.stubs import (
     EvaluateHoldoutInput,
@@ -56,6 +63,42 @@ _JUDGE_BACKED_MODES = frozenset({"aligned", "reasoning"})
 
 # Warmup beyond this fraction of a run leaves the LR ramping for most of it.
 _MAX_WARMUP_FRACTION = 0.1
+
+_DISTILL_MODE = "distill"
+_DEFAULT_DISTILL_METHOD = "text"
+
+# The public TrainingMode stays `distill`; how much of the teacher a run copies is
+# an orthogonal axis, so the registry key is composite and no internal strategy
+# name can ever leak into the API enum.
+_DISTILL_STRATEGY_KEYS = {"text": "distill", "logit": "distill_logit"}
+
+_TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
+
+_TEACHER_ARTIFACT_MISMATCH = (
+    "These two models read text differently, so high-fidelity training isn't "
+    "possible between them. Standard distillation works — switch and re-run."
+)
+
+
+def resolve_strategy_key(mode: str, distill_method: str | None) -> str:
+    """Registry key for a (mode, distill_method) pair.
+
+    Modes other than `distill` have no fidelity axis, and a method asked for
+    anyway is an error rather than something to ignore: running plain SFT for a
+    job that already paid a teacher to score its data would report success for
+    training that never happened.
+    """
+    method = distill_method or _DEFAULT_DISTILL_METHOD
+    if mode != _DISTILL_MODE:
+        if method != _DEFAULT_DISTILL_METHOD:
+            raise ValueError(f"distill_method '{method}' has no meaning for mode '{mode}'")
+        return mode
+
+    key = _DISTILL_STRATEGY_KEYS.get(method)
+    if key is None:
+        available = ", ".join(sorted(_DISTILL_STRATEGY_KEYS))
+        raise ValueError(f"Unknown distill_method: '{method}'. Available: {available}")
+    return key
 
 
 class StartTrainingActivity:
@@ -594,7 +637,7 @@ async def run_training_core(
             target_modules=target_modules,
         )
 
-        strategy = get_strategy(input.mode)
+        strategy = get_strategy(resolve_strategy_key(input.mode, hp.get("distill_method")))
         metrics = strategy.execute(
             model=model,
             tokenizer=tokenizer,
@@ -603,6 +646,7 @@ async def run_training_core(
             job_id=job_id,
             max_seq_length=max_seq_length,
             tenant_id=input.tenant_id,
+            base_model=input.base_model,
             dataset_path=input.dataset_path,
             s3=s3,
             bucket=s3_bucket,
@@ -886,6 +930,34 @@ class DistillStrategy(QuickStrategy):
     name = "distill"
 
 
+@register_strategy("distill_logit")
+class DistillLogitStrategy:
+    """Distillation from the teacher's stored per-token distributions.
+
+    Never named in the public API: `TrainingMode` stays `distill` and
+    `resolve_strategy_key` selects this strategy for `distill_method = logit`.
+    """
+
+    name = "distill_logit"
+
+    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
+        # `dataset` goes unused on purpose. The artifacts carry the exact token ids
+        # the teacher scored, and re-tokenizing the same text here could shift
+        # every target against distributions that cannot be recomputed.
+        return _train_distill_logit(
+            model,
+            tokenizer,
+            hp,
+            job_id,
+            max_seq_length,
+            tenant_id=kwargs.get("tenant_id"),
+            base_model=kwargs.get("base_model"),
+            s3=kwargs.get("s3"),
+            bucket=kwargs.get("bucket"),
+            settings=kwargs.get("settings"),
+        )
+
+
 @register_strategy("aligned")
 class AlignedStrategy:
     """SFT → DPO pipeline for production quality alignment."""
@@ -1040,6 +1112,281 @@ def _train_sft(
             "train_samples_per_second", 0
         ),
     }
+
+
+# -- Logit Distillation Training --
+
+
+def _train_distill_logit(
+    model,
+    tokenizer,
+    hp,
+    job_id,
+    max_seq_length,
+    *,
+    tenant_id=None,
+    base_model=None,
+    s3=None,
+    bucket=None,
+    settings=None,
+):
+    """Train against the teacher's stored top-k distributions instead of text.
+
+    Shards are streamed one at a time: a dataset's artifacts are far larger than
+    the dataset itself, and holding them all would cap the dataset size a GPU can
+    train on for no reason.
+    """
+    from transformers import TrainingArguments
+
+    prefix = hp.get(_TEACHER_ARTIFACTS_HYPERPARAM)
+    if not prefix:
+        raise ApplicationError(
+            "High-fidelity distillation needs the teacher's scored artifacts, "
+            "and this job was started without them",
+            non_retryable=True,
+        )
+    if base_model is None:
+        raise ApplicationError(
+            "Cannot verify teacher artifacts without the student model id",
+            non_retryable=True,
+        )
+
+    loss_config = DistillLossConfig.from_hyperparams(hp)
+    batch_size = hp.get("per_device_train_batch_size", 2)
+    grad_accum = hp.get("gradient_accumulation_steps", 4)
+    epochs = hp.get("num_train_epochs", 3)
+
+    with tempfile.TemporaryDirectory(prefix=f"distill-logit-{job_id[:8]}-") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        manifest = _load_teacher_manifest(prefix, tmpdir_path, s3, bucket)
+        _verify_teacher_manifest(
+            manifest, base_model=base_model, tokenizer=tokenizer, settings=settings
+        )
+
+        records = int(manifest["totals"]["records"])
+        if records < 1:
+            raise ApplicationError(
+                "The teacher scored no records for this dataset", non_retryable=True
+            )
+        effective_batch = max(1, batch_size * grad_accum)
+        max_steps = max(1, int(math.ceil(records / effective_batch) * epochs))
+
+        enable_checkpoints = tenant_id is not None
+        callbacks = [_build_callback_class()(job_id, phase="distill_logit")]
+        if enable_checkpoints:
+            callbacks.append(_build_checkpoint_callback_class(tenant_id, job_id, s3, bucket)())
+
+        training_args = TrainingArguments(
+            output_dir=f"/tmp/distill-logit-{job_id[:8]}",
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=grad_accum,
+            max_steps=max_steps,
+            warmup_steps=_resolve_warmup_steps(
+                configured=hp.get("warmup_steps", 10),
+                dataset_rows=records,
+                batch_size=batch_size,
+                grad_accum=grad_accum,
+                epochs=epochs,
+            ),
+            learning_rate=hp.get("learning_rate", 2e-4),
+            optim=hp.get("optim", "adamw_8bit"),
+            lr_scheduler_type=hp.get("lr_scheduler_type", "cosine"),
+            logging_steps=1,
+            save_strategy="steps" if enable_checkpoints else "no",
+            save_steps=hp.get("save_steps", 100),
+            save_total_limit=3,
+            fp16=not _is_bf16_supported(),
+            bf16=_is_bf16_supported(),
+            seed=42,
+            report_to="none",
+            remove_unused_columns=False,
+            label_names=["labels"],
+        )
+
+        dataset = _build_artifact_dataset_class()(
+            manifest=manifest,
+            prefix=prefix,
+            tmpdir=tmpdir_path,
+            s3=s3,
+            bucket=bucket,
+            passes=max(1, math.ceil(epochs)),
+            max_seq_length=max_seq_length,
+        )
+        pad_token_id = _padding_token_id(tokenizer)
+        trainer = _build_distill_trainer_class(loss_config)(
+            model=model,
+            args=training_args,
+            train_dataset=dataset,
+            data_collator=lambda batch: collate_distill_batch(batch, pad_token_id=pad_token_id),
+            callbacks=callbacks,
+        )
+        train_result = trainer.train()
+
+    logger.info(
+        "Logit distillation finished for job %s: %d steps over %d scored records",
+        job_id,
+        train_result.global_step,
+        records,
+    )
+    return {
+        "distill_logit_train_loss": train_result.training_loss,
+        "distill_logit_train_steps": train_result.global_step,
+        "distill_logit_train_runtime": train_result.metrics.get("train_runtime", 0),
+        "distill_logit_scored_positions": int(manifest["totals"]["scored_positions"]),
+        "kd_alpha": loss_config.kd_alpha,
+        "ce_alpha": loss_config.ce_alpha,
+        "kd_temperature": loss_config.temperature,
+        "tail_beta": loss_config.tail_beta,
+    }
+
+
+def _load_teacher_manifest(prefix: str, tmpdir: Path, s3, bucket: str) -> dict:
+    local = tmpdir / "manifest.json"
+    _download_dataset(prefix + "manifest.json", local, s3, bucket)
+    return json.loads(local.read_text())
+
+
+def _verify_teacher_manifest(manifest: dict, *, base_model: str, tokenizer, settings=None) -> None:
+    """Refuse artifacts that were not computed for this student's tokenization.
+
+    The extraction job already checked this before spending a GPU; checking again
+    here is what makes a catalog edit or a swapped student between the two passes
+    a failed run rather than a model trained on shifted targets.
+    """
+    from src.teacher.artifacts import manifest_matches
+    from src.teacher.rendering import rendering_fingerprint
+    from src.teacher.tokenizer_identity import compute_tokenizer_hashes
+
+    hf_token = getattr(settings, "hf_token", "") or ""
+    hashes = compute_tokenizer_hashes(base_model, hf_token=hf_token)
+    if not manifest_matches(
+        manifest,
+        tokenizer_hash=hashes.combined_hash,
+        rendering_fingerprint=rendering_fingerprint(tokenizer),
+    ):
+        logger.error(
+            "Teacher artifacts reject student %s: manifest tokenizer_hash=%s fingerprint=%s",
+            base_model,
+            manifest.get("tokenizer_hash"),
+            manifest.get("rendering_fingerprint"),
+        )
+        raise ApplicationError(_TEACHER_ARTIFACT_MISMATCH, non_retryable=True)
+
+
+def _padding_token_id(tokenizer) -> int:
+    """Token used to pad short records in a batch — never read by the loss.
+
+    Padded positions are attention-masked and label-masked, so any real id does;
+    the eos fallback exists only because some base tokenizers ship no pad token.
+    """
+    for candidate in (tokenizer.pad_token_id, tokenizer.eos_token_id):
+        if candidate is not None:
+            return int(candidate)
+    raise ApplicationError(
+        "Tokenizer has neither a pad nor an eos token, so batches cannot be padded",
+        non_retryable=True,
+    )
+
+
+def _truncate_record_view(view: dict, max_seq_length: int):
+    """Fit one scored record into the model's context, or drop it.
+
+    Cutting from the right is safe: every position that survives was scored by the
+    teacher conditioned only on tokens before it, so the remaining targets are
+    still exactly aligned. A record whose prompt alone fills the context has
+    nothing left to supervise and is dropped.
+    """
+    length = len(view["input_ids"])
+    if length <= max_seq_length:
+        return view
+
+    completion_start = int(view["completion_start"])
+    if completion_start >= max_seq_length:
+        return None
+
+    kept = max_seq_length - completion_start
+    return {
+        "input_ids": view["input_ids"][:max_seq_length],
+        "completion_start": completion_start,
+        "token_ids": view["token_ids"][:kept],
+        "logprobs": view["logprobs"][:kept],
+        "support_len": view["support_len"][:kept],
+        "tail_mass": view["tail_mass"][:kept],
+    }
+
+
+def _build_artifact_dataset_class():
+    """Build the streaming artifact dataset as a torch IterableDataset subclass."""
+    from torch.utils.data import IterableDataset
+
+    class TeacherArtifactDataset(IterableDataset):
+        """Yields one scored record at a time, holding at most one shard on disk."""
+
+        def __init__(self, *, manifest, prefix, tmpdir, s3, bucket, passes, max_seq_length):
+            super().__init__()
+            self.shards = manifest["shards"]
+            self.prefix = prefix
+            self.tmpdir = tmpdir
+            self.s3 = s3
+            self.bucket = bucket
+            self.passes = passes
+            self.max_seq_length = max_seq_length
+
+        def __iter__(self):
+            for _ in range(self.passes):
+                for shard in self.shards:
+                    yield from self._iter_shard(shard)
+
+        def _iter_shard(self, shard):
+            from src.teacher.artifacts import read_shard, record_view
+
+            local = self.tmpdir / shard["name"]
+            _download_dataset(self.prefix + shard["name"], local, self.s3, self.bucket)
+            dropped = 0
+            try:
+                arrays = read_shard(str(local))
+                for position in range(int(shard["records"])):
+                    view = _truncate_record_view(record_view(arrays, position), self.max_seq_length)
+                    if view is None:
+                        dropped += 1
+                        continue
+                    yield view
+            finally:
+                local.unlink(missing_ok=True)
+            if dropped:
+                logger.warning(
+                    "Shard %s: %d records had no room to supervise within %d tokens",
+                    shard["name"],
+                    dropped,
+                    self.max_seq_length,
+                )
+
+    return TeacherArtifactDataset
+
+
+def _build_distill_trainer_class(loss_config: DistillLossConfig):
+    """Build a Trainer whose loss is KL against the teacher's stored distributions."""
+    from transformers import Trainer
+
+    class DistillLogitTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            labels = inputs.pop("labels")
+            teacher = {
+                "teacher_token_ids": inputs.pop("teacher_token_ids"),
+                "teacher_logprobs": inputs.pop("teacher_logprobs"),
+                "teacher_support_len": inputs.pop("teacher_support_len"),
+                "teacher_tail_mass": inputs.pop("teacher_tail_mass"),
+            }
+            outputs = model(**inputs)
+            parts = distillation_loss(
+                student_logits=outputs.logits,
+                labels=labels,
+                config=loss_config,
+                **teacher,
+            )
+            return (parts.loss, outputs) if return_outputs else parts.loss
+
+    return DistillLogitTrainer
 
 
 # -- DPO Training --
