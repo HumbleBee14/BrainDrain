@@ -1,5 +1,5 @@
 use platform_db::models::Model;
-use platform_shared::enums::DeploymentStatus;
+use platform_shared::enums::{DeploymentStatus, TrainingMode};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -75,7 +75,7 @@ impl DeploymentService {
         // Eval gate: applied once here so it guards BOTH the single-instance and
         // multi-instance paths below. Rollbacks pass Bypass and skip it.
         if gate_mode == GateMode::Enforce {
-            Self::enforce_eval_gate(state, tenant_id, model_id).await?;
+            Self::enforce_eval_gate(state, tenant_id, &model).await?;
         }
 
         let multi_instance_enabled = state
@@ -134,11 +134,11 @@ impl DeploymentService {
         }
     }
 
-    /// Enforce the configured deployment eval gate for `model_id`. Reads the
+    /// Enforce the configured deployment eval gate for `model`. Reads the
     /// model's latest completed evaluation scores and blocks the deploy with a
     /// typed [`AppError::Conflict`] (not a 500) when they fail the policy. A gate
     /// with no thresholds configured is a no-op.
-    async fn enforce_eval_gate(state: &AppState, tenant_id: Uuid, model_id: Uuid) -> AppResult<()> {
+    async fn enforce_eval_gate(state: &AppState, tenant_id: Uuid, model: &Model) -> AppResult<()> {
         let policy = DeployGatePolicy::from_thresholds(
             state.config().deploy_min_ab_win_rate,
             state.config().deploy_max_benchmark_regression,
@@ -149,12 +149,19 @@ impl DeploymentService {
             return Ok(());
         }
 
+        // Scoped before the scores lookup so a mode-specific threshold can
+        // reduce the policy back to disabled and skip the query entirely.
+        let policy = policy.for_mode(Self::resolve_training_mode(state, tenant_id, model).await?);
+        if !policy.is_enabled() {
+            return Ok(());
+        }
+
         // Absent scores (no completed eval) become an empty object; the policy
         // then treats the required metrics as unavailable and blocks — the gate
         // requires positive evidence, so an unevaluated model does not deploy.
         let scores = state
             .evaluation_repo()
-            .latest_completed_scores(tenant_id, model_id)
+            .latest_completed_scores(tenant_id, model.id)
             .await?
             .unwrap_or_else(|| serde_json::json!({}));
 
@@ -167,7 +174,7 @@ impl DeploymentService {
                     .join(", ");
                 let message = deploy_gate::format_block_message(&violations);
                 tracing::info!(
-                    model_id = %model_id,
+                    model_id = %model.id,
                     gate = "blocked",
                     failed_metrics = %failed_metrics,
                     "{message}"
@@ -176,6 +183,25 @@ impl DeploymentService {
             }
             GateDecision::Passed | GateDecision::Disabled => Ok(()),
         }
+    }
+
+    /// The training mode a model was produced under, used to scope mode-specific
+    /// gate rules. An unrecognized stored mode falls back to [`TrainingMode::Quick`]:
+    /// it cannot be a mode whose suites emit distill-only metrics, which is the
+    /// only decision this value feeds.
+    async fn resolve_training_mode(
+        state: &AppState,
+        tenant_id: Uuid,
+        model: &Model,
+    ) -> AppResult<TrainingMode> {
+        let job = state
+            .training_job_repo()
+            .get_by_id(tenant_id, model.training_job_id)
+            .await?
+            .ok_or(AppError::NotFound {
+                message: "Training job for model not found".to_string(),
+            })?;
+        Ok(job.mode.parse().unwrap_or(TrainingMode::Quick))
     }
 
     pub async fn undeploy(

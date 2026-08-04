@@ -18,6 +18,8 @@ import type {
   ProjectPipelineStatus,
   TriggerParseResponse,
   TriggerRefineResponse,
+  TriggerFullPipelineRequest,
+  TriggerFullPipelineResponse,
   PaginatedResponse,
   LlmSettingsResponse,
   LlmTestResponse,
@@ -68,6 +70,8 @@ export type {
   ProjectPipelineStatus,
   TriggerParseResponse,
   TriggerRefineResponse,
+  TriggerFullPipelineRequest,
+  TriggerFullPipelineResponse,
   PaginatedResponse,
   CatalogModel,
   CatalogResponse,
@@ -159,21 +163,6 @@ export interface TeamInvitation {
   invited_by: string;
   expires_at: string;
   created_at: string;
-}
-
-// ── Pipeline types (generated after typegen) ──
-
-export interface TriggerFullPipelineRequest {
-  task_type?: string;
-  base_model: string;
-  training_config: Record<string, unknown>;
-  teacher?: import("./generated").TeacherConfigDto;
-}
-
-export interface TriggerFullPipelineResponse {
-  workflow_id: string;
-  document_count: number;
-  teacher_policy?: import("./generated").ProviderPolicy | null;
 }
 
 // ── Frontend-only types (not in Rust DTOs) ──

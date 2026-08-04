@@ -8,6 +8,7 @@
 //! config field — no database schema change (scores is JSONB) and no change to
 //! this module's control flow.
 
+use platform_shared::enums::TrainingMode;
 use serde_json::Value;
 
 /// Which side of the threshold a metric must fall on.
@@ -80,6 +81,22 @@ impl GateMetric {
                 .get("teacher_parity")
                 .and_then(|v| v.get("parity"))
                 .and_then(Value::as_f64),
+        }
+    }
+
+    /// Whether an evaluation of a model trained in `mode` can produce this
+    /// metric at all.
+    ///
+    /// This is what keeps a mode-scoped threshold from blocking every other
+    /// mode: [`DeployGatePolicy::check`] treats a missing metric as a
+    /// violation, so a rule whose suite never runs for `mode` could only ever
+    /// block spuriously.
+    fn applies_to_mode(self, mode: TrainingMode) -> bool {
+        match self {
+            GateMetric::TeacherParity => mode == TrainingMode::Distill,
+            GateMetric::AbWinRate
+            | GateMetric::BenchmarkRegression
+            | GateMetric::DocKnowledgeLift => true,
         }
     }
 }
@@ -179,6 +196,19 @@ impl DeployGatePolicy {
             });
         }
         Self { rules }
+    }
+
+    /// Drop the rules that a model trained in `mode` can never satisfy, so a
+    /// mode-scoped threshold (teacher parity) gates only the modes whose
+    /// evaluation produces it and leaves every other mode's deploy untouched.
+    pub fn for_mode(self, mode: TrainingMode) -> Self {
+        Self {
+            rules: self
+                .rules
+                .into_iter()
+                .filter(|rule| rule.metric.applies_to_mode(mode))
+                .collect(),
+        }
     }
 
     /// Whether any rule is configured.
@@ -410,10 +440,11 @@ mod tests {
 
     #[test]
     fn missing_teacher_parity_fails_closed_only_when_gated() {
-        // Non-distill evaluations produce no teacher_parity section; with the
-        // gate configured that blocks (positive-evidence rule), without it
-        // nothing changes.
-        let gated = DeployGatePolicy::from_thresholds(None, None, None, Some(0.9));
+        // A distill model that produced no teacher_parity section is unproven,
+        // so the configured gate blocks it (positive-evidence rule). Without
+        // the threshold nothing changes.
+        let gated = DeployGatePolicy::from_thresholds(None, None, None, Some(0.9))
+            .for_mode(TrainingMode::Distill);
         match gated.check(&scores(0.9, 0.0)) {
             GateDecision::Blocked(v) => assert!(v[0].reason.contains("not available")),
             other => panic!("expected Blocked, got {other:?}"),
@@ -421,6 +452,45 @@ mod tests {
         let ungated = DeployGatePolicy::from_thresholds(Some(0.5), None, None, None);
         assert!(matches!(
             ungated.check(&scores(0.9, 0.0)),
+            GateDecision::Passed
+        ));
+    }
+
+    #[test]
+    fn teacher_parity_threshold_never_gates_non_distill_modes() {
+        // Arming the threshold must not block modes whose evaluation cannot
+        // emit the metric — otherwise every quick/aligned/reasoning/iterative
+        // deploy fails on "teacher parity is not available".
+        for mode in [
+            TrainingMode::Quick,
+            TrainingMode::Aligned,
+            TrainingMode::Reasoning,
+            TrainingMode::Iterative,
+        ] {
+            let policy =
+                DeployGatePolicy::from_thresholds(None, None, None, Some(0.9)).for_mode(mode);
+            assert!(!policy.is_enabled(), "{mode} should have no gate rules");
+            assert!(matches!(
+                policy.check(&scores(0.9, 0.0)),
+                GateDecision::Disabled
+            ));
+        }
+    }
+
+    #[test]
+    fn mode_scoping_leaves_mode_agnostic_rules_intact() {
+        let policy = DeployGatePolicy::from_thresholds(Some(0.6), Some(10.0), Some(0.5), Some(0.9))
+            .for_mode(TrainingMode::Quick);
+        assert!(policy.is_enabled());
+        match policy.check(&scores(0.3, 0.0)) {
+            GateDecision::Blocked(v) => {
+                assert_eq!(v.len(), 1);
+                assert_eq!(v[0].metric, GateMetric::AbWinRate);
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+        assert!(matches!(
+            policy.check(&scores(0.9, 0.0)),
             GateDecision::Passed
         ));
     }
