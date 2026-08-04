@@ -8,15 +8,26 @@ teacher credentials or provenance goes through this package:
   guarantees the URL guard runs before any request.
 - `provenance` is the only reader/writer of the `datasets.config.teacher`
   block, so its shape stays consistent across activities.
+- `tokenizer_identity` is the only place that proves a teacher and student
+  tokenizer are byte-identical, a precondition for offline logit/KL
+  distillation (Stage 2).
 """
 
 from src.teacher.client import TeacherClient, TeacherConfig, parse_teacher_config
 from src.teacher.provenance import build_provenance, read_provenance, teacher_host
+from src.teacher.tokenizer_identity import (
+    TokenizerArtifactFetchError,
+    TokenizerIdentityResult,
+    check_tokenizer_identity,
+)
 
 __all__ = [
     "TeacherClient",
     "TeacherConfig",
+    "TokenizerArtifactFetchError",
+    "TokenizerIdentityResult",
     "build_provenance",
+    "check_tokenizer_identity",
     "parse_teacher_config",
     "read_provenance",
     "teacher_host",
