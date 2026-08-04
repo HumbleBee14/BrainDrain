@@ -1,6 +1,6 @@
 # Distillation — Design Spec
 
-> Status: **Stage 1 implemented** (`feat/distillation-stage1`); Stages 2–3 planned. Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
+> Status: **Stages 1–2 implemented** (`feat/distillation-stage1`, `feat/distillation-stage2`); Stage 3 planned. What Stage 2 measured rather than assumed is in [STAGE2-SPIKE-FINDINGS.md](STAGE2-SPIKE-FINDINGS.md), and how to verify it is in [STAGE2-TESTING.md](STAGE2-TESTING.md). Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
 > Scope: multi-tenant, production-grade distillation as a first-class training capability.
 
 ---
@@ -131,7 +131,7 @@ Topology (mirrors TRL's `DistillationTrainer` teacher-server mode, the current O
 - `TrainingMode`: + `Distill` (Stage 1) — Stage 2 surfaced as an option on distill (`distill_method: "text" | "logit"` in the distill/teacher config; distinct from the existing `TrainingMethod` enum `qlora|lora|full`, which is orthogonal and untouched), keeping user intent singular ("distill a bigger model") per our no-type-selector philosophy; auto-upgrade eligibility (same-family + hosted teacher) surfaced as a recommendation, never silently.
 - `training_jobs`: + nullable `teacher_config` (JSONB, key encrypted), `teacher_provenance` columns via migration.
 - `datasets` metadata: + teacher provenance block.
-- `evaluations.scores`: + `teacher_parity` section `{win_rate, tie_rate, agreement, recovery, teacher_student_kl?}` (Stage 2 KL is forward, teacher‖student — the only direction computable from teacher-top-k artifacts).
+- `evaluations.scores`: + `teacher_parity` section `{parity, win_rate, tie_rate, agreement, n, teacher_student_kl?}` (Stage 2 KL is forward, teacher‖student — the only direction computable from teacher-top-k artifacts; present only when the run trained on stored logprobs). Per-benchmark *recovery* was specified here and not built.
 - Config: `DEPLOY_MIN_TEACHER_PARITY` (optional, fail-closed when set).
 - ts-rs: `make typegen` after enum/DTO changes.
 
@@ -160,5 +160,5 @@ Most controls exist platform-wide; the work is **wiring them to the new surfaces
 
 1. **Stage 1 teacher choice: explicit and required.** No silent default — users pick their teacher intentionally, so provenance is always deliberate. The tenant's LLM config appears as a one-click suggestion, never auto-applied.
 2. **Parity gate ships report-only.** `DEPLOY_MIN_TEACHER_PARITY` unset by default — parity is prominently reported but never blocks a deploy until an advanced user arms the threshold. Existing truth gates remain in force regardless.
-3. **Stage 2 `top_k` defaults to 128** (research sweet spot 128–320, with tail-mass bucket), user-configurable; costs are storage, artifact I/O, and some trainer-side loss overhead.
+3. **Stage 2 `top_k` defaults to 32**, user-configurable; costs are storage, artifact I/O, and some trainer-side loss overhead. This decision said 128 until implementation measured what k costs on three axes at once — see [STAGE2-SPIKE-FINDINGS.md](STAGE2-SPIKE-FINDINGS.md).
 4. **Teacher CoT: opt-in, never default** — recommended only for reasoning tasks with open-weight/self-hosted teachers.
