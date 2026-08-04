@@ -128,6 +128,27 @@ class GpuProvider(Protocol):
         """
         ...
 
+    async def extract_logprobs(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        gpu_class: str | None,
+        extraction: dict,
+    ) -> dict:
+        """Score a dataset with a hosted teacher, storing its logprob artifacts.
+
+        `extraction` is a serialized ExtractTeacherLogprobsInput: the scoring
+        knobs (teacher revision, precision, top_k, batch and shard sizing) travel
+        as one block rather than as a dozen parameters every provider would have
+        to restate. `tenant_id` and `training_job_id` stay explicit because the
+        reservation write is scoped by them.
+
+        Returns: dict with keys manifest_path, artifact_prefix, records,
+        scored_positions, skipped_records, shards, metrics.
+        """
+        ...
+
 
 class LocalGpuProvider:
     """Run GPU work on the local worker's GPU.
@@ -320,10 +341,53 @@ class LocalGpuProvider:
         )
         return {"scores": result.scores, "report": result.report}
 
+    async def extract_logprobs(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        gpu_class: str | None,
+        extraction: dict,
+    ) -> dict:
+        logger.info(
+            "Extracting teacher logprobs locally (job=%s, teacher=%s)",
+            training_job_id[:8],
+            extraction.get("teacher_model"),
+        )
+
+        from src.activities.extract_logprobs import run_extract_logprobs_core
+        from src.activities.stubs import ExtractTeacherLogprobsInput
+
+        result = await run_extract_logprobs_core(
+            ExtractTeacherLogprobsInput(**extraction),
+            s3=self.infra.s3,
+            s3_bucket=self.infra.s3_bucket,
+            settings=self.infra.settings,
+        )
+        return {
+            "manifest_path": result.manifest_path,
+            "artifact_prefix": result.artifact_prefix,
+            "records": result.records,
+            "scored_positions": result.scored_positions,
+            "skipped_records": result.skipped_records,
+            "shards": result.shards,
+            "metrics": result.metrics,
+        }
+
 
 # Reservation tables are internal constants (never user input) — safe to
 # interpolate into the reservation SQL below.
 _RESERVATION_TABLES = ("training_jobs", "evaluations")
+
+# Reservation columns, likewise internal literals. Extraction gets its own column
+# so a teacher scoring call in flight is never mistaken for the training call on
+# the same row — the two run against the same training_jobs row in sequence.
+_RESERVATION_COLUMNS = ("modal_call_id", "teacher_extraction_modal_call_id")
+
+# Deployed Modal function that owns teacher scoring (see modal_app.py). Unlike
+# the training entrypoints this has no settings override: its image is built for
+# this one function, so pointing it elsewhere could only break it.
+_EXTRACT_FUNCTION_NAME = "extract_logprobs"
 
 
 def _extract_call_id(stored: str | None) -> str | None:
@@ -523,6 +587,7 @@ class ModalGpuProvider:
         tenant_id: str,
         label: str,
         clear_after: bool,
+        column: str = "modal_call_id",
     ) -> dict:
         """Spawn (or recover) a remote FunctionCall, poll it, return its result.
 
@@ -551,12 +616,14 @@ class ModalGpuProvider:
 
         if table not in _RESERVATION_TABLES:  # defensive: table is an internal literal
             raise ValueError(f"Unknown reservation table: {table}")
+        if column not in _RESERVATION_COLUMNS:
+            raise ValueError(f"Unknown reservation column: {column}")
 
         settings = self.infra.settings
         db = self.infra.db
 
         stored = await db.fetchval(
-            f"SELECT modal_call_id FROM {table} WHERE id = $1 AND tenant_id = $2",  # noqa: S608
+            f"SELECT {column} FROM {table} WHERE id = $1 AND tenant_id = $2",  # noqa: S608
             row_id,
             tenant_id,
         )
@@ -574,7 +641,7 @@ class ModalGpuProvider:
             # A stale, mismatched reservation (if any) is overwritten here — safe,
             # because at most one remote call is ever in flight per row.
             await db.execute(
-                f"UPDATE {table} SET modal_call_id = $1 WHERE id = $2 AND tenant_id = $3",  # noqa: S608
+                f"UPDATE {table} SET {column} = $1 WHERE id = $2 AND tenant_id = $3",  # noqa: S608
                 f"{function_name}:{fc.object_id}",
                 row_id,
                 tenant_id,
@@ -607,7 +674,7 @@ class ModalGpuProvider:
 
         if clear_after:
             await db.execute(
-                f"UPDATE {table} SET modal_call_id = NULL WHERE id = $1 AND tenant_id = $2",  # noqa: S608
+                f"UPDATE {table} SET {column} = NULL WHERE id = $1 AND tenant_id = $2",  # noqa: S608
                 row_id,
                 tenant_id,
             )
@@ -798,6 +865,28 @@ class ModalGpuProvider:
             tenant_id=tenant_id,
             label="gguf-export",
             clear_after=False,
+        )
+
+    async def extract_logprobs(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        gpu_class: str | None,
+        extraction: dict,
+    ) -> dict:
+        return await self._run_remote(
+            function_name=_EXTRACT_FUNCTION_NAME,
+            payload={"input": extraction},
+            gpu=self._resolve_gpu(gpu_class),
+            table="training_jobs",
+            row_id=training_job_id,
+            tenant_id=tenant_id,
+            label="teacher-extraction",
+            # Cleared on completion: training runs on this same row afterwards and
+            # must not find a finished extraction call to reconnect to.
+            clear_after=True,
+            column="teacher_extraction_modal_call_id",
         )
 
 

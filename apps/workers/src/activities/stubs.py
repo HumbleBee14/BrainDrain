@@ -234,3 +234,44 @@ class DeployModelActivity:
             endpoint_url=f"{api_url}/v1/chat/completions",
             deployment_status=data.get("deployment_status", "active"),
         )
+
+
+# ── Teacher logprob extraction (real implementation in extract_logprobs.py) ──
+
+
+@dataclass
+class ExtractTeacherLogprobsInput:
+    """One hosted-teacher scoring pass over a dataset.
+
+    The teacher is named by a catalog model id and a pinned revision: we execute
+    these weights on our own GPUs, so what runs is never decided by a moving tag.
+    Every tuning knob is a trailing optional — Temporal payloads are positional,
+    so a new field may only ever be appended.
+    """
+
+    tenant_id: str
+    training_job_id: str
+    dataset_path: str
+    teacher_model: str
+    teacher_revision: str
+    student_model: str
+    student_revision: str = ""
+    precision: str = "bf16"
+    top_k: int = 32
+    # Batches are bounded by tokens, not records, so a few long conversations
+    # cannot decide the peak memory of the whole run.
+    max_batch_tokens: int = 16384
+    max_sequence_tokens: int = 8192
+    shard_target_bytes: int = 96 * 1024 * 1024
+    gpu_class: str | None = None
+
+
+@dataclass
+class ExtractTeacherLogprobsOutput:
+    manifest_path: str
+    artifact_prefix: str
+    records: int
+    scored_positions: int
+    skipped_records: int
+    shards: int
+    metrics: dict
