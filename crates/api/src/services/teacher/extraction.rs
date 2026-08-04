@@ -55,8 +55,9 @@ pub struct ExtractionPlan {
 }
 
 impl ExtractionPlan {
-    /// Block persisted on the training job and handed to the workflow.
-    pub fn workflow_value(&self) -> serde_json::Value {
+    /// Block persisted on the training job and handed to the workflow. Private
+    /// so `attach_to_teacher_config` stays the only way this reaches a column.
+    fn workflow_value(&self) -> serde_json::Value {
         serde_json::json!({
             "distill_method": DistillMethod::Logit.to_string(),
             "teacher_model": self.teacher_model,
@@ -67,6 +68,25 @@ impl ExtractionPlan {
             "est_cost_usd": self.estimate.est_cost_usd,
             "est_gpu_hours": self.estimate.est_gpu_hours,
         })
+    }
+}
+
+/// Fold an admitted extraction plan into a job's `teacher` block.
+///
+/// The plan is recorded alongside the teacher rather than in a column of its
+/// own, because it is entirely a statement about this job's teacher — and this
+/// module owns that column, so the merge happens here rather than at the call
+/// site. A job with no teacher, or no fidelity upgrade, is returned untouched.
+pub fn attach_to_teacher_config(
+    teacher_config: Option<serde_json::Value>,
+    plan: Option<&ExtractionPlan>,
+) -> Option<serde_json::Value> {
+    match (teacher_config, plan) {
+        (Some(mut block), Some(plan)) => {
+            block["extraction"] = plan.workflow_value();
+            Some(block)
+        }
+        (block, _) => block,
     }
 }
 
@@ -229,6 +249,47 @@ mod tests {
         assert_eq!(block["teacher_model"], "Qwen/Qwen3-32B");
         assert_eq!(block["distill_method"], "logit");
         assert_eq!(block["precision"], "bf16");
+    }
+
+    fn logit_plan() -> ExtractionPlan {
+        plan_extraction(
+            &dataset("Qwen/Qwen3-32B", Some(1000)),
+            "Qwen/Qwen3-8B",
+            &DistillOptionsDto {
+                method: Some(DistillMethod::Logit),
+                ..Default::default()
+            },
+            rate,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn attaching_a_plan_preserves_the_teacher_it_is_merged_into() {
+        let teacher = json!({"host": "inference.example.com", "model": "Qwen/Qwen3-32B"});
+
+        let merged = attach_to_teacher_config(Some(teacher), Some(&logit_plan())).unwrap();
+
+        assert_eq!(merged["host"], "inference.example.com");
+        assert_eq!(merged["model"], "Qwen/Qwen3-32B");
+        assert_eq!(merged["extraction"]["distill_method"], "logit");
+    }
+
+    /// A text-path distill run must not gain an extraction block, or the worker
+    /// would look for teacher artifacts that were never produced.
+    #[test]
+    fn no_plan_leaves_the_teacher_block_untouched() {
+        let teacher = json!({"model": "Qwen/Qwen3-32B"});
+
+        let merged = attach_to_teacher_config(Some(teacher.clone()), None).unwrap();
+
+        assert_eq!(merged, teacher);
+    }
+
+    #[test]
+    fn a_job_without_a_teacher_stays_without_one() {
+        assert!(attach_to_teacher_config(None, Some(&logit_plan())).is_none());
+        assert!(attach_to_teacher_config(None, None).is_none());
     }
 
     #[test]

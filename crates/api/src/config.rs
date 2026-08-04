@@ -471,10 +471,6 @@ impl Config {
 
     /// Monthly teacher-GPU spend cap for a plan name, mirroring
     /// `PlanLimits::for_plan`'s tier matching. `None` means uncapped.
-    ///
-    /// Not yet called from a route — the extraction-admission endpoint that
-    /// consumes it lands in a later Stage 2 task.
-    #[allow(dead_code)]
     pub fn teacher_gpu_spend_cap(&self, plan: &str) -> Option<f64> {
         match plan {
             "growth" => self.teacher_gpu_spend_cap_growth,

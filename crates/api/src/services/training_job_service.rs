@@ -14,7 +14,9 @@ use crate::services::teacher::config::{
     NOT_TEACHER_DATASET_MESSAGE, TEACHER_MISMATCH_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE,
     provenance_from_config, validate_teacher_for_launch,
 };
-use crate::services::teacher::extraction::{admit_extraction, plan_extraction};
+use crate::services::teacher::extraction::{
+    admit_extraction, attach_to_teacher_config, plan_extraction,
+};
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -163,16 +165,7 @@ impl TrainingJobService {
             _ => None,
         };
 
-        // Recorded alongside the teacher rather than in its own column: the
-        // extraction plan is entirely a statement about this job's teacher, and
-        // the teacher module owns that column.
-        let teacher_config = match (teacher_config, &extraction) {
-            (Some(mut block), Some(plan)) => {
-                block["extraction"] = plan.workflow_value();
-                Some(block)
-            }
-            (block, _) => block,
-        };
+        let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref());
 
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {

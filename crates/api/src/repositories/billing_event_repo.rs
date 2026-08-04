@@ -172,7 +172,6 @@ impl BillingEventRepository for PgBillingEventRepo {
         })
     }
 
-    #[allow(dead_code)]
     fn sum_cost_since_for_operation(
         &self,
         tenant_id: Uuid,
