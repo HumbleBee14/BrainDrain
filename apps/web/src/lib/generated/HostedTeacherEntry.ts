@@ -18,10 +18,11 @@ size: string,
  */
 gpu_class: GpuClass, 
 /**
- * Tokens per second the extraction job is expected to score. Deliberately
- * conservative: scoring computes a distribution at *every* position, which
- * is far heavier than ordinary prefill, and an estimate that comes in under
- * the real bill is worse than one that comes in over it.
+ * Tokens per second the extraction job is expected to score, at this
+ * entry's default precision. Deliberately conservative: scoring computes a
+ * distribution at *every* position, which is far heavier than ordinary
+ * prefill, and an estimate that comes in under the real bill is worse than
+ * one that comes in over it. Real runs bill measured time, not this.
  */
 est_scored_tokens_per_sec: number, 
 /**

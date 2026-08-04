@@ -69,6 +69,85 @@ a silent tokenizer mismatch corrupts every training target — but it means a
 rejection is not proof the models are incompatible, only that we cannot prove
 they are compatible. The user-facing copy says so without jargon.
 
+## Literature and library check (2026-08-04) — four defaults changed
+
+Verified against current sources rather than the plan's assumptions. Each item
+below **changed a default or a design choice**.
+
+**No library implements our workflow — write the loss.** TRL's distillation
+trainer requires a *live* teacher model in memory, computes full-vocabulary
+generalized-JSD, and has no field for precomputed teacher logprobs. The plan's
+cited `loss_top_k` / `loss_add_tail` parameters **do not exist** in TRL's source.
+Axolotl's KD plugin *is* real and genuinely offline (reads top-k ids + logprobs
+from a dataset field, `kd_alpha`/`kd_ce_alpha`/`kd_temperature` defaulting to
+exactly 0.9 / 0.1 / 1.0), so it is the structural reference to follow — but its
+loss renormalizes over the top-k and therefore **discards the tail** rather than
+modelling it. NeMo-Aligner supports offline top-k KD at K≈100 but drags in the
+whole Megatron stack. Conclusion: custom `compute_loss`, shaped like Axolotl's
+chunked forward-KL, plus our own tail term.
+
+**Top-k default 128 → 32.** Published results put the useful range at k≈5–10
+with sharp diminishing returns (Zipfian token distributions), and vLLM's cost
+grows on three axes with k at once — artifact bytes, scoring memory, and a
+roughly linear slowdown in the requested logprob count (vLLM issue #14300). 32
+keeps a wide margin over the reported optimum at a quarter of the planned cost.
+
+**Teacher precision default fp8 → bf16.** fp8 is documented to cause real
+accuracy regressions in some regimes and *no* published measurement exists for
+what it does to logprobs specifically. The entire product of this pass is the
+teacher's probability distribution, so quantizing the teacher to save GPU time is
+the one saving that could invalidate the feature. fp8 stays available as a knob.
+
+**Teacher family → Qwen3.** Every dense Qwen3 size shares a byte-identical
+tokenizer (verified with our own guard: `Qwen3-32B` ↔ `Qwen3-8B`/`4B`/`14B` all
+produce combined hash `6310389b…`), Apache-2.0, ungated, and dense. Qwen2.5 and
+Qwen3 are **not** cross-compatible (vocab 152064 vs 151936), so they are separate
+catalog entries with separate student lists, never mixed. Mixture-of-experts
+teachers are excluded: they add routing nondeterminism to a pass whose product is
+reproducible probabilities, and no measurement was found either way.
+
+**Forward KL confirmed correct** for this off-policy/teacher-forced setting
+(reverse KL belongs to on-policy student rollouts, which is Stage 3). The field
+is trending toward on-policy distillation as stronger, which is precisely why
+Stage 3 exists — offline KD stays worthwhile because one teacher pass is reusable
+across many student runs.
+
+**Tail handling, and what we deliberately do not claim.** Recent work
+(arXiv:2602.20816) reports that a *separate renormalized tail term with an
+amplification factor* (β≈2) beats both discarding the tail and lumping it into
+one flat pseudo-token. We implement the decoupled form so the mechanism exists,
+but default `tail_beta = 1.0` — the unamplified case. Shipping someone else's
+tuned constant as our default would be asserting a result we have not measured on
+our own data; the parity harness is what would earn that change.
+
+**Batch composition is part of the determinism contract.** vLLM issue #11778
+reports prompt-logprob differences between batch sizes larger than float noise,
+closed as not planned. Our own measurement at small scale showed no difference,
+which does not clear it at production batch sizes — so the manifest records the
+batch configuration, and identical logprobs are never assumed across differently
+batched runs of the same data.
+
+**No cheaper bulk-scoring API exists.** vLLM's pooling/scoring API is for
+cross-encoder similarity, not token-level logprobs. `generate()` with
+`prompt_logprobs` and `max_tokens=1` remains the only path.
+
+## Boundary verified against the real tokenizer
+
+`render_record` on `Qwen/Qwen3-8B` with a three-turn conversation: 36 tokens
+total, completion starting at 24, and the supervised span decoding to
+`'<think>\n\n</think>\n\nBlue is a primary colour.<|im_end|>\n'`. The
+rendering fingerprint is identical for `Qwen3-8B` and `Qwen3-32B`, which is the
+whole premise of the feature holding end to end.
+
+Note the empty `<think></think>` block: Qwen3's chat template injects it into
+every assistant turn. It is supervised along with the answer, which is correct —
+both the teacher's scoring pass and the student's training pass render through the
+same template, so the two agree, and the student learns Qwen3's actual
+non-thinking output format rather than a format it will never be asked to
+produce. It does mean a few scored tokens per record carry no information; the
+alternative (stripping them) would introduce exactly the train/serve skew the
+fingerprint exists to prevent.
+
 ## Operational finding
 
 vLLM's FlashInfer sampler JIT-compiles a CUDA kernel at engine warmup and fails

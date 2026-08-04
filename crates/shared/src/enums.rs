@@ -115,6 +115,12 @@ pub enum DistillMethod {
 
 /// Weight precision a hosted teacher is loaded at, trading accuracy for GPU
 /// memory and throughput.
+///
+/// `Bf16` is the default, against the usual instinct to quantize a large model:
+/// the product of this pass is the teacher's probability distribution, and fp8 is
+/// documented to cause real accuracy regressions in some regimes with no
+/// published measurement of what it does to logprobs specifically. Paying for
+/// full-precision weights is cheaper than distilling a distorted teacher.
 #[derive(
     Debug,
     Clone,
@@ -134,9 +140,9 @@ pub enum DistillMethod {
 #[ts(export)]
 pub enum TeacherPrecision {
     #[default]
+    Bf16,
     Fp8,
     Int4,
-    Bf16,
 }
 
 /// Deployment status for a trained model.
