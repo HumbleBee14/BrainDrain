@@ -136,6 +136,93 @@ pub async fn cancel_stream_pending(db: &PgPool, row_id: Uuid) {
     }
 }
 
+/// Enqueue a pending teacher-GPU extraction row before the Modal scoring run
+/// starts. The row carries the pre-run cost estimate as a conservative
+/// fallback, mirroring `enqueue_stream_pending`: extraction cost, like a
+/// streaming response's token count, is only known once the GPU work
+/// finishes, so a crash mid-run must still bill something durable rather than
+/// nothing.
+///
+/// Not yet called from a route — the extraction workflow that reserves and
+/// finalizes this row lands in a later Stage 2 task.
+#[allow(dead_code)]
+pub async fn enqueue_extraction_pending(
+    db: &PgPool,
+    tenant_id: Uuid,
+    resource_id: Option<Uuid>,
+    fallback_gpu_seconds: i32,
+    fallback_cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<Uuid, sqlx::Error> {
+    let row_id = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO billing_outbox \
+         (id, tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, 'extraction', $3, 0, 0, $4, $5, $6)",
+    )
+    .bind(row_id)
+    .bind(tenant_id)
+    .bind(resource_id)
+    .bind(fallback_gpu_seconds)
+    .bind(fallback_cost_usd)
+    .bind(metadata_with_extraction_state(metadata, true, false))
+    .execute(db)
+    .await?;
+
+    Ok(row_id)
+}
+
+/// Finalize a pending extraction row with the actual GPU time and cost.
+#[allow(dead_code)]
+pub async fn finalize_extraction_pending(
+    db: &PgPool,
+    row_id: Uuid,
+    gpu_seconds: i32,
+    cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE billing_outbox \
+         SET gpu_seconds = $2, cost_usd = $3, metadata = $4 \
+         WHERE id = $1 \
+           AND delivered_at IS NULL \
+           AND COALESCE((metadata->>'extraction_pending')::boolean, false) = true",
+    )
+    .bind(row_id)
+    .bind(gpu_seconds)
+    .bind(cost_usd)
+    .bind(metadata_with_extraction_state(metadata, false, false))
+    .execute(db)
+    .await?;
+
+    Ok(())
+}
+
+/// Cancel a pending extraction reservation that will never be finalized
+/// because the run never started (e.g. admission was refused after the row
+/// was written, or the Modal call failed to launch).
+///
+/// Best-effort, matching `cancel_stream_pending`: a failure here just leaves
+/// the row for the stale-pending reaper to deliver at its conservative
+/// fallback cost, so we log and swallow rather than fail the caller.
+#[allow(dead_code)]
+pub async fn cancel_extraction_pending(db: &PgPool, row_id: Uuid) {
+    let result = sqlx::query(
+        "DELETE FROM billing_outbox \
+         WHERE id = $1 \
+           AND delivered_at IS NULL \
+           AND COALESCE((metadata->>'extraction_pending')::boolean, false) = true",
+    )
+    .bind(row_id)
+    .execute(db)
+    .await;
+
+    if let Err(e) = result {
+        tracing::error!(error = %e, row_id = %row_id, "Failed to cancel pending extraction billing reservation");
+    }
+}
+
 /// Enqueue into billing_outbox within an existing transaction.
 #[allow(clippy::too_many_arguments)]
 pub async fn enqueue_in_tx(
@@ -187,6 +274,26 @@ fn metadata_with_stream_state(
     serde_json::Value::Object(metadata)
 }
 
+fn metadata_with_extraction_state(
+    metadata: serde_json::Value,
+    extraction_pending: bool,
+    extraction_reaped: bool,
+) -> serde_json::Value {
+    let mut metadata = match metadata {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    metadata.insert(
+        "extraction_pending".to_string(),
+        serde_json::Value::Bool(extraction_pending),
+    );
+    metadata.insert(
+        "extraction_reaped".to_string(),
+        serde_json::Value::Bool(extraction_reaped),
+    );
+    serde_json::Value::Object(metadata)
+}
+
 pub struct BillingOutboxRelay {
     shutdown: Mutex<Option<ShutdownHandle>>,
 }
@@ -200,6 +307,10 @@ const MAX_ATTEMPTS: i32 = 5;
 const RELAY_BATCH_SIZE: i64 = 500;
 const RELAY_LOCK_ID: i64 = 900_200_001;
 const STREAM_PENDING_STALE_SECS: i64 = 300;
+/// Extraction is a GPU batch job, not an SSE response — it can legitimately
+/// run far longer than `STREAM_PENDING_STALE_SECS` allows, so it gets its own,
+/// much longer staleness window before the reaper trusts its fallback cost.
+const EXTRACTION_PENDING_STALE_SECS: i64 = 3_600;
 /// How often the relay prunes delivered outbox rows. Coarse on purpose — the
 /// buffer only needs bounding, not tight trimming.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
@@ -340,6 +451,7 @@ async fn do_relay_work(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<BatchResult, sqlx::Error> {
     reap_stale_pending_streams(tx).await?;
+    reap_stale_pending_extractions(tx).await?;
 
     let rows = sqlx::query_as::<_, OutboxRow>(
         "SELECT id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
@@ -348,6 +460,7 @@ async fn do_relay_work(
          WHERE delivered_at IS NULL \
            AND attempt_count < $1 \
            AND COALESCE((metadata->>'stream_pending')::boolean, false) = false \
+           AND COALESCE((metadata->>'extraction_pending')::boolean, false) = false \
          ORDER BY created_at \
          LIMIT $2 \
          FOR UPDATE SKIP LOCKED",
@@ -439,6 +552,28 @@ async fn reap_stale_pending_streams(
     Ok(())
 }
 
+/// Same reap as `reap_stale_pending_streams`, for extraction reservations —
+/// covers a crashed/abandoned Modal call that never reached
+/// `finalize_extraction_pending` or `cancel_extraction_pending`.
+async fn reap_stale_pending_extractions(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE billing_outbox \
+         SET metadata = jsonb_set(
+                 jsonb_set(metadata, '{extraction_pending}', 'false'::jsonb, true),
+                 '{extraction_reaped}', 'true'::jsonb, true
+             ) \
+         WHERE delivered_at IS NULL \
+           AND COALESCE((metadata->>'extraction_pending')::boolean, false) = true \
+           AND created_at < NOW() - make_interval(secs => $1)",
+    )
+    .bind(EXTRACTION_PENDING_STALE_SECS as f64)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Idempotent delivery: uses outbox `(id, created_at)` as billing_events composite PK.
 async fn deliver_to_ledger(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -501,6 +636,8 @@ const _: () = {
     assert!(RELAY_BATCH_SIZE <= 10_000);
     assert!(STREAM_PENDING_STALE_SECS > 0);
     assert!(STREAM_PENDING_STALE_SECS <= 600);
+    assert!(EXTRACTION_PENDING_STALE_SECS > STREAM_PENDING_STALE_SECS);
+    assert!(EXTRACTION_PENDING_STALE_SECS <= 86_400);
 };
 
 #[cfg(test)]
@@ -547,6 +684,38 @@ mod tests {
         assert_eq!(reaped["stream_reaped"], true);
     }
 
+    // ── Extraction metadata construction ──
+
+    #[test]
+    fn metadata_with_extraction_state_sets_flags() {
+        let meta = serde_json::json!({"training_job_id": "abc"});
+        let result = metadata_with_extraction_state(meta, true, false);
+        assert_eq!(result["extraction_pending"], true);
+        assert_eq!(result["extraction_reaped"], false);
+        assert_eq!(result["training_job_id"], "abc");
+    }
+
+    #[test]
+    fn metadata_extraction_finalize_clears_pending() {
+        let meta = serde_json::json!({"gpu_class": "a10080gb"});
+        let pending = metadata_with_extraction_state(meta, true, false);
+        assert_eq!(pending["extraction_pending"], true);
+
+        let finalized = metadata_with_extraction_state(pending, false, false);
+        assert_eq!(finalized["extraction_pending"], false);
+        assert_eq!(finalized["extraction_reaped"], false);
+        assert_eq!(finalized["gpu_class"], "a10080gb");
+    }
+
+    #[test]
+    fn metadata_extraction_reap_marks_reaped() {
+        let meta = serde_json::json!({});
+        let pending = metadata_with_extraction_state(meta, true, false);
+        let reaped = metadata_with_extraction_state(pending, false, true);
+        assert_eq!(reaped["extraction_pending"], false);
+        assert_eq!(reaped["extraction_reaped"], true);
+    }
+
     // ── Constants and invariants ──
 
     #[test]
@@ -554,6 +723,7 @@ mod tests {
         assert_eq!(MAX_ATTEMPTS, 5);
         assert_eq!(RELAY_BATCH_SIZE, 500);
         assert_eq!(STREAM_PENDING_STALE_SECS, 300);
+        assert_eq!(EXTRACTION_PENDING_STALE_SECS, 3_600);
     }
 
     #[test]

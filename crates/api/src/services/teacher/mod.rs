@@ -10,8 +10,9 @@
 //! A teacher that the platform runs on its own GPUs — the only kind whose
 //! token-level distributions can be read — lives in `hosted`, with `fidelity`
 //! deciding when such a teacher is available for a given dataset and student,
-//! and `cost` pricing the GPU time that costs.
+//! `cost` pricing the GPU time that costs, and `billing` capping it.
 
+pub mod billing;
 pub mod config;
 pub mod cost;
 pub mod fidelity;
