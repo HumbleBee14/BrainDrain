@@ -74,11 +74,12 @@ class FullPipelineWorkflow:
                 dataset_id=refine_result.dataset_id,
                 base_model=base_model,
                 method=training_config.get("method", "qlora"),
-                # TrainWorkflow accepts modes quick/iterative/aligned/reasoning.
-                # "sft" is not a valid mode; default to "quick".
+                # TrainWorkflow accepts modes quick/distill/iterative/aligned/
+                # reasoning. "sft" is not a valid mode; default to "quick".
                 mode=training_config.get("mode", "quick"),
                 hyperparams=training_config.get("hyperparams", {}),
                 gpu_class=training_config.get("gpu_class"),
+                teacher_config=training_config.get("teacher"),
             ),
             start_to_close_timeout=timeouts.db_lookup(),
             retry_policy=RetryPolicy(maximum_attempts=3),

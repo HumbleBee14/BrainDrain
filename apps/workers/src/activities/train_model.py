@@ -873,6 +873,19 @@ class QuickStrategy:
         )
 
 
+@register_strategy("distill")
+class DistillStrategy(QuickStrategy):
+    """SFT on teacher-written data.
+
+    The training pass is identical to `quick` — what makes a run a
+    distillation is upstream (the teacher generated the dataset) and
+    downstream (the teacher-parity evaluation suite). Deliberately NOT
+    judge-backed: training itself never calls the teacher or a judge.
+    """
+
+    name = "distill"
+
+
 @register_strategy("aligned")
 class AlignedStrategy:
     """SFT → DPO pipeline for production quality alignment."""
