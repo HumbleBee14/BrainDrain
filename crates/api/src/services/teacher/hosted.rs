@@ -29,10 +29,11 @@ pub struct HostedTeacherEntry {
     pub size: &'static str,
     /// GPU class this model is scheduled on at its default precision.
     pub gpu_class: GpuClass,
-    /// Tokens per second the extraction job is expected to score. Deliberately
-    /// conservative: scoring computes a distribution at *every* position, which
-    /// is far heavier than ordinary prefill, and an estimate that comes in under
-    /// the real bill is worse than one that comes in over it.
+    /// Tokens per second the extraction job is expected to score, at this
+    /// entry's default precision. Deliberately conservative: scoring computes a
+    /// distribution at *every* position, which is far heavier than ordinary
+    /// prefill, and an estimate that comes in under the real bill is worse than
+    /// one that comes in over it. Real runs bill measured time, not this.
     pub est_scored_tokens_per_sec: f64,
     /// Student models whose tokenizer is expected to match this teacher's.
     /// Advisory only — eligibility is decided by the tokenizer hash comparison
@@ -51,8 +52,22 @@ pub struct HostedTeacherEntry {
 /// a student in the base-model catalog that can plausibly share its tokenizer,
 /// because logit distillation is impossible otherwise. Adding a large teacher
 /// with no matching student would ship a feature that can never be eligible.
+///
+/// Dense models only. Mixture-of-experts teachers add a routing-nondeterminism
+/// risk to a scoring pass whose whole product is reproducible probabilities, and
+/// no measurement was found either way — so they stay out until measured here.
 pub fn hosted_catalog() -> &'static [HostedTeacherEntry] {
     &[
+        HostedTeacherEntry {
+            model_id: "Qwen/Qwen3-32B",
+            revision: "9216db5781bf21249d130ec9da846c4624c16137",
+            license: "Apache-2.0",
+            display_name: "Qwen3 32B",
+            size: "32B",
+            gpu_class: GpuClass::A10080gb,
+            est_scored_tokens_per_sec: 1200.0,
+            student_family: &["Qwen/Qwen3-8B", "Qwen/Qwen3-4B", "Qwen/Qwen3-14B"],
+        },
         HostedTeacherEntry {
             model_id: "Qwen/Qwen2.5-32B-Instruct",
             revision: "5ede1c97bbab6ce5cda5812749b4c0bdf79b18dd",
@@ -60,17 +75,7 @@ pub fn hosted_catalog() -> &'static [HostedTeacherEntry] {
             display_name: "Qwen2.5 32B Instruct",
             size: "32B",
             gpu_class: GpuClass::A10080gb,
-            est_scored_tokens_per_sec: 1500.0,
-            student_family: &["Qwen/Qwen2.5-7B-Instruct"],
-        },
-        HostedTeacherEntry {
-            model_id: "Qwen/Qwen2.5-14B-Instruct",
-            revision: "cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8",
-            license: "Apache-2.0",
-            display_name: "Qwen2.5 14B Instruct",
-            size: "14B",
-            gpu_class: GpuClass::L40s,
-            est_scored_tokens_per_sec: 3000.0,
+            est_scored_tokens_per_sec: 1200.0,
             student_family: &["Qwen/Qwen2.5-7B-Instruct"],
         },
     ]

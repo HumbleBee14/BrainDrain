@@ -68,9 +68,9 @@ The Stage 1 "Recommended open models" radio-card gains hosted entries (from the 
 
 | Knob | Default | Notes |
 | --- | --- | --- |
-| Fidelity detail (`top_k`) | 128 | helper: "How much of the teacher's confidence to keep. Default is right for almost everyone." |
+| Fidelity detail (`top_k`) | 32 | helper: "How much of the teacher's confidence to keep. Default is right for almost everyone." |
 | Loss mix (`kd_alpha` / `ce_alpha`) | 0.9 / 0.1 | expert-only wording, collapsed sub-group |
-| Teacher precision | fp8 | fp8/int4/bf16; affects cost estimate live |
+| Teacher precision | bf16 | fp8/int4/bf16; affects cost estimate live |
 
 ### Progress + failure UX
 
@@ -172,5 +172,5 @@ On-policy loop, teacher-server topology and the TRL `loss_top_k` decision, rever
 - vLLM prompt-logprobs batch-variance issue (determinism caveat): <https://github.com/vllm-project/vllm/issues/11778>
 - vLLM optimization/tuning (gpu_memory_utilization): <https://docs.vllm.ai/en/latest/configuration/optimization/>
 - Offline top-k KD reference design (decoupled extraction → train): axolotl KD plugin — <https://docs.axolotl.ai/docs/api/integrations.kd.trainer.html>
-- Loss/tail reference: TRL distillation trainer (`loss_top_k`, `loss_add_tail`) — <https://huggingface.co/docs/trl/distillation_trainer>
+- Loss/tail reference: **not TRL** — its distillation trainer needs a live teacher and has no precomputed-logprob path; the `loss_top_k`/`loss_add_tail` parameters cited in an earlier draft do not exist in its source. Use axolotl's KD plugin as the structural reference and see STAGE2-SPIKE-FINDINGS.md
 - Full evidence base: [RESEARCH.md](RESEARCH.md) §8 (libraries, hyperparameters, hosting costs)

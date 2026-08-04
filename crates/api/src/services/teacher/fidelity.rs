@@ -17,10 +17,15 @@ use serde_json::Value;
 use crate::services::teacher::config::provenance_from_config;
 use crate::services::teacher::hosted::{HostedTeacherEntry, hosted_entry};
 
-/// How much of the teacher's distribution is kept per token. 128 keeps nearly
-/// all of the probability mass for typical instruction data while staying far
-/// under the memory an uncapped request would need.
-pub const DEFAULT_TOP_K_LOGPROBS: u32 = 128;
+/// How much of the teacher's distribution is kept per token.
+///
+/// Published results put the useful range near k=5–10 with clear diminishing
+/// returns above it (token distributions are Zipfian, so the head carries almost
+/// all the mass), while cost grows with k on three axes at once: artifact size,
+/// scoring memory, and vLLM's roughly linear slowdown as the requested logprob
+/// count rises. 32 sits comfortably above the reported optimum without paying
+/// four times over for mass that contributes almost nothing.
+pub const DEFAULT_TOP_K_LOGPROBS: u32 = 32;
 
 /// Bounds on a caller-supplied `top_k`. An uncapped request is an out-of-memory
 /// crash on the scoring GPU, so there is no "unlimited" option to choose.

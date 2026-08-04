@@ -197,10 +197,45 @@ fn build_catalog() -> Vec<CatalogModel> {
             est_hours_1k_pairs: 1.5,
             est_cost_1k_pairs: 1.65,
         },
-        // Upstream Qwen rather than a community re-upload, because this is the
-        // student that can be taught by our hosted Qwen teacher: re-uploads
+        // Upstream Qwen rather than community re-uploads, because these are the
+        // students that can be taught by our hosted Qwen teachers: re-uploads
         // routinely add a pad token and extra special tokens, which breaks the
         // byte-identical tokenizer match that logit distillation requires.
+        // Every dense Qwen3 size shares one tokenizer (verified by hash), so any
+        // of them can be taught by the Qwen3 teacher.
+        CatalogModel {
+            model_id: "Qwen/Qwen3-8B".into(),
+            display_name: "Qwen3 8B (distillable)".into(),
+            size: "8B".into(),
+            vram_4bit_gb: 6.5,
+            vram_full_gb: 18.0,
+            best_for: vec![
+                "High-fidelity distillation".into(),
+                "Reasoning".into(),
+                "Code".into(),
+            ],
+            recommended_for: vec![],
+            gated: false,
+            default_mode: "distill".into(),
+            est_hours_1k_pairs: 1.6,
+            est_cost_1k_pairs: 1.76,
+        },
+        CatalogModel {
+            model_id: "Qwen/Qwen3-4B".into(),
+            display_name: "Qwen3 4B (distillable)".into(),
+            size: "4B".into(),
+            vram_4bit_gb: 3.5,
+            vram_full_gb: 9.0,
+            best_for: vec![
+                "High-fidelity distillation".into(),
+                "Cheapest capable student".into(),
+            ],
+            recommended_for: vec![],
+            gated: false,
+            default_mode: "distill".into(),
+            est_hours_1k_pairs: 0.9,
+            est_cost_1k_pairs: 0.99,
+        },
         CatalogModel {
             model_id: "Qwen/Qwen2.5-7B-Instruct".into(),
             display_name: "Qwen 2.5 7B (distillable)".into(),
