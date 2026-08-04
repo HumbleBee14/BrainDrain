@@ -45,12 +45,13 @@ pub struct ExtractionEstimate {
 /// Scored-token count for a dataset, preferring measured counts and falling
 /// back to the pair count.
 ///
-/// Token counts are a property of a (dataset, tokenizer) pair, and only the
-/// workers can hash a tokenizer — so validity of a stored count is enforced
-/// there, by recomputing when `datasets.token_count_tokenizer_hash` does not
-/// match the run's. This function trusts a stored count and reports which
-/// basis it used, because a display estimate that is stale by one tokenizer is
-/// still far better than one derived from a pair count.
+/// Token counts are a property of a (dataset, tokenizer) pair, so a stored
+/// count is only valid for the tokenizer recorded in
+/// `datasets.token_count_tokenizer_hash`. Nothing writes those columns yet —
+/// measuring them means rendering the dataset under a real tokenizer, which
+/// only the workers can do — so in practice every estimate today reports the
+/// approximate basis, and the UI labels it as approximate. The measured arm
+/// goes live unchanged the moment a writer lands.
 pub fn scored_tokens_for(measured: Option<i64>, pair_count: Option<i32>) -> (i64, EstimateBasis) {
     match measured {
         Some(tokens) if tokens > 0 => (tokens, EstimateBasis::Measured),

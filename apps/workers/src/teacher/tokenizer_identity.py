@@ -68,8 +68,11 @@ the file does not exist in that model's repo."""
 
 @dataclass(frozen=True)
 class ArtifactHash:
+    """A hashed tokenizer artifact. `sha256` is None when the artifact is absent
+    from that model's repo — absence on both sides is still a match."""
+
     name: str
-    sha256: str | None  # None means the artifact is absent from this model repo
+    sha256: str | None
 
 
 @dataclass(frozen=True)
