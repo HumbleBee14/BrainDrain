@@ -136,7 +136,9 @@ class TestTeacherClient:
         base = _config()
         assert base.fingerprint() == _config(api_key="enc:v1:other").fingerprint()
         assert base.fingerprint() != _config(model="other-model").fingerprint()
-        assert base.fingerprint() != _config(api_base_url="https://elsewhere.example/v1").fingerprint()
+        assert (
+            base.fingerprint() != _config(api_base_url="https://elsewhere.example/v1").fingerprint()
+        )
 
 
 class TestProvenance:

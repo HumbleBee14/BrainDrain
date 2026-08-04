@@ -20,7 +20,5 @@ def test_distill_is_not_judge_backed():
 def test_train_workflow_dispatches_distill_like_quick():
     from pathlib import Path
 
-    source = (
-        Path(__file__).resolve().parents[1] / "src" / "workflows" / "train.py"
-    ).read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "workflows" / "train.py").read_text()
     assert 'mode in ("quick", "distill")' in source
