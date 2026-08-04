@@ -18,7 +18,11 @@ import {
   useCancelTrainingJob,
   useEstimateTrainingCost,
 } from "@/hooks/use-training";
-import type { CreateTrainingJobInput, Dataset } from "@/lib/api-client";
+import type {
+  CreateTrainingJobInput,
+  Dataset,
+  DistillOptionsDto,
+} from "@/lib/api-client";
 import { useModels } from "@/hooks/use-models";
 import { useModelCatalog } from "@/hooks/use-catalog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +38,7 @@ import {
   PipelineStageCard,
 } from "./components";
 import { DistillSetup } from "./components/distill-setup";
+import { FidelityUpgrade } from "./components/fidelity-upgrade";
 
 function DatasetRow({
   dataset,
@@ -192,6 +197,11 @@ export default function ProjectDetailPage() {
     method: "qlora",
     mode: "quick",
   });
+  const [distillOptions, setDistillOptions] =
+    useState<DistillOptionsDto | null>(null);
+  // No response field carries extraction state, so a fidelity run is only known
+  // to the session that launched it — enough to follow the run in progress.
+  const [scoringJobIds, setScoringJobIds] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: costEstimate } = useEstimateTrainingCost(params.id, trainForm);
   const {
@@ -300,6 +310,14 @@ export default function ProjectDetailPage() {
   });
   const models = modelsData?.data ?? [];
   const status = pipelineStatus;
+
+  // Scoring happens before the student starts training, so a tracked job counts
+  // as scoring until it leaves the states that precede its own GPU run.
+  const scoringJobCount = allTrainingJobs.filter(
+    (job) =>
+      scoringJobIds.includes(job.id) &&
+      ["pending", "cost_approval", "provisioning"].includes(job.status),
+  ).length;
 
   const handleFiles = useCallback(
     (files: FileList | File[]) => {
@@ -417,6 +435,13 @@ export default function ProjectDetailPage() {
               count={status.datasets.total}
               active={status.datasets.approved > 0}
             />
+            {scoringJobCount > 0 && (
+              <PipelineStageCard
+                label="Scoring with teacher"
+                count={scoringJobCount}
+                active
+              />
+            )}
             <PipelineStageCard
               label="Training"
               count={status.training_jobs?.training ?? 0}
@@ -886,6 +911,18 @@ export default function ProjectDetailPage() {
                 </select>
               </div>
             </div>
+
+            {/* Keyed on the pair being judged: a different dataset or student is
+                a different offer, and the upgrade must never carry over unasked. */}
+            {trainForm.mode === "distill" && trainForm.dataset_id && (
+              <FidelityUpgrade
+                key={`${trainForm.dataset_id}:${trainForm.base_model}`}
+                datasetId={trainForm.dataset_id}
+                studentModel={trainForm.base_model}
+                onChange={setDistillOptions}
+              />
+            )}
+
             {/* Cost estimate breakdown */}
             {costEstimate && (
               <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/50 p-3 text-sm">
@@ -919,8 +956,20 @@ export default function ProjectDetailPage() {
               <button
                 onClick={() => {
                   if (!trainForm.dataset_id || !trainForm.base_model) return;
-                  createTrainingJob.mutate(trainForm);
-                  setShowTrainForm(false);
+                  const distill =
+                    trainForm.mode === "distill" ? distillOptions : null;
+                  // A refused launch (spend cap, incompatible pair) is reported
+                  // inside this form, so it stays open until a job exists.
+                  createTrainingJob.mutate(
+                    distill ? { ...trainForm, distill } : trainForm,
+                    {
+                      onSuccess: (job) => {
+                        if (distill)
+                          setScoringJobIds((prev) => [...prev, job.id]);
+                        setShowTrainForm(false);
+                      },
+                    },
+                  );
                 }}
                 disabled={
                   !trainForm.dataset_id ||
@@ -943,9 +992,11 @@ export default function ProjectDetailPage() {
               </button>
             </div>
             {createTrainingJob.isError && (
-              <p className="text-sm text-red-400">
-                {createTrainingJob.error.message}
-              </p>
+              <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-3">
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  {createTrainingJob.error.message}
+                </p>
+              </div>
             )}
           </div>
         )}

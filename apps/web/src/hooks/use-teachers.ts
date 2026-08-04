@@ -6,6 +6,7 @@ import {
   api,
   type ClassifyTeacherResponse,
   type TeacherCatalogEntry,
+  type TeacherCostEstimateResponse,
 } from "@/lib/api-client";
 
 /** Curated open teacher models (permissive licenses) for the teacher picker. */
@@ -38,5 +39,32 @@ export function useTeacherPolicy(apiBaseUrl: string, model: string) {
     },
     enabled,
     staleTime: 10 * 60 * 1000,
+  });
+}
+
+/**
+ * Whether a dataset can be trained on its teacher's answer confidence, and what
+ * that would cost. An ineligible answer carries the reason to show the user.
+ */
+export function useTeacherCostEstimate(
+  datasetId: string,
+  studentModel: string,
+  topKLogprobs?: number,
+) {
+  const { getToken } = useAuth();
+  const enabled = datasetId.length > 0 && studentModel.trim().length > 0;
+  return useQuery<TeacherCostEstimateResponse>({
+    queryKey: ["teacher-cost-estimate", datasetId, studentModel, topKLogprobs],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.teachers.costEstimate(token, {
+        dataset_id: datasetId,
+        student_model: studentModel.trim(),
+        top_k_logprobs: topKLogprobs,
+      });
+    },
+    enabled,
+    staleTime: 5 * 60 * 1000,
   });
 }
