@@ -390,6 +390,25 @@ export default function ModelDetailPage() {
                   <p className="text-xs text-zinc-500 mt-1">Teacher parity</p>
                 </div>
               )}
+              {typeof model.eval_scores.teacher_parity?.teacher_student_kl ===
+                "number" && (
+                <div
+                  className="rounded-lg border border-violet-200 dark:border-violet-900 p-4 text-center"
+                  title="How closely this model matches the teacher's confidence in each word it writes, measured on the examples the teacher scored. 0 would mean identical, so lower is better."
+                >
+                  <p className="text-2xl font-bold text-zinc-900 dark:text-white">
+                    {model.eval_scores.teacher_parity.teacher_student_kl.toFixed(
+                      3,
+                    )}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Distribution match
+                  </p>
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-600 mt-0.5">
+                    Lower is better
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

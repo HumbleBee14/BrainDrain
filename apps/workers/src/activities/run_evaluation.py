@@ -26,6 +26,11 @@ from temporalio import activity
 
 from src.activities.llm_judge import LLMJudge
 from src.activities.stubs import RunEvaluationInput, RunEvaluationOutput
+from src.activities.teacher_fidelity import (
+    DEFAULT_MAX_RECORDS,
+    TeacherArtifacts,
+    measure_distribution_match,
+)
 from src.backends.judge import get as get_judge
 from src.constants import EvaluationStatus
 from src.gpu_provider import GpuProvider
@@ -37,6 +42,14 @@ from src.tenant_config import TenantLlmConfig, get_tenant_llm_config
 logger = logging.getLogger("platform.evaluation")
 
 _BENCHMARKS_DIR = Path(__file__).parent / "benchmarks"
+
+# Context the student and base model are loaded with, and therefore the longest
+# scored record the fidelity metric can run the student over.
+_EVAL_MAX_SEQ_LENGTH = 2048
+
+# Job-config key naming the S3 prefix a distill run trained its student against.
+# Written by the training run, not by any caller.
+_TEACHER_ARTIFACTS_KEY = "teacher_artifacts_prefix"
 
 # Fixed seed for A/B response-position assignment: keeps blind comparison
 # de-biased yet reproducible across runs of the same model + data.
@@ -55,13 +68,17 @@ class EvaluationContext:
     mode: str = ""
     dataset_config: dict = field(default_factory=dict)
     job_config: dict = field(default_factory=dict)
+    teacher_artifacts: TeacherArtifacts | None = None
 
 
-def _build_context(input: RunEvaluationInput) -> EvaluationContext:
+def _build_context(
+    input: RunEvaluationInput, teacher_artifacts: TeacherArtifacts | None = None
+) -> EvaluationContext:
     return EvaluationContext(
         mode=input.mode or "",
         dataset_config=input.dataset_config or {},
         job_config=input.job_config or {},
+        teacher_artifacts=teacher_artifacts,
     )
 
 
@@ -294,7 +311,7 @@ async def run_evaluation_core(
         logger.info("Loading fine-tuned model: %s + %s", input.base_model, input.adapter_path)
         model_ft, tokenizer = engine.load_model(
             model_name=input.base_model,
-            max_seq_length=2048,
+            max_seq_length=_EVAL_MAX_SEQ_LENGTH,
             load_in_4bit=True,
         )
 
@@ -311,7 +328,7 @@ async def run_evaluation_core(
         logger.info("Loading base model for comparison: %s", input.base_model)
         model_base, tokenizer_base = engine.load_model(
             model_name=input.base_model,
-            max_seq_length=2048,
+            max_seq_length=_EVAL_MAX_SEQ_LENGTH,
             load_in_4bit=True,
         )
         model_base = engine.prepare_for_inference(model_base)
@@ -362,7 +379,17 @@ async def run_evaluation_core(
         suites = get_registered_suites()
         scores = {}
         report = {}
-        context = _build_context(input)
+        context = _build_context(
+            input,
+            _load_teacher_artifacts(
+                input,
+                tmpdir=tmpdir_path,
+                s3=s3,
+                s3_bucket=s3_bucket,
+                tokenizer=tokenizer,
+                settings=settings,
+            ),
+        )
 
         for suite in suites:
             safe_heartbeat(f"suite_{suite.name}")
@@ -876,6 +903,11 @@ class TeacherParitySuite:
     (randomized positions), and `check_correctness` measures answer
     agreement. Report-only — weight 0 keeps it out of the overall score, and
     the deploy gate ignores it unless DEPLOY_MIN_TEACHER_PARITY is set.
+
+    A high-fidelity run additionally left the teacher's own token distributions
+    on disk, so it also reports `teacher_student_kl`: how far the student's
+    distributions sit from them. That is the quantity such a run trained to
+    minimize, and it is absent for every run that has no such artifacts.
     """
 
     name = "teacher_parity"
@@ -897,6 +929,39 @@ class TeacherParitySuite:
         if context is None or context.mode != "distill":
             # Not a distillation — contribute no scores (not zeros).
             return {}, {}
+
+        scores, report = self._judge_against_teacher(model_ft, tok_ft, judge, golden_dataset)
+        match = self._distribution_match(model_ft, context)
+        if match is not None:
+            scores["teacher_student_kl"] = round(match.mean_kl, 4)
+            report["distribution_match"] = {
+                "mean_kl": round(match.mean_kl, 4),
+                "records": match.records,
+                "scored_positions": match.scored_positions,
+                "skipped_records": match.skipped_records,
+                "teacher_model": context.teacher_artifacts.teacher_model,
+            }
+        return scores, report
+
+    def _distribution_match(self, model_ft, context):
+        """Mean forward KL against the teacher's stored distributions, or None.
+
+        Report-only and last in line: an evaluation that cannot measure this
+        still has five suites' worth of results to save.
+        """
+        if context.teacher_artifacts is None:
+            return None
+        try:
+            return measure_distribution_match(
+                model_ft,
+                context.teacher_artifacts,
+                max_seq_length=_EVAL_MAX_SEQ_LENGTH,
+            )
+        except Exception:
+            logger.exception("Could not measure distribution match against the teacher")
+            return None
+
+    def _judge_against_teacher(self, model_ft, tok_ft, judge, golden_dataset):
         if not golden_dataset:
             return (
                 {},
@@ -1076,6 +1141,83 @@ def _download_adapter(s3_prefix: str, local_dir: Path, s3, bucket: str):
             local_file = local_dir / relative
             local_file.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(bucket, key, str(local_file))
+
+
+def _load_teacher_artifacts(
+    input: RunEvaluationInput,
+    *,
+    tmpdir: Path,
+    s3,
+    s3_bucket: str,
+    tokenizer,
+    settings,
+) -> TeacherArtifacts | None:
+    """Fetch the distributions a high-fidelity distill run trained against.
+
+    Returns None for every job that has none, and for artifacts that do not
+    describe this student's tokenization: a fidelity number is worth far less
+    than the five suites an exception here would take down with it, so no
+    failure on this path can end an evaluation.
+    """
+    if (input.mode or "") != "distill":
+        return None
+    prefix = (input.job_config or {}).get(_TEACHER_ARTIFACTS_KEY)
+    if not isinstance(prefix, str) or not prefix:
+        return None
+
+    try:
+        manifest_local = tmpdir / "teacher-manifest.json"
+        _download_from_s3(f"{prefix}manifest.json", manifest_local, s3, s3_bucket)
+        manifest = json.loads(manifest_local.read_text())
+        if not _artifacts_describe_student(manifest, input.base_model, tokenizer, settings):
+            logger.warning(
+                "Teacher artifacts at %s were computed for a different tokenization; "
+                "reporting no distribution match",
+                prefix,
+            )
+            return None
+        paths = _download_teacher_shards(manifest, prefix, tmpdir, s3, s3_bucket)
+    except Exception as e:
+        logger.info("No teacher distributions available for this evaluation: %s", e)
+        return None
+
+    if not paths:
+        return None
+    return TeacherArtifacts(manifest=manifest, shard_paths=paths)
+
+
+def _artifacts_describe_student(manifest: dict, base_model: str, tokenizer, settings) -> bool:
+    """Whether these artifacts were computed for the tokenization being evaluated.
+
+    Same check training makes before it trains on them — a hash mismatch here
+    means the number would compare distributions over two different vocabularies.
+    """
+    from src.teacher.artifacts import manifest_matches
+    from src.teacher.rendering import rendering_fingerprint
+    from src.teacher.tokenizer_identity import compute_tokenizer_hashes
+
+    hashes = compute_tokenizer_hashes(base_model, hf_token=getattr(settings, "hf_token", "") or "")
+    return manifest_matches(
+        manifest,
+        tokenizer_hash=hashes.combined_hash,
+        rendering_fingerprint=rendering_fingerprint(tokenizer),
+    )
+
+
+def _download_teacher_shards(
+    manifest: dict, prefix: str, tmpdir: Path, s3, s3_bucket: str
+) -> tuple[Path, ...]:
+    """Fetch only as many shards as the sampled record cap can consume."""
+    paths = []
+    records = 0
+    for shard in manifest.get("shards", []):
+        if records >= DEFAULT_MAX_RECORDS:
+            break
+        local = tmpdir / f"teacher-{shard['name']}"
+        _download_from_s3(f"{prefix}{shard['name']}", local, s3, s3_bucket)
+        paths.append(local)
+        records += int(shard.get("records", 0))
+    return tuple(paths)
 
 
 def _check_answer(answer: str, expected: str, qtype: str, judge) -> bool:

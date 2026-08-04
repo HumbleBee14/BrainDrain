@@ -107,6 +107,38 @@ function teacherParityNote(evaluation: Evaluation): string | null {
   return typeof note === "string" && note.trim() ? note : null;
 }
 
+const DISTRIBUTION_MATCH_HELP =
+  "How closely this model's confidence in each word it writes matches its teacher's, measured on the examples the teacher scored. 0 would mean identical, so unlike every other number here, smaller is better.";
+
+// The only figure in this panel where a smaller number is the good news, so the
+// direction is stated next to the value rather than left to the reader.
+function DistributionMatch({ value }: { value?: number | null }) {
+  if (typeof value !== "number") return null;
+
+  return (
+    <div className="border-t border-violet-200/60 dark:border-violet-900/60 pt-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span
+          className="text-xs text-zinc-500 uppercase tracking-wider cursor-help"
+          title={DISTRIBUTION_MATCH_HELP}
+        >
+          Distribution match
+        </span>
+        <span className="text-lg font-semibold text-zinc-900 dark:text-white">
+          {value.toFixed(3)}
+        </span>
+        <span className="rounded-full border border-violet-300 dark:border-violet-800 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300">
+          Lower is better
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        How closely this model matches the teacher&apos;s confidence in each word
+        it writes. 0 would mean identical.
+      </p>
+    </div>
+  );
+}
+
 function TeacherParitySection({ evaluation }: { evaluation: Evaluation }) {
   const parity = evaluation.scores?.teacher_parity;
   const note = teacherParityNote(evaluation);
@@ -164,6 +196,7 @@ function TeacherParitySection({ evaluation }: { evaluation: Evaluation }) {
               <span title="Held-out tasks compared">n = {parity.n}</span>
             )}
           </div>
+          <DistributionMatch value={parity.teacher_student_kl} />
         </div>
       </div>
     );
@@ -180,6 +213,9 @@ function TeacherParitySection({ evaluation }: { evaluation: Evaluation }) {
           comparison. Re-run data generation with a held-out share to get a
           parity report.
         </p>
+        <div className="mt-4">
+          <DistributionMatch value={parity?.teacher_student_kl} />
+        </div>
       </div>
     );
   }

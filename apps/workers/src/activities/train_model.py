@@ -1224,7 +1224,10 @@ def _train_distill_logit(
         train_result.global_step,
         records,
     )
+    # The prefix is recorded so evaluation can measure the student against the
+    # same distributions it trained on; nothing else in the run needs it back.
     return {
+        _TEACHER_ARTIFACTS_HYPERPARAM: prefix,
         "distill_logit_train_loss": train_result.training_loss,
         "distill_logit_train_steps": train_result.global_step,
         "distill_logit_train_runtime": train_result.metrics.get("train_runtime", 0),

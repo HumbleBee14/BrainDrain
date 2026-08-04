@@ -143,6 +143,12 @@ pub struct TeacherParityScores {
     pub agreement: Option<f64>,
     #[serde(default)]
     pub n: Option<i64>,
+    /// High-fidelity distill runs only: mean per-token distance between the
+    /// student's and the teacher's stored token distributions. **Lower is
+    /// closer**, unlike every other figure here, and 0 would mean identical.
+    /// Absent for runs that trained on the teacher's text alone.
+    #[serde(default)]
+    pub teacher_student_kl: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, ToSchema)]
@@ -319,6 +325,7 @@ mod tests {
                 tie_rate: Some(0.52),
                 agreement: Some(0.88),
                 n: Some(25),
+                teacher_student_kl: Some(0.081),
             }),
             overall: Some(78.5),
         };
@@ -343,6 +350,17 @@ mod tests {
         assert_eq!(parsed.domain.unwrap().mean, None);
         assert_eq!(parsed.ab_comparison.unwrap().win_rate, None);
         assert_eq!(parsed.overall, Some(72.0));
+    }
+
+    #[test]
+    fn parity_scores_predate_the_fidelity_metric() {
+        // Every distill evaluation stored before the fidelity metric existed has
+        // a teacher_parity section without the key. Those rows must still parse.
+        let json = r#"{"teacher_parity": {"parity": 0.9, "n": 20}, "overall": 70.0}"#;
+        let parsed: EvaluationScores = serde_json::from_str(json).unwrap();
+        let parity = parsed.teacher_parity.unwrap();
+        assert_eq!(parity.parity, Some(0.9));
+        assert_eq!(parity.teacher_student_kl, None);
     }
 
     #[test]
