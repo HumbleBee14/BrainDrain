@@ -109,8 +109,12 @@ class TeacherClient:
             f"api_base_url={self._config.api_base_url!r})"
         )
 
-    async def _ensure_url_allowed(self) -> None:
-        """Teacher URLs are user-supplied — always re-validated before use."""
+    async def ensure_url_allowed(self) -> None:
+        """Teacher URLs are user-supplied — always re-validated before use.
+
+        Runs automatically before the first request; activities may also call
+        it up front to fail fast before any other work.
+        """
         if self._url_checked:
             return
         if url_guard_active(self._settings):
@@ -125,7 +129,7 @@ class TeacherClient:
 
     def make_llm_call(self, http: httpx.AsyncClient, temperature: float):
         async def llm_call(prompt: str) -> str:
-            await self._ensure_url_allowed()
+            await self.ensure_url_allowed()
             return await self._provider.generate(
                 http,
                 prompt,

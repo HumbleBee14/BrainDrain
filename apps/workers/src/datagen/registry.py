@@ -36,9 +36,11 @@ def get_facet_expander(settings: WorkerSettings, llm_call: LlmCall) -> FacetExpa
     raise ValueError(f"unknown datagen_facet_backend: {settings.datagen_facet_backend}")
 
 
-def get_pair_generator(settings: WorkerSettings, llm_call: LlmCall) -> PairGenerator:
+def get_pair_generator(
+    settings: WorkerSettings, llm_call: LlmCall, include_cot: bool = False
+) -> PairGenerator:
     if settings.datagen_pair_backend == "llm":
-        return LlmPairGenerator(llm_call=llm_call)
+        return LlmPairGenerator(llm_call=llm_call, include_cot=include_cot)
     raise ValueError(f"unknown datagen_pair_backend: {settings.datagen_pair_backend}")
 
 

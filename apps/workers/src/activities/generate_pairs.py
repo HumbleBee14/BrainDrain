@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import httpx
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from src import s3_paths
 from src.activities.pair_checkpoint import Checkpoint, NullCheckpoint, PairCheckpoint
@@ -26,7 +27,9 @@ from src.datagen.protocols import Facet, FaithfulnessScorer, GeneratedPair, Pair
 from src.datagen.registry import get_facet_expander, get_faithfulness_scorer, get_pair_generator
 from src.failure_message import NO_LLM_KEY
 from src.infra import InfraContainer
+from src.teacher import TeacherClient, TeacherConfig, parse_teacher_config
 from src.tenant_config import get_tenant_llm_config
+from src.url_guard import UnsafeUrlError
 
 logger = logging.getLogger("platform.generate")
 
@@ -62,6 +65,18 @@ SUBTOPIC_DOC_SAMPLE_CHARS = 4000
 def clamp_pairs_per_chunk(value: int) -> int:
     """Bound pairs_per_chunk to a sane range to cap generation fan-out."""
     return max(MIN_PAIRS_PER_CHUNK, min(value, MAX_PAIRS_PER_CHUNK))
+
+
+def scope_run_key(run_key: str, teacher: TeacherConfig | None) -> str:
+    """Bind the checkpoint run key to the teacher identity.
+
+    Pairs checkpointed under one teacher must never be resumed under another
+    — a changed teacher invalidates the partial work rather than mixing two
+    models' outputs in one dataset.
+    """
+    if not run_key or teacher is None:
+        return run_key
+    return f"{run_key}-t{teacher.fingerprint()}"
 
 
 def _chunk_fingerprint(index: int, chunk: dict) -> str:
@@ -170,6 +185,10 @@ class GenerateSyntheticPairsInput:
     # few-shot calibration for the faithfulness judge. Defaulted so payloads
     # queued before this field existed still deserialize.
     rated: list[dict] = field(default_factory=list)
+    # Distillation: teacher block ({api_base_url, model, api_key(enc:v1),
+    # policy, include_cot}). When present, the TEACHER writes the answers;
+    # facet expansion and the faithfulness judge stay on the tenant LLM.
+    teacher: dict | None = None
 
 
 @dataclass
@@ -327,6 +346,21 @@ class GeneratePairsActivity:
         bucket = self.infra.s3_bucket
         settings = self.infra.settings
 
+        # A malformed or unsafe teacher never fixes itself on retry — fail the
+        # run immediately with the reason instead of burning attempts.
+        try:
+            teacher_config = parse_teacher_config(input.teacher)
+        except ValueError as e:
+            raise ApplicationError(str(e), non_retryable=True) from e
+        teacher_client = (
+            TeacherClient(teacher_config, settings) if teacher_config is not None else None
+        )
+        if teacher_client is not None:
+            try:
+                await teacher_client.ensure_url_allowed()
+            except UnsafeUrlError as e:
+                raise ApplicationError(str(e), non_retryable=True) from e
+
         # Resolve LLM config for this tenant (DB lookup, falls back to env var defaults)
         llm_config = await get_tenant_llm_config(
             db=self.infra.db,
@@ -372,7 +406,7 @@ class GeneratePairsActivity:
         # questions the model will be evaluated on but never trained on.
         training_chunks, holdout_chunks = select_holdout_chunks(chunks, input.golden_holdout_ratio)
 
-        run_key = self._run_key()
+        run_key = scope_run_key(self._run_key(), teacher_config)
         checkpoint = self._build_checkpoint(input, run_key)
 
         async with httpx.AsyncClient(timeout=120.0) as http:
@@ -394,8 +428,19 @@ class GeneratePairsActivity:
 
             # Generation samples creatively; the faithfulness judge is scored
             # near-deterministically so verdicts are stable for the same inputs.
+            # Distillation swaps only WHO writes the answers: the teacher takes
+            # pair generation, while the faithfulness judge and facet expansion
+            # stay on the tenant-configured LLM.
+            if teacher_client is not None:
+                answer_llm_call = teacher_client.make_llm_call(
+                    http, settings.generation_temperature
+                )
+            else:
+                answer_llm_call = make_llm_call(settings.generation_temperature)
             pair_generator: PairGenerator = get_pair_generator(
-                settings, make_llm_call(settings.generation_temperature)
+                settings,
+                answer_llm_call,
+                include_cot=teacher_config is not None and teacher_config.include_cot,
             )
             scorer = get_faithfulness_scorer(
                 settings, make_llm_call(settings.judge_temperature), calibration=input.rated
