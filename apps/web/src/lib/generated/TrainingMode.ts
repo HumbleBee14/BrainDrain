@@ -3,4 +3,4 @@
 /**
  * Training mode determines the pipeline stages.
  */
-export type TrainingMode = "quick" | "aligned" | "reasoning" | "iterative";
+export type TrainingMode = "quick" | "aligned" | "reasoning" | "iterative" | "distill";

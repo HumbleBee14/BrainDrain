@@ -560,6 +560,9 @@ fn estimate_gpu_hours(
         TrainingMode::Aligned => 1.8,   // SFT + DPO
         TrainingMode::Reasoning => 1.8, // SFT + GRPO
         TrainingMode::Iterative => 2.5, // multi-round SFT + eval
+        // Same single SFT pass as Quick; the teacher writes the data
+        // beforehand and is billed by its own provider, not in GPU-hours.
+        TrainingMode::Distill => 1.0,
     };
 
     let epoch_factor = epochs as f64 / 3.0;
@@ -906,7 +909,7 @@ mod tests {
 
     #[test]
     fn valid_training_modes_parse() {
-        for mode in ["quick", "aligned", "reasoning", "iterative"] {
+        for mode in ["quick", "aligned", "reasoning", "iterative", "distill"] {
             assert!(
                 TrainingMode::from_str(mode).is_ok(),
                 "Expected '{mode}' to be a valid TrainingMode",

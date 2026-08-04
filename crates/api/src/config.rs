@@ -187,6 +187,13 @@ pub struct Config {
     #[serde(default)]
     pub deploy_min_doc_knowledge_lift: Option<f64>,
 
+    /// Eval gate: block a normal deploy of a distilled model unless its
+    /// teacher parity (share of golden-holdout tasks matching or beating the
+    /// teacher, `0.0`–`1.0`) is at least this high. Unset (the default) keeps
+    /// teacher parity report-only. Rollbacks bypass the gate.
+    #[serde(default)]
+    pub deploy_min_teacher_parity: Option<f64>,
+
     /// Inference instance health probe interval in seconds.
     #[serde(default = "default_inference_instance_health_poll_interval_secs")]
     pub inference_instance_health_poll_interval_secs: u64,
