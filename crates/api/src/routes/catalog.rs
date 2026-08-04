@@ -197,6 +197,27 @@ fn build_catalog() -> Vec<CatalogModel> {
             est_hours_1k_pairs: 1.5,
             est_cost_1k_pairs: 1.65,
         },
+        // Upstream Qwen rather than a community re-upload, because this is the
+        // student that can be taught by our hosted Qwen teacher: re-uploads
+        // routinely add a pad token and extra special tokens, which breaks the
+        // byte-identical tokenizer match that logit distillation requires.
+        CatalogModel {
+            model_id: "Qwen/Qwen2.5-7B-Instruct".into(),
+            display_name: "Qwen 2.5 7B (distillable)".into(),
+            size: "7B".into(),
+            vram_4bit_gb: 6.0,
+            vram_full_gb: 16.0,
+            best_for: vec![
+                "High-fidelity distillation".into(),
+                "Reasoning".into(),
+                "Code".into(),
+            ],
+            recommended_for: vec![],
+            gated: false,
+            default_mode: "distill".into(),
+            est_hours_1k_pairs: 1.5,
+            est_cost_1k_pairs: 1.65,
+        },
         CatalogModel {
             model_id: "unsloth/Llama-3.2-1B-Instruct".into(),
             display_name: "Llama 3.2 1B".into(),

@@ -144,6 +144,7 @@ fn v1_router() -> Router<AppState> {
         // Teacher picker
         teacher::get_teacher_catalog,
         teacher::classify_teacher,
+        teacher::estimate_teacher_cost,
         // Evaluations
         evaluations::create_evaluation,
         evaluations::list_evaluations,
@@ -251,6 +252,11 @@ fn v1_router() -> Router<AppState> {
         crate::services::teacher::policy::TeacherCatalogEntry,
         teacher::ClassifyTeacherRequest,
         teacher::ClassifyTeacherResponse,
+        teacher::TeacherCostEstimateRequest,
+        teacher::TeacherCostEstimateResponse,
+        crate::services::teacher::cost::EstimateBasis,
+        crate::services::teacher::cost::ExtractionEstimate,
+        crate::services::teacher::hosted::HostedTeacherEntry,
         // Pipeline
         crate::dto::pipeline::TriggerParseResponse,
         crate::dto::pipeline::TriggerRefineRequest,
