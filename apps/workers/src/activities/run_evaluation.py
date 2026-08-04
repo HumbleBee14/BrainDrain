@@ -18,7 +18,7 @@ import logging
 import math
 import random
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -41,6 +41,28 @@ _BENCHMARKS_DIR = Path(__file__).parent / "benchmarks"
 # Fixed seed for A/B response-position assignment: keeps blind comparison
 # de-biased yet reproducible across runs of the same model + data.
 _AB_POSITION_SEED = 1234
+
+
+@dataclass
+class EvaluationContext:
+    """Job-level context suites consult to decide whether/how to run.
+
+    Built in-process from `RunEvaluationInput` fields — suites branch on this
+    typed object (e.g. mode-specific suites) instead of growing positional
+    args or string-sniffing paths.
+    """
+
+    mode: str = ""
+    dataset_config: dict = field(default_factory=dict)
+    job_config: dict = field(default_factory=dict)
+
+
+def _build_context(input: RunEvaluationInput) -> EvaluationContext:
+    return EvaluationContext(
+        mode=getattr(input, "mode", "") or "",
+        dataset_config=getattr(input, "dataset_config", None) or {},
+        job_config=getattr(input, "job_config", None) or {},
+    )
 
 
 # -- EvaluationSuite Protocol & Registry --
@@ -72,11 +94,14 @@ class EvaluationSuite(Protocol):
         judge: LLMJudge,
         val_dataset: list[dict] | None,
         golden_dataset: list[dict] | None = None,
+        context: EvaluationContext | None = None,
     ) -> tuple[dict, dict]:
         """Run the suite. Returns (scores_dict, report_dict).
 
         `golden_dataset` holds pairs generated from document chunks the model
         never trained on (the golden holdout); most suites ignore it.
+        `context` carries job-level info (training mode, configs) for suites
+        that only apply to specific job kinds.
         """
         ...
 
@@ -334,6 +359,7 @@ async def run_evaluation_core(
         suites = get_registered_suites()
         scores = {}
         report = {}
+        context = _build_context(input)
 
         for suite in suites:
             safe_heartbeat(f"suite_{suite.name}")
@@ -345,6 +371,7 @@ async def run_evaluation_core(
                 judge,
                 val_dataset,
                 golden_dataset=golden_dataset,
+                context=context,
             )
             scores[suite.name] = suite_scores
             report[suite.name] = suite_report
@@ -367,7 +394,17 @@ class DomainSuite:
     name = "domain"
     weight = 0.30
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
         if not val_dataset:
             # No validation data — report no domain result (mean=None) so the
             # overall score excludes this suite and renormalizes, rather than
@@ -448,7 +485,17 @@ class GeneralCapabilitySuite:
     name = "general"
     weight = 0.25
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
         benchmark = _load_benchmark("general_benchmark.json")
 
         ft_correct = {"reasoning": 0, "math": 0, "coding": 0, "general_knowledge": 0}
@@ -528,7 +575,17 @@ class ABComparisonSuite:
     name = "ab_comparison"
     weight = 0.25
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
         if not val_dataset:
             # No validation data — report no win rate (None) so the overall score
             # excludes this suite instead of counting a fabricated 50%.
@@ -628,7 +685,17 @@ class SafetySuite:
     name = "safety"
     weight = 0.20
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
         prompts = _load_benchmark("safety_prompts.json")
 
         ft_refused = 0
@@ -700,7 +767,17 @@ class DocumentKnowledgeSuite:
 
     MAX_SAMPLES = 30
 
-    def run(self, model_ft, tok_ft, model_base, tok_base, judge, val_dataset, golden_dataset=None):
+    def run(
+        self,
+        model_ft,
+        tok_ft,
+        model_base,
+        tok_base,
+        judge,
+        val_dataset,
+        golden_dataset=None,
+        context=None,
+    ):
         if not golden_dataset:
             # No golden set (dataset predates the holdout, or generation was
             # disabled) — report None so the overall score excludes this suite.
