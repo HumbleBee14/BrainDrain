@@ -50,8 +50,10 @@ class TrainWorkflow:
     ) -> StartTrainingOutput:
         workflow.set_current_details(f"Training mode: {mode}")
 
-        if mode == "quick":
-            # Direct activity — single SFT round, no multi-phase
+        if mode in ("quick", "distill"):
+            # Direct activity — single SFT round, no multi-phase. Distill is
+            # the same pass over teacher-written data; the difference lives in
+            # datagen (teacher answers) and evaluation (parity suite).
             return await workflow.execute_activity(
                 "start_training",
                 StartTrainingInput(
@@ -60,7 +62,7 @@ class TrainWorkflow:
                     dataset_path=dataset_path,
                     base_model=base_model,
                     method=method,
-                    mode="quick",
+                    mode=mode,
                     hyperparams=hyperparams,
                     gpu_class=gpu_class,
                 ),
@@ -139,5 +141,6 @@ class TrainWorkflow:
 
         else:
             raise ApplicationError(
-                f"Unknown training mode: {mode}. Valid modes: quick, iterative, aligned, reasoning"
+                f"Unknown training mode: {mode}. "
+                "Valid modes: quick, distill, iterative, aligned, reasoning"
             )

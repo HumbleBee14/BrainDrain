@@ -27,6 +27,9 @@ class CreateTrainingJobInput:
     mode: str
     hyperparams: dict = field(default_factory=dict)
     gpu_class: str | None = None
+    # Distill mode: teacher block recorded on the job row. Any api_key inside
+    # is enc:v1-encrypted; plaintext never reaches this payload.
+    teacher_config: dict | None = None
 
 
 @dataclass
@@ -52,8 +55,8 @@ class CreateTrainingJobActivity:
         job_id = await self.infra.db.fetchval(
             """INSERT INTO training_jobs
                 (tenant_id, project_id, dataset_id, base_model, method, mode,
-                 hyperparams, gpu_class)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 hyperparams, gpu_class, teacher_config)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
             RETURNING id""",
             input.tenant_id,
             input.project_id,
@@ -63,6 +66,7 @@ class CreateTrainingJobActivity:
             input.mode,
             json.dumps(input.hyperparams),
             input.gpu_class,
+            json.dumps(input.teacher_config) if input.teacher_config is not None else None,
         )
         logger.info("Pipeline created training job %s", job_id)
         return str(job_id)
