@@ -7,14 +7,20 @@
 //! `Unknown` is informational, `Allowed` is reserved for catalog models
 //! whose weights ship under permissive licenses.
 
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-/// Hosts of proprietary-model APIs whose terms of service restrict using
-/// outputs to train other models. Hostname match only — path and port are
-/// irrelevant to whose terms apply.
-const RESTRICTED_HOSTS: &[&str] = &[
+/// Hosts of proprietary-model APIs whose terms of service restrict using outputs
+/// to train other models. Hostname match only — path and port are irrelevant to
+/// whose terms apply.
+///
+/// Defaults only. Providers revise their terms, and a list compiled into the
+/// binary would mean a release every time one does, so an operator replaces this
+/// via [`init_restricted_hosts`].
+const DEFAULT_RESTRICTED_HOSTS: &[&str] = &[
     "api.openai.com",
     "api.anthropic.com",
     "generativelanguage.googleapis.com",
@@ -22,6 +28,39 @@ const RESTRICTED_HOSTS: &[&str] = &[
     "api.cohere.com",
     "api.mistral.ai",
 ];
+
+static RESTRICTED_HOSTS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Install the operator's restricted-host list, replacing the defaults.
+///
+/// Hosts are lowercased on the way in so classification stays a plain
+/// comparison. Returns the previous state as an error if already initialized;
+/// call once at startup.
+pub fn init_restricted_hosts(hosts: Vec<String>) -> Result<(), ()> {
+    RESTRICTED_HOSTS
+        .set(
+            hosts
+                .into_iter()
+                .map(|host| host.trim().to_ascii_lowercase())
+                .filter(|host| !host.is_empty())
+                .collect(),
+        )
+        .map_err(|_| ())
+}
+
+/// Hosts currently treated as restricted.
+///
+/// An operator may legitimately configure an empty list — that means "classify
+/// nothing as restricted here", not "fall back to the defaults", so emptiness is
+/// respected rather than second-guessed.
+pub fn restricted_hosts() -> &'static [String] {
+    RESTRICTED_HOSTS.get_or_init(|| {
+        DEFAULT_RESTRICTED_HOSTS
+            .iter()
+            .map(|host| host.to_string())
+            .collect()
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -103,7 +142,7 @@ pub fn teacher_catalog() -> &'static [TeacherCatalogEntry] {
 pub fn classify_provider(api_base_url: &str, model: &str) -> ProviderPolicy {
     if let Some(host) = host_of(api_base_url) {
         let host = host.to_ascii_lowercase();
-        if RESTRICTED_HOSTS.contains(&host.as_str()) {
+        if restricted_hosts().iter().any(|known| known == &host) {
             return ProviderPolicy::Restricted;
         }
     }
