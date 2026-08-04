@@ -194,6 +194,21 @@ pub struct Config {
     #[serde(default)]
     pub deploy_min_teacher_parity: Option<f64>,
 
+    // ── Teacher-GPU Spend Cap (Stage 2 distillation) ──
+    /// Monthly USD cap on teacher-GPU (logprob extraction) spend for tenants
+    /// on the starter/free plan. Unset ⇒ uncapped for that tier — extraction
+    /// admission never refuses on cost.
+    #[serde(default)]
+    pub teacher_gpu_spend_cap_starter: Option<f64>,
+
+    /// Monthly USD cap on teacher-GPU spend for tenants on the growth plan.
+    #[serde(default)]
+    pub teacher_gpu_spend_cap_growth: Option<f64>,
+
+    /// Monthly USD cap on teacher-GPU spend for tenants on the pro plan.
+    #[serde(default)]
+    pub teacher_gpu_spend_cap_pro: Option<f64>,
+
     /// Inference instance health probe interval in seconds.
     #[serde(default = "default_inference_instance_health_poll_interval_secs")]
     pub inference_instance_health_poll_interval_secs: u64,
@@ -441,6 +456,20 @@ impl Config {
         split_csv(&self.trusted_proxy_cidrs)
     }
 
+    /// Monthly teacher-GPU spend cap for a plan name, mirroring
+    /// `PlanLimits::for_plan`'s tier matching. `None` means uncapped.
+    ///
+    /// Not yet called from a route — the extraction-admission endpoint that
+    /// consumes it lands in a later Stage 2 task.
+    #[allow(dead_code)]
+    pub fn teacher_gpu_spend_cap(&self, plan: &str) -> Option<f64> {
+        match plan {
+            "growth" => self.teacher_gpu_spend_cap_growth,
+            "pro" => self.teacher_gpu_spend_cap_pro,
+            _ => self.teacher_gpu_spend_cap_starter,
+        }
+    }
+
     /// Whether we're running in development mode.
     pub fn is_dev(&self) -> bool {
         self.environment == "development"
@@ -610,4 +639,32 @@ fn default_temporal_task_queue() -> String {
 }
 fn default_smtp_port() -> u16 {
     587
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn teacher_gpu_spend_cap_is_uncapped_by_default() {
+        let config = Config::test_default();
+        assert_eq!(config.teacher_gpu_spend_cap("starter"), None);
+        assert_eq!(config.teacher_gpu_spend_cap("growth"), None);
+        assert_eq!(config.teacher_gpu_spend_cap("pro"), None);
+    }
+
+    #[test]
+    fn teacher_gpu_spend_cap_selects_by_plan_tier() {
+        let mut config = Config::test_default();
+        config.teacher_gpu_spend_cap_starter = Some(10.0);
+        config.teacher_gpu_spend_cap_growth = Some(100.0);
+        config.teacher_gpu_spend_cap_pro = Some(1_000.0);
+
+        assert_eq!(config.teacher_gpu_spend_cap("starter"), Some(10.0));
+        assert_eq!(config.teacher_gpu_spend_cap("growth"), Some(100.0));
+        assert_eq!(config.teacher_gpu_spend_cap("pro"), Some(1_000.0));
+        // Unknown plan names fall back to the starter tier, mirroring
+        // `PlanLimits::for_plan`.
+        assert_eq!(config.teacher_gpu_spend_cap("enterprise"), Some(10.0));
+    }
 }

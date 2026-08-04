@@ -115,6 +115,15 @@ pub struct TrainingJob {
     /// Distill mode only: teacher endpoint/model block. Any api_key inside is
     /// SecretCipher-encrypted (enc:v1) — never plaintext.
     pub teacher_config: Option<serde_json::Value>,
+    /// Lifecycle state of the teacher logprob extraction run. NULL = no
+    /// fidelity upgrade requested for this job.
+    pub teacher_extraction_status: Option<String>,
+    /// Reservation id for the extraction FunctionCall, mirroring
+    /// `modal_call_id` for the training run itself.
+    pub teacher_extraction_modal_call_id: Option<String>,
+    /// Finalized teacher-GPU cost for extraction, billed separately from
+    /// `actual_cost` (the training run's own cost).
+    pub teacher_extraction_cost: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

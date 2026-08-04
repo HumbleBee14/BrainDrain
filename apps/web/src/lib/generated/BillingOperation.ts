@@ -3,4 +3,4 @@
 /**
  * Billing operation types.
  */
-export type BillingOperation = "parse" | "synthesize" | "train" | "evaluate" | "inference" | "export";
+export type BillingOperation = "parse" | "synthesize" | "train" | "evaluate" | "inference" | "export" | "extraction";

@@ -736,6 +736,16 @@ pub trait BillingEventRepository: Send + Sync {
         since: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'_, AppResult<f64>>;
 
+    /// Total committed cost for a tenant since a timestamp, restricted to one
+    /// billing operation. Teacher-GPU spend-cap accounting is its own budget
+    /// line, separate from total tenant spend.
+    fn sum_cost_since_for_operation(
+        &self,
+        tenant_id: Uuid,
+        operation: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'_, AppResult<f64>>;
+
     /// Inference usage breakdown by day (last N days).
     fn inference_usage_by_day(
         &self,

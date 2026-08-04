@@ -82,7 +82,11 @@ impl PlanLimits {
 }
 
 /// Start of the current UTC calendar month.
-fn current_month_start() -> chrono::DateTime<Utc> {
+///
+/// `pub(crate)` so other spend-cap checks (e.g. the teacher-GPU cap in
+/// `services::teacher::billing`) use the same month boundary rather than
+/// each defining their own.
+pub(crate) fn current_month_start() -> chrono::DateTime<Utc> {
     let now = Utc::now();
     Utc.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
         .single()

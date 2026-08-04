@@ -283,6 +283,10 @@ pub enum BillingOperation {
     Evaluate,
     Inference,
     Export,
+    /// Stage 2 distillation: teacher logprob extraction on our own metered GPU.
+    /// Distinct from `Train` so a cancelled extraction is never conflated with
+    /// a cancelled training run in billing.
+    Extraction,
 }
 
 /// GPU class for training provisioning.
@@ -568,6 +572,19 @@ mod tests {
         assert_eq!(
             InferenceInstanceLifecycleState::Retired.to_string(),
             "retired"
+        );
+    }
+
+    #[test]
+    fn billing_operation_extraction_is_distinct_from_train() {
+        assert_eq!(BillingOperation::Extraction.to_string(), "extraction");
+        assert_ne!(
+            BillingOperation::Extraction.to_string(),
+            BillingOperation::Train.to_string()
+        );
+        assert_eq!(
+            "extraction".parse::<BillingOperation>().unwrap(),
+            BillingOperation::Extraction
         );
     }
 
