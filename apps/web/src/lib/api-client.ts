@@ -81,6 +81,9 @@ export type {
   TeacherParityScores,
   ProviderPolicy,
   ClassifyTeacherResponse,
+  TeacherCostEstimateResponse,
+  DistillOptionsDto,
+  TeacherPrecision,
 } from "./generated";
 
 // Response types with frontend-friendly aliases
@@ -644,6 +647,15 @@ export const api = {
           method: "POST",
           body: JSON.stringify({ api_base_url: apiBaseUrl, model }),
         },
+      ),
+
+    costEstimate: (
+      token: string,
+      body: import("./generated").TeacherCostEstimateRequest,
+    ) =>
+      request<import("./generated").TeacherCostEstimateResponse>(
+        "/api/v1/teachers/cost-estimate",
+        { token, method: "POST", body: JSON.stringify(body) },
       ),
   },
 
