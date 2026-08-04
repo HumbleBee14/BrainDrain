@@ -368,8 +368,10 @@ development and must be set explicitly in production:
 | Object-storage delete protection | R2/MinIO console | Protect the uploads/adapters bucket from accidental/malicious loss — Postgres has PITR, object data needs its own protection. On **R2**: add a **Bucket Lock** rule (R2 has no S3-style versioning toggle) with a retention period covering the whole bucket. On **MinIO/S3**: enable bucket versioning (and replication if available). | Manual console action, not code |
 
 Also review the eval-gate thresholds (`DEPLOY_MIN_AB_WIN_RATE`,
-`DEPLOY_MAX_BENCHMARK_REGRESSION`, `DEPLOY_MIN_DOC_KNOWLEDGE_LIFT`) — all
-optional, but they are the production quality gate.
+`DEPLOY_MAX_BENCHMARK_REGRESSION`, `DEPLOY_MIN_DOC_KNOWLEDGE_LIFT`,
+`DEPLOY_MIN_TEACHER_PARITY`) — all optional, but they are the production
+quality gate. `DEPLOY_MIN_TEACHER_PARITY` applies to distill-mode models
+only; unset (the default) keeps teacher parity report-only.
 
 ---
 
