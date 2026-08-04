@@ -1,0 +1,297 @@
+//! Teacher config validation, key encryption, and provenance shaping.
+//!
+//! A teacher API key exists in plaintext only inside the incoming request.
+//! `validate_teacher` encrypts it with the tenant `SecretCipher` before the
+//! config can reach anything durable (DB rows, Temporal payloads), and no
+//! type in this module serializes the key back out to clients.
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use ts_rs::TS;
+use utoipa::ToSchema;
+
+use crate::services::secret_cipher::{SecretCipher, SecretCipherError};
+use crate::services::teacher::policy::{ProviderPolicy, classify_provider, host_of};
+
+/// Teacher block accepted in refine / full-pipeline / training requests.
+/// Deliberately `Deserialize`-only: responses never carry this type, so an
+/// API key can never round-trip back to a client.
+#[derive(Debug, Clone, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TeacherConfigDto {
+    pub api_base_url: String,
+    pub model: String,
+    #[ts(optional)]
+    pub api_key: Option<String>,
+    /// Required (`true`) when the provider policy is `restricted`.
+    #[ts(optional)]
+    pub tos_acknowledged: Option<bool>,
+    /// Ask the teacher to include its reasoning in answers. Never defaulted on.
+    #[ts(optional)]
+    pub include_cot: Option<bool>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TeacherConfigError {
+    #[error("Teacher endpoint must be a valid http(s) URL")]
+    InvalidBaseUrl,
+    #[error("Teacher model is required")]
+    MissingModel,
+    #[error(
+        "This provider's terms may restrict training on its outputs ({policy}). \
+         Confirm your use complies with their terms to continue."
+    )]
+    AcknowledgmentRequired { policy: &'static str },
+    #[error(transparent)]
+    Encryption(#[from] SecretCipherError),
+}
+
+/// A validated teacher whose key (if any) is already `enc:v1`-encrypted.
+/// Only encrypted material leaves this struct.
+#[derive(Debug, Clone)]
+pub struct ValidatedTeacher {
+    pub api_base_url: String,
+    pub model: String,
+    pub policy: ProviderPolicy,
+    pub include_cot: bool,
+    api_key_enc: Option<String>,
+}
+
+/// Validate shape + provider policy and encrypt the key.
+///
+/// Policy rule: a `Restricted` provider requires `tos_acknowledged == true`
+/// before anything is persisted or launched.
+pub fn validate_teacher(
+    dto: &TeacherConfigDto,
+    cipher: &SecretCipher,
+) -> Result<ValidatedTeacher, TeacherConfigError> {
+    let api_base_url = dto.api_base_url.trim();
+    let is_http = api_base_url.starts_with("http://") || api_base_url.starts_with("https://");
+    if api_base_url.is_empty() || !is_http || host_of(api_base_url).is_none() {
+        return Err(TeacherConfigError::InvalidBaseUrl);
+    }
+    let model = dto.model.trim();
+    if model.is_empty() {
+        return Err(TeacherConfigError::MissingModel);
+    }
+
+    let policy = classify_provider(api_base_url, model);
+    if policy == ProviderPolicy::Restricted && dto.tos_acknowledged != Some(true) {
+        return Err(TeacherConfigError::AcknowledgmentRequired {
+            policy: policy.as_str(),
+        });
+    }
+
+    let api_key_enc = match dto.api_key.as_deref().map(str::trim) {
+        Some(key) if !key.is_empty() => Some(cipher.encrypt(key)?),
+        _ => None,
+    };
+
+    Ok(ValidatedTeacher {
+        api_base_url: api_base_url.to_string(),
+        model: model.to_string(),
+        policy,
+        include_cot: dto.include_cot == Some(true),
+        api_key_enc,
+    })
+}
+
+impl ValidatedTeacher {
+    pub fn host(&self) -> String {
+        host_of(&self.api_base_url).unwrap_or_else(|| self.api_base_url.clone())
+    }
+
+    /// Teacher block for Temporal workflow inputs and `training_jobs.
+    /// teacher_config`. The key is present only in its encrypted form —
+    /// workers decrypt it in memory at call time.
+    pub fn workflow_value(&self) -> Value {
+        let mut block = json!({
+            "api_base_url": self.api_base_url,
+            "model": self.model,
+            "policy": self.policy.as_str(),
+            "include_cot": self.include_cot,
+        });
+        if let Some(enc) = &self.api_key_enc {
+            block["api_key"] = json!(enc);
+        }
+        block
+    }
+
+    /// Credential-free provenance block for `datasets.config.teacher`.
+    /// Shape is mirrored by the workers' `src/teacher/provenance.py`.
+    pub fn provenance_value(&self, generated_at: &str) -> Value {
+        json!({
+            "host": self.host(),
+            "model": self.model,
+            "policy": self.policy.as_str(),
+            "cot": self.include_cot,
+            "generated_at": generated_at,
+        })
+    }
+}
+
+/// Teacher provenance as exposed in responses (dataset / training job).
+/// Host + model only — never endpoint URLs with paths, never keys.
+#[derive(Debug, Clone, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct TeacherProvenance {
+    pub host: String,
+    pub model: String,
+    pub policy: ProviderPolicy,
+    pub cot: bool,
+    #[ts(optional)]
+    pub generated_at: Option<String>,
+}
+
+/// Read the write-once teacher block out of a `datasets.config` or
+/// `training_jobs.teacher_config` JSON value. Returns `None` when absent or
+/// incomplete — callers treat that as "not teacher-generated".
+pub fn provenance_from_config(config: &Value) -> Option<TeacherProvenance> {
+    let block = config.get("teacher").unwrap_or(config);
+    let host = match block.get("host").and_then(Value::as_str) {
+        Some(host) if !host.is_empty() => host.to_string(),
+        // Job teacher_config blocks store the full base URL instead of a host.
+        _ => host_of(block.get("api_base_url")?.as_str()?)?,
+    };
+    let model = block.get("model")?.as_str().filter(|m| !m.is_empty())?;
+    Some(TeacherProvenance {
+        host,
+        model: model.to_string(),
+        policy: ProviderPolicy::parse_lossy(
+            block.get("policy").and_then(Value::as_str).unwrap_or(""),
+        ),
+        cot: block
+            .get("cot")
+            .or_else(|| block.get("include_cot"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        generated_at: block
+            .get("generated_at")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cipher() -> SecretCipher {
+        // Test-only key: base64 of bytes 0x00..0x1f.
+        SecretCipher::new(Some("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="), false).unwrap()
+    }
+
+    fn dto(overrides: impl FnOnce(&mut TeacherConfigDto)) -> TeacherConfigDto {
+        let mut dto = TeacherConfigDto {
+            api_base_url: "https://teacher.example.com/v1".to_string(),
+            model: "big-teacher-72b".to_string(),
+            api_key: Some("sk-teacher-secret".to_string()),
+            tos_acknowledged: None,
+            include_cot: None,
+        };
+        overrides(&mut dto);
+        dto
+    }
+
+    #[test]
+    fn valid_teacher_encrypts_key_and_classifies() {
+        let teacher = validate_teacher(&dto(|_| {}), &cipher()).unwrap();
+        assert_eq!(teacher.policy, ProviderPolicy::Unknown);
+        let value = teacher.workflow_value();
+        let stored_key = value["api_key"].as_str().unwrap();
+        assert!(stored_key.starts_with("enc:v1:"));
+        assert!(!stored_key.contains("sk-teacher-secret"));
+    }
+
+    #[test]
+    fn invalid_url_rejected() {
+        for bad in ["", "teacher.example.com/v1", "ftp://teacher.example.com"] {
+            let err = validate_teacher(&dto(|d| d.api_base_url = bad.into()), &cipher());
+            assert!(
+                matches!(err, Err(TeacherConfigError::InvalidBaseUrl)),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_model_rejected() {
+        let err = validate_teacher(&dto(|d| d.model = "  ".into()), &cipher());
+        assert!(matches!(err, Err(TeacherConfigError::MissingModel)));
+    }
+
+    #[test]
+    fn restricted_provider_requires_acknowledgment() {
+        let restricted = |ack: Option<bool>| {
+            validate_teacher(
+                &dto(|d| {
+                    d.api_base_url = "https://api.openai.com/v1".into();
+                    d.tos_acknowledged = ack;
+                }),
+                &cipher(),
+            )
+        };
+        assert!(matches!(
+            restricted(None),
+            Err(TeacherConfigError::AcknowledgmentRequired {
+                policy: "restricted"
+            })
+        ));
+        assert!(matches!(
+            restricted(Some(false)),
+            Err(TeacherConfigError::AcknowledgmentRequired { .. })
+        ));
+        assert_eq!(
+            restricted(Some(true)).unwrap().policy,
+            ProviderPolicy::Restricted
+        );
+    }
+
+    #[test]
+    fn missing_key_stays_absent() {
+        let teacher = validate_teacher(&dto(|d| d.api_key = None), &cipher()).unwrap();
+        assert!(teacher.workflow_value().get("api_key").is_none());
+    }
+
+    #[test]
+    fn provenance_value_carries_no_key() {
+        let teacher = validate_teacher(&dto(|_| {}), &cipher()).unwrap();
+        let provenance = teacher.provenance_value("2026-08-04T00:00:00Z");
+        assert_eq!(provenance["host"], "teacher.example.com");
+        assert_eq!(provenance["model"], "big-teacher-72b");
+        assert_eq!(provenance["cot"], false);
+        assert!(provenance.get("api_key").is_none());
+        assert!(!provenance.to_string().contains("sk-teacher-secret"));
+    }
+
+    #[test]
+    fn provenance_reader_roundtrips_dataset_config() {
+        let config = json!({"teacher": {
+            "host": "teacher.example.com",
+            "model": "big-teacher-72b",
+            "policy": "allowed",
+            "cot": true,
+            "generated_at": "2026-08-04T00:00:00Z",
+        }});
+        let parsed = provenance_from_config(&config).unwrap();
+        assert_eq!(parsed.host, "teacher.example.com");
+        assert_eq!(parsed.policy, ProviderPolicy::Allowed);
+        assert!(parsed.cot);
+    }
+
+    #[test]
+    fn provenance_reader_handles_job_teacher_config_shape() {
+        let teacher = validate_teacher(&dto(|_| {}), &cipher()).unwrap();
+        let parsed = provenance_from_config(&teacher.workflow_value()).unwrap();
+        assert_eq!(parsed.host, "teacher.example.com");
+        assert_eq!(parsed.model, "big-teacher-72b");
+        assert_eq!(parsed.generated_at, None);
+    }
+
+    #[test]
+    fn provenance_reader_rejects_incomplete_blocks() {
+        assert!(provenance_from_config(&json!({})).is_none());
+        assert!(provenance_from_config(&json!({"teacher": {"model": "m"}})).is_none());
+        assert!(provenance_from_config(&json!({"teacher": "big-teacher"})).is_none());
+    }
+}
