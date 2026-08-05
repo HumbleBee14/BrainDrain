@@ -80,6 +80,7 @@ class _FakeDB:
 
 class _Settings:
     modal_app_name = "app"
+    modal_function_apps = {}
     modal_function_name = "train"
     modal_sft_round_function_name = "train_sft_round"
     modal_evaluate_holdout_function_name = "evaluate_holdout"

@@ -72,6 +72,7 @@ def _provider(monkeypatch, fc):
     settings = types.SimpleNamespace(
         modal_poll_interval_secs=15,
         modal_app_name="platform-training",
+        modal_function_apps={},
         modal_function_name="train",
     )
     infra = types.SimpleNamespace(db=_FakeDB(), settings=settings)

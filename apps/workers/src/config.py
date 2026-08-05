@@ -64,6 +64,10 @@ class WorkerSettings(BaseSettings):
     # Cloud GPU (Modal serverless) — used when gpu_provider="modal".
     # One deployed function per GPU-bound activity (see apps/workers/modal_app.py).
     modal_app_name: str = "platform-training"
+    # Per-function app-name overrides, e.g. {"train_on_policy": "other-app"}.
+    # Lets a subset of functions ship on a separate app when the main app's
+    # deploy is blocked (image rebuilds) without forking the worker config.
+    modal_function_apps: dict[str, str] = {}
     modal_function_name: str = "train"
     # On-policy distillation cannot run on the training image: it needs vLLM
     # in-process to reach its teacher sidecar, and unsloth cannot resolve beside

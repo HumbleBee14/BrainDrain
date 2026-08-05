@@ -647,7 +647,8 @@ class ModalGpuProvider:
             logger.info("Recovering Modal call %s for %s %s", recover_id, label, row_id[:8])
             fc = modal.FunctionCall.from_id(recover_id)
         else:
-            fn = modal.Function.from_name(settings.modal_app_name, function_name)
+            app_name = settings.modal_function_apps.get(function_name, settings.modal_app_name)
+            fn = modal.Function.from_name(app_name, function_name)
             logger.info("Spawning Modal %s (row=%s, gpu=%s)", label, row_id[:8], gpu)
             # gpu=None keeps the function's declared resources (CPU-only work).
             target = fn.with_options(gpu=gpu) if gpu else fn

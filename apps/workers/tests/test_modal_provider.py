@@ -21,7 +21,7 @@ def _install_fake_modal(
     - modal.FunctionCall.from_id(call_id) -> FunctionCall-like
     - FunctionCall-like exposes .object_id and .get.aio(timeout=0)
     """
-    calls = {"spawn": 0, "from_id": 0, "gpu": None}
+    calls = {"spawn": 0, "from_id": 0, "gpu": None, "from_name": None}
 
     class _FunctionCallHandle:
         """What .spawn.aio(...) or FunctionCall.from_id(...) returns."""
@@ -65,6 +65,7 @@ def _install_fake_modal(
     class Function:
         @staticmethod
         def from_name(app, fn):
+            calls["from_name"] = (app, fn)
             return _function_handle
 
     fake = types.ModuleType("modal")
@@ -86,11 +87,12 @@ class _FakeDB:
         self.updates.append((q, args))
 
 
-def _make_provider(db):
+def _make_provider(db, function_apps=None):
     import src.gpu_provider as gp
 
     class _S:
         modal_app_name = "app"
+        modal_function_apps = function_apps or {}
         modal_function_name = "train"
         modal_poll_interval_secs = 0
 
@@ -143,6 +145,39 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
     # persisted value must be the spawned object_id, tagged with the function name
     _, args = db.updates[0]
     assert args[0] == "train:call-xyz"
+
+
+@pytest.mark.asyncio
+async def test_function_app_override_routes_to_other_app(monkeypatch):
+    monkeypatch.setattr("asyncio.sleep", _noop_sleep)
+    calls = _install_fake_modal(
+        monkeypatch,
+        spawn_result={"adapter_path": "s3://a", "adapter_size_bytes": 1, "metrics": {}},
+    )
+    monkeypatch.setattr("temporalio.activity.heartbeat", lambda *a, **k: None)
+    prov = _make_provider(
+        _FakeDB(existing_call_id=None), function_apps={"train": "side-app"}
+    )
+
+    await prov.run_training(
+        tenant_id="t",
+        training_job_id="j",
+        dataset_path="p",
+        base_model="m",
+        method="lora",
+        mode="quick",
+        hyperparams={},
+        gpu_class="a10080gb",
+        llm_config={
+            "api_base_url": "u",
+            "api_key": "k",
+            "model": "m",
+            "max_tokens": 1,
+            "is_custom": False,
+        },
+    )
+
+    assert calls["from_name"] == ("side-app", "train")
 
 
 @pytest.mark.asyncio
