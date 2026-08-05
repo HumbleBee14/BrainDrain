@@ -6,6 +6,23 @@ use uuid::Uuid;
 use crate::error::AppResult;
 use crate::repositories::traits::{BillingEventRepository, BoxFuture};
 
+/// Spend committed to the ledger plus spend still undelivered in the outbox,
+/// for one tenant across a set of operations, since a timestamp.
+///
+/// One statement — one snapshot. The relay moves a row from outbox to ledger in
+/// a single commit, so reading the two tables separately can count that row
+/// zero times: absent from an earlier ledger read, already delivered by a later
+/// outbox read. Shared with the admission re-check in `training_job_repo`,
+/// which runs the same sum inside its own locked transaction, so the two
+/// enforcement points cannot drift apart.
+///
+/// Binds: `$1` tenant_id, `$2` operations, `$3` since.
+pub(crate) const DELIVERED_AND_IN_FLIGHT_COST_SQL: &str = "SELECT COALESCE((SELECT SUM(cost_usd) FROM billing_events \
+        WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3), 0)::FLOAT8 \
+          + COALESCE((SELECT SUM(cost_usd) FROM billing_outbox \
+        WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3 \
+          AND delivered_at IS NULL), 0)::FLOAT8";
+
 /// Daily inference usage breakdown.
 #[derive(Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct InferenceUsageDay {
@@ -172,49 +189,21 @@ impl BillingEventRepository for PgBillingEventRepo {
         })
     }
 
-    fn sum_cost_since_for_operation(
+    fn sum_delivered_and_in_flight_cost_since(
         &self,
         tenant_id: Uuid,
-        operation: &str,
+        operations: &[String],
         since: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'_, AppResult<f64>> {
-        let operation = operation.to_string();
+        let operations = operations.to_vec();
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
-            let total = sqlx::query_scalar::<_, f64>(
-                "SELECT COALESCE(SUM(cost_usd), 0)::FLOAT8 FROM billing_events \
-                 WHERE tenant_id = $1 AND operation = $2 AND created_at >= $3",
-            )
-            .bind(tenant_id)
-            .bind(&operation)
-            .bind(since)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-            Ok(total)
-        })
-    }
-
-    fn sum_undelivered_cost_since_for_operation(
-        &self,
-        tenant_id: Uuid,
-        operation: &str,
-        since: chrono::DateTime<chrono::Utc>,
-    ) -> BoxFuture<'_, AppResult<f64>> {
-        let operation = operation.to_string();
-        Box::pin(async move {
-            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
-            let total = sqlx::query_scalar::<_, f64>(
-                "SELECT COALESCE(SUM(cost_usd), 0)::FLOAT8 FROM billing_outbox \
-                 WHERE tenant_id = $1 AND operation = $2 AND created_at >= $3 \
-                   AND delivered_at IS NULL",
-            )
-            .bind(tenant_id)
-            .bind(&operation)
-            .bind(since)
-            .fetch_one(&mut *tx)
-            .await?;
+            let total = sqlx::query_scalar::<_, f64>(DELIVERED_AND_IN_FLIGHT_COST_SQL)
+                .bind(tenant_id)
+                .bind(&operations)
+                .bind(since)
+                .fetch_one(&mut *tx)
+                .await?;
 
             tx.commit().await?;
             Ok(total)

@@ -16,8 +16,10 @@
 //! rows still in `billing_outbox` — reservations for runs currently holding a
 //! GPU and terminal charges awaiting the relay. Reading only `billing_events`
 //! admits every run in that window against a total none of them contribute to.
-//! The two reads can transiently double-count a row the relay delivers between
-//! them, which errs toward refusing — never toward unbounded admission.
+//! Both ledgers are read in one statement — one snapshot — because the relay
+//! moves a row between them in a single commit: read separately, a row
+//! delivered between the reads is counted by neither, and the cap admits
+//! against a total missing spend that just became real.
 
 use uuid::Uuid;
 
@@ -53,6 +55,23 @@ pub struct TeacherSpendReservation {
     /// cap — `BillingOperation::teacher_gpu_operations`, stringly because the
     /// repository binds them straight into SQL.
     pub counted_operations: Vec<String>,
+}
+
+impl TeacherSpendReservation {
+    /// Refuse if writing this reservation would push `already_spent_usd` over
+    /// its cap.
+    ///
+    /// The policy — comparison and message — lives here in the service layer;
+    /// the repository only executes it against the sum it read inside the
+    /// locked admission transaction.
+    pub fn admit_against(&self, already_spent_usd: f64) -> AppResult<()> {
+        if teacher_gpu_spend_would_exceed_cap(self.cap_usd, already_spent_usd, self.cost_usd) {
+            return Err(AppError::Forbidden {
+                message: SPEND_CAP_MESSAGE.to_string(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// The reservation an on-policy admission must write, or `None` for a run with
@@ -125,17 +144,14 @@ pub async fn check_teacher_gpu_spend_cap(
         return Ok(());
     };
 
-    let month_start = current_month_start();
-    let mut spent = 0.0;
-    for operation in platform_shared::enums::BillingOperation::teacher_gpu_operations() {
-        let operation = operation.to_string();
-        spent += billing_repo
-            .sum_cost_since_for_operation(tenant_id, &operation, month_start)
-            .await?;
-        spent += billing_repo
-            .sum_undelivered_cost_since_for_operation(tenant_id, &operation, month_start)
-            .await?;
-    }
+    let operations: Vec<String> =
+        platform_shared::enums::BillingOperation::teacher_gpu_operations()
+            .iter()
+            .map(|operation| operation.to_string())
+            .collect();
+    let spent = billing_repo
+        .sum_delivered_and_in_flight_cost_since(tenant_id, &operations, current_month_start())
+        .await?;
 
     if teacher_gpu_spend_would_exceed_cap(Some(cap), spent, estimate_cost_usd) {
         return Err(AppError::Forbidden {
@@ -161,8 +177,7 @@ mod tests {
         extraction_spend: f64,
         teacher_serving_spend: f64,
         undelivered_spend: f64,
-        asked: Mutex<Vec<String>>,
-        asked_undelivered: Mutex<Vec<String>>,
+        asked: Mutex<Vec<Vec<String>>>,
     }
 
     impl LedgerStub {
@@ -172,7 +187,6 @@ mod tests {
                 teacher_serving_spend: 0.0,
                 undelivered_spend: 0.0,
                 asked: Mutex::new(Vec::new()),
-                asked_undelivered: Mutex::new(Vec::new()),
             }
         }
 
@@ -197,48 +211,30 @@ mod tests {
             }
         }
 
-        fn operations_asked_about(&self) -> Vec<String> {
+        fn reads_made(&self) -> Vec<Vec<String>> {
             self.asked.lock().expect("stub lock").clone()
-        }
-
-        fn operations_asked_about_undelivered(&self) -> Vec<String> {
-            self.asked_undelivered.lock().expect("stub lock").clone()
         }
     }
 
     impl BillingEventRepository for LedgerStub {
-        fn sum_cost_since_for_operation(
+        fn sum_delivered_and_in_flight_cost_since(
             &self,
             _tenant_id: Uuid,
-            operation: &str,
+            operations: &[String],
             _since: chrono::DateTime<chrono::Utc>,
         ) -> BoxFuture<'_, AppResult<f64>> {
             self.asked
                 .lock()
                 .expect("stub lock")
-                .push(operation.to_string());
-            let spend = match operation {
-                "extraction" => self.extraction_spend,
-                "teacher_serving" => self.teacher_serving_spend,
-                _ => 0.0,
-            };
-            Box::pin(async move { Ok(spend) })
-        }
-
-        fn sum_undelivered_cost_since_for_operation(
-            &self,
-            _tenant_id: Uuid,
-            operation: &str,
-            _since: chrono::DateTime<chrono::Utc>,
-        ) -> BoxFuture<'_, AppResult<f64>> {
-            self.asked_undelivered
-                .lock()
-                .expect("stub lock")
-                .push(operation.to_string());
-            let spend = match operation {
-                "teacher_serving" => self.undelivered_spend,
-                _ => 0.0,
-            };
+                .push(operations.to_vec());
+            let spend = operations
+                .iter()
+                .map(|operation| match operation.as_str() {
+                    "extraction" => self.extraction_spend,
+                    "teacher_serving" => self.teacher_serving_spend + self.undelivered_spend,
+                    _ => 0.0,
+                })
+                .sum();
             Box::pin(async move { Ok(spend) })
         }
 
@@ -334,8 +330,12 @@ mod tests {
     /// The cap sums the same operations the workers write. If either side renames
     /// one, or a new teacher-GPU operation is added to the enum without being
     /// summed here, the recorded spend silently stops counting.
+    ///
+    /// One read, not one per ledger per operation: the relay moves a row from
+    /// outbox to ledger in a single commit, so a row it delivers between two
+    /// separate reads would be counted by neither.
     #[tokio::test]
-    async fn the_cap_counts_every_teacher_gpu_operation() {
+    async fn the_cap_counts_every_teacher_gpu_operation_in_one_read() {
         let ledger = LedgerStub::with_spend(100.00);
 
         let _ = check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(1.00), 0.01).await;
@@ -345,8 +345,7 @@ mod tests {
                 .iter()
                 .map(|operation| operation.to_string())
                 .collect();
-        assert_eq!(ledger.operations_asked_about(), expected);
-        assert_eq!(ledger.operations_asked_about_undelivered(), expected);
+        assert_eq!(ledger.reads_made(), vec![expected]);
     }
 
     /// A run holding a GPU right now has its charge in the outbox, not the
@@ -414,8 +413,7 @@ mod tests {
             .await
             .expect("no cap, no refusal");
 
-        assert!(ledger.operations_asked_about().is_empty());
-        assert!(ledger.operations_asked_about_undelivered().is_empty());
+        assert!(ledger.reads_made().is_empty());
     }
 
     #[test]
@@ -441,6 +439,41 @@ mod tests {
     #[test]
     fn zero_estimate_never_pushes_over_an_unbreached_cap() {
         assert!(!teacher_gpu_spend_would_exceed_cap(Some(50.0), 10.0, 0.0));
+    }
+
+    /// One statement, both ledgers. Splitting this into a ledger read and an
+    /// outbox read is how a row the relay delivers mid-check vanishes from both
+    /// sums — under-counting spend at the exact moment it becomes real.
+    #[test]
+    fn the_spend_sum_reads_both_ledgers_in_one_statement() {
+        use crate::repositories::billing_event_repo::DELIVERED_AND_IN_FLIGHT_COST_SQL;
+
+        assert!(DELIVERED_AND_IN_FLIGHT_COST_SQL.contains("billing_events"));
+        assert!(DELIVERED_AND_IN_FLIGHT_COST_SQL.contains("billing_outbox"));
+        assert!(DELIVERED_AND_IN_FLIGHT_COST_SQL.contains("delivered_at IS NULL"));
+    }
+
+    /// The refusal the repository executes inside the admission transaction is
+    /// the same policy, same message, as the service's own pre-check.
+    #[test]
+    fn a_reservation_refuses_its_own_admission_over_the_cap() {
+        let (plan, block) = admitted_improve_pass();
+        let reservation = admission_reservation(
+            Some(&plan.gpu_class),
+            Some(&block),
+            &plan.estimate,
+            Some(50.0),
+        )
+        .expect("an on-policy run reserves");
+
+        reservation
+            .admit_against(50.0 - reservation.cost_usd)
+            .expect("exactly at the cap is allowed");
+        let refusal = reservation
+            .admit_against(50.01 - reservation.cost_usd)
+            .expect_err("one cent over the cap is refused");
+
+        assert_eq!(refusal.to_string(), SPEND_CAP_MESSAGE);
     }
 
     // ── Admission reservations ──

@@ -751,24 +751,21 @@ pub trait BillingEventRepository: Send + Sync {
         since: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'_, AppResult<f64>>;
 
-    /// Total committed cost for a tenant since a timestamp, restricted to one
-    /// billing operation. Teacher-GPU spend-cap accounting is its own budget
-    /// line, separate from total tenant spend.
-    fn sum_cost_since_for_operation(
+    /// Cost committed to the ledger plus cost still in `billing_outbox`
+    /// awaiting delivery — reservations for runs on a GPU and terminal charges
+    /// the relay has not moved yet — since a timestamp, restricted to the given
+    /// operations. Teacher-GPU spend-cap accounting is its own budget line,
+    /// separate from total tenant spend.
+    ///
+    /// One read on purpose: the relay moves a row from outbox to ledger in a
+    /// single commit, so two separate reads can miss it in both — a delivered
+    /// row absent from the earlier ledger read and no longer undelivered by the
+    /// later outbox read — under-counting spend at the exact moment it becomes
+    /// real.
+    fn sum_delivered_and_in_flight_cost_since(
         &self,
         tenant_id: Uuid,
-        operation: &str,
-        since: chrono::DateTime<chrono::Utc>,
-    ) -> BoxFuture<'_, AppResult<f64>>;
-
-    /// Cost sitting in `billing_outbox` awaiting delivery to the ledger,
-    /// restricted to one operation: reservations for runs still on a GPU and
-    /// terminal charges the relay has not moved yet. A spend cap that reads
-    /// only the ledger admits every run in this window against a stale total.
-    fn sum_undelivered_cost_since_for_operation(
-        &self,
-        tenant_id: Uuid,
-        operation: &str,
+        operations: &[String],
         since: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'_, AppResult<f64>>;
 

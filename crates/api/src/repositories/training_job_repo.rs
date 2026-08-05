@@ -5,11 +5,10 @@ use sqlx::PgPool;
 use sqlx::Postgres;
 use uuid::Uuid;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
+use crate::repositories::billing_event_repo::DELIVERED_AND_IN_FLIGHT_COST_SQL;
 use crate::repositories::traits::{BoxFuture, TrainingJobRepository};
-use crate::services::teacher::billing::{
-    SPEND_CAP_MESSAGE, TeacherSpendReservation, teacher_gpu_spend_would_exceed_cap,
-};
+use crate::services::teacher::billing::TeacherSpendReservation;
 use crate::services::teacher::serving_cost::teacher_reservation_billing_event_id;
 
 /// The outcome a user-cancelled run is billed under. Distinct from the worker's
@@ -37,24 +36,14 @@ async fn check_cap_and_reserve(
     .execute(&mut **tx)
     .await?;
 
-    let spent = sqlx::query_scalar::<_, f64>(
-        "SELECT COALESCE((SELECT SUM(cost_usd) FROM billing_events \
-            WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3), 0)::FLOAT8 \
-              + COALESCE((SELECT SUM(cost_usd) FROM billing_outbox \
-            WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3 \
-              AND delivered_at IS NULL), 0)::FLOAT8",
-    )
-    .bind(tenant_id)
-    .bind(&reservation.counted_operations)
-    .bind(reservation.month_start)
-    .fetch_one(&mut **tx)
-    .await?;
+    let spent = sqlx::query_scalar::<_, f64>(DELIVERED_AND_IN_FLIGHT_COST_SQL)
+        .bind(tenant_id)
+        .bind(&reservation.counted_operations)
+        .bind(reservation.month_start)
+        .fetch_one(&mut **tx)
+        .await?;
 
-    if teacher_gpu_spend_would_exceed_cap(reservation.cap_usd, spent, reservation.cost_usd) {
-        return Err(AppError::Forbidden {
-            message: SPEND_CAP_MESSAGE.to_string(),
-        });
-    }
+    reservation.admit_against(spent)?;
 
     sqlx::query(
         "INSERT INTO billing_outbox \
@@ -333,8 +322,9 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .await?;
 
             // A run cancelled before it started never held a GPU, so its
-            // admission reservation must go with it — left behind, the relay
-            // would eventually bill the estimate for a run that never ran.
+            // admission reservation goes with it. The stale reaper would delete
+            // it too — two days from now; releasing it here frees the tenant's
+            // cap headroom the moment they cancel.
             if job.is_some() {
                 sqlx::query(
                     "DELETE FROM billing_outbox \
