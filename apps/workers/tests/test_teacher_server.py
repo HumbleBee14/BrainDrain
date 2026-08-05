@@ -9,6 +9,7 @@ import signal
 import subprocess
 
 import pytest
+
 from src.teacher import server as server_module
 from src.teacher.server import (
     TeacherServer,

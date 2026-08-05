@@ -6,6 +6,7 @@ plain dict is the difference between a validation error and a wasted container.
 """
 
 import pytest
+
 from src.activities.on_policy import (
     DEFAULT_BETA,
     DEFAULT_LMBDA,

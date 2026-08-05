@@ -1,6 +1,6 @@
 # Distillation — Design Spec
 
-> Status: **Stages 1–2 implemented** (`feat/distillation-stage1`, `feat/distillation-stage2`); Stage 3 planned. What Stage 2 measured rather than assumed is in [STAGE2-SPIKE-FINDINGS.md](STAGE2-SPIKE-FINDINGS.md), and how to verify it is in [STAGE2-TESTING.md](STAGE2-TESTING.md). Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
+> Status: **Stages 1–3 implemented** (`feat/distillation-stage1`, `-stage2`, `-stage3`). What each stage measured rather than assumed is in [STAGE2-SPIKE-FINDINGS.md](STAGE2-SPIKE-FINDINGS.md) and [STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md); how to verify them is in [STAGE2-TESTING.md](STAGE2-TESTING.md) and [STAGE3-TESTING.md](STAGE3-TESTING.md). Stage 3 has not yet run on a GPU — that gap is itemized in its testing doc. Companion: [RESEARCH.md](RESEARCH.md) (the evidence behind every decision here).
 > Scope: multi-tenant, production-grade distillation as a first-class training capability.
 
 ---
@@ -123,7 +123,7 @@ TeacherConfig
 Topology (mirrors TRL's `DistillationTrainer` teacher-server mode, the current OSS reference):
 
 - Teacher on a vLLM server (Modal), student trainer connects, students generate rollouts (vLLM-buffered), teacher scores the student's own tokens.
-- **TRL server-mode constraint (verified in current docs):** with a remote teacher, reverse-KL/JSD (`beta > 0`) requires `loss_top_k` **exactly 1** (top-1 sampled reverse-KL path); richer top-k only works with forward KL (`beta = 0`), and full-vocab KD requires a *colocated* teacher. So Stage 3 chooses between: (a) TRL's supported top-1 sampled reverse-KL with remote teacher, (b) colocated teacher for full-vocab reverse KL (limits teacher size), or (c) a custom trainer. Decision deferred to Stage 3 design — budgeted as a real constraint, not a footnote.
+- **TRL server-mode constraint (as shipped, not as documented — see [STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md) §1):** with a remote teacher, reverse-KL/JSD (`beta > 0`) requires `loss_top_k` **exactly 1** (top-1 sampled reverse-KL path); richer top-k only works with forward KL (`beta = 0`), and full-vocab KD requires a *colocated* teacher. So Stage 3 chooses between: (a) TRL's supported top-1 sampled reverse-KL with remote teacher, (b) colocated teacher for full-vocab reverse KL (limits teacher size), or (c) a custom trainer. **Resolved: (a)**, because our catalog's 32B teacher cannot share a card with a training student — (b) is excluded by arithmetic, and (c) would hit the same top-k wall for the same money.
 - New coordination: two GPU workloads with a network dependency + health/restart semantics — the genuinely new infra work. Detailed design deferred until Stage 2 is validated (deliberate: research shows off-policy value ships first; on-policy is the quality/efficiency upgrade).
 
 ## 8. Data model & API deltas (summary)
