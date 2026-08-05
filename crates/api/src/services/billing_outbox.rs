@@ -23,6 +23,14 @@
 //! training's own charge is written from — so this module holds only the relay
 //! side of that contract (`reap_stale_pending_extractions` and the delivery
 //! filter below).
+//!
+//! An on-policy admission also reserves here (`reservation_pending`): the
+//! teacher's estimated share, written in the transaction that creates the run
+//! and normally retired by whichever terminal path closes it. Unlike the
+//! fallbacks above, its reaper decides by job status, not age alone: a run
+//! still on a GPU is delivered at its estimate, a run that can still start
+//! keeps its claim, and only a closed or vanished run's leftover is deleted —
+//! never billed (`reap_stale_teacher_reservations`).
 
 use sqlx::PgPool;
 use std::sync::Mutex;
@@ -261,7 +269,9 @@ const EXTRACTION_PENDING_STALE_SECS: i64 = 86_400;
 /// its estimate and forfeits the measured correction — but the run it brackets
 /// is a whole training job, whose closers (the worker's terminal write and the
 /// job reaper) normally retire the reservation long before this fires. A row
-/// still pending after two days means every one of them is gone.
+/// still pending after two days means every closer is gone, or the run is
+/// parked at a quote the tenant has not answered — which is why the reaper
+/// below consults the job's status before deciding what the row is owed.
 const TEACHER_RESERVATION_STALE_SECS: i64 = 172_800;
 /// How often the relay prunes delivered outbox rows. Coarse on purpose — the
 /// buffer only needs bounding, not tight trimming.
@@ -529,25 +539,17 @@ async fn reap_stale_pending_extractions(
     Ok(())
 }
 
-/// Close out teacher-share reservations whose run's every closer is gone.
-///
-/// A reservation is normally retired by whichever terminal path closes its run
-/// (the worker, the job reaper, or a cancel), all of which delete it in the
-/// same transaction as the real charge. One still pending after the staleness
-/// window means none of them ever ran, and the job row decides what it owes:
-///
-/// - a job still on a GPU (`provisioning`/`training`) is a run that outlived
-///   every watchdog — deliver the reservation at its estimate, the conservative
-///   fallback the tenant agreed to at admission;
-/// - any other status (or no job at all) is a run that never started or was
-///   closed without GPU time — parked at cost approval, cancelled or refused
-///   before provisioning — so the reservation is deleted, not billed. Deleted
-///   rather than zeroed: a $0 row delivered to the ledger is billing-page noise
-///   for a run the tenant never got.
-async fn reap_stale_teacher_reservations(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+/// Statuses under which a reservation's run is burning the GPU it reserved.
+const RESERVATION_ON_GPU_STATUSES: &str = "'provisioning', 'training'";
+
+/// Statuses under which a reservation's run may yet reach a GPU — on one now,
+/// queued for one, or parked at a quote the tenant can still approve. Deleting
+/// a claim in these states would let the eventual run train against a budget
+/// it no longer counts toward.
+const RESERVATION_LIVE_STATUSES: &str = "'pending', 'cost_approval', 'provisioning', 'training'";
+
+fn reap_reservation_delete_sql() -> String {
+    format!(
         "DELETE FROM billing_outbox \
          WHERE delivered_at IS NULL \
            AND COALESCE((metadata->>'reservation_pending')::boolean, false) = true \
@@ -556,18 +558,17 @@ async fn reap_stale_teacher_reservations(
                SELECT 1 FROM training_jobs \
                WHERE training_jobs.id = billing_outbox.resource_id \
                  AND training_jobs.tenant_id = billing_outbox.tenant_id \
-                 AND training_jobs.status IN ('provisioning', 'training')
-           )",
+                 AND training_jobs.status IN ({RESERVATION_LIVE_STATUSES})
+           )"
     )
-    .bind(TEACHER_RESERVATION_STALE_SECS as f64)
-    .execute(&mut **tx)
-    .await?;
+}
 
-    sqlx::query(
+fn reap_reservation_deliver_sql() -> String {
+    format!(
         "UPDATE billing_outbox \
          SET metadata = jsonb_set(
-                 jsonb_set(metadata, '{reservation_pending}', 'false'::jsonb, true),
-                 '{reservation_reaped}', 'true'::jsonb, true
+                 jsonb_set(metadata, '{{reservation_pending}}', 'false'::jsonb, true),
+                 '{{reservation_reaped}}', 'true'::jsonb, true
              ) \
          WHERE delivered_at IS NULL \
            AND COALESCE((metadata->>'reservation_pending')::boolean, false) = true \
@@ -576,12 +577,42 @@ async fn reap_stale_teacher_reservations(
                SELECT 1 FROM training_jobs \
                WHERE training_jobs.id = billing_outbox.resource_id \
                  AND training_jobs.tenant_id = billing_outbox.tenant_id \
-                 AND training_jobs.status IN ('provisioning', 'training')
-           )",
+                 AND training_jobs.status IN ({RESERVATION_ON_GPU_STATUSES})
+           )"
     )
-    .bind(TEACHER_RESERVATION_STALE_SECS as f64)
-    .execute(&mut **tx)
-    .await?;
+}
+
+/// Close out teacher-share reservations whose run's every closer is gone.
+///
+/// A reservation is normally retired by whichever terminal path closes its run
+/// (the worker, the job reaper, or a cancel), all of which delete it in the
+/// same transaction as the real charge. One still pending after the staleness
+/// window is decided by its job's status, not its age:
+///
+/// - a job still on a GPU (`provisioning`/`training`) is a run that outlived
+///   every watchdog — deliver the reservation at its estimate, the conservative
+///   fallback the tenant agreed to at admission;
+/// - a job that may still run (`pending`, or parked at `cost_approval` — a
+///   quote has no expiry) keeps its claim: the budget the run was admitted
+///   against must still see it when the tenant eventually approves. The claim
+///   is released the moment they cancel instead;
+/// - a terminal job, or none at all, is a run closed without unbilled GPU time
+///   — cancelled, failed or refused before its terminal writer knew about
+///   reservations — so the leftover is deleted, not billed. Deleted rather
+///   than zeroed: a $0 row delivered to the ledger is billing-page noise for a
+///   run the tenant never got.
+async fn reap_stale_teacher_reservations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&reap_reservation_delete_sql())
+        .bind(TEACHER_RESERVATION_STALE_SECS as f64)
+        .execute(&mut **tx)
+        .await?;
+
+    sqlx::query(&reap_reservation_deliver_sql())
+        .bind(TEACHER_RESERVATION_STALE_SECS as f64)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -724,6 +755,29 @@ mod tests {
     #[test]
     fn reservation_window_is_the_last_backstop_to_fire() {
         assert_eq!(TEACHER_RESERVATION_STALE_SECS, 172_800);
+    }
+
+    /// A quote has no expiry: a job parked at cost approval past the staleness
+    /// window can still be approved, and its run must still count against the
+    /// budget it was admitted under. Deleting the parked claim would let that
+    /// run train invisible to the cap — the exact hole the reservation closes.
+    #[test]
+    fn a_reservation_parked_at_a_quote_is_never_deleted() {
+        for still_live in ["'pending'", "'cost_approval'"] {
+            assert!(reap_reservation_delete_sql().contains(still_live));
+        }
+    }
+
+    /// Only a run actually burning its GPU is billed at the estimate. A parked
+    /// run keeps its claim pending; billing its quote before the tenant even
+    /// approved it would charge for GPU time that never existed.
+    #[test]
+    fn only_a_run_on_a_gpu_is_billed_at_its_estimate() {
+        let deliver = reap_reservation_deliver_sql();
+
+        assert!(deliver.contains("'provisioning', 'training'"));
+        assert!(!deliver.contains("cost_approval"));
+        assert!(!deliver.contains("'pending'"));
     }
 
     #[test]
