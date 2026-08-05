@@ -11,14 +11,14 @@ import pytest
 from src.workflows.train import (
     DISTILL_METHOD_HYPERPARAM,
     EPOCHS_HYPERPARAM,
+    NO_PARENT_IN_PLAN_MESSAGE,
     ON_POLICY_METHOD,
+    PARENT_ADAPTER_HYPERPARAM,
     TEACHER_MODEL_HYPERPARAM,
     TEACHER_PRECISION_HYPERPARAM,
     TEACHER_REVISION_HYPERPARAM,
     borrowed_fidelity_keys,
     extraction_plan,
-    PARENT_ADAPTER_HYPERPARAM,
-    borrowed_fidelity_keys,
     hyperparams_with_live_teacher,
     unsupported_plan_reason,
 )
@@ -80,6 +80,24 @@ def test_the_run_trains_the_epochs_the_quote_was_priced_from():
     resolved = hyperparams_with_live_teacher({EPOCHS_HYPERPARAM: 9}, PLAN)
 
     assert resolved[EPOCHS_HYPERPARAM] == 3
+
+
+def test_a_plan_admitted_before_parents_were_recorded_is_refused():
+    """A job approved from `cost_approval` replays its persisted plan verbatim, so
+    one admitted by an older binary can still arrive here. Refusing it says so;
+    defaulting would train from the base model and grade an untrained student."""
+    legacy = {k: v for k, v in PLAN.items() if k != PARENT_ADAPTER_HYPERPARAM}
+
+    assert unsupported_plan_reason(legacy, "distill") == NO_PARENT_IN_PLAN_MESSAGE
+
+
+def test_the_logit_path_needs_no_parent_to_continue_from():
+    """Only an improve pass continues something. Stage 2 trains from scratch on
+    stored distributions, and must not be refused for a key it never had."""
+    plan = {k: v for k, v in PLAN.items() if k != PARENT_ADAPTER_HYPERPARAM}
+    plan["distill_method"] = "logit"
+
+    assert unsupported_plan_reason(plan, "distill") is None
 
 
 def test_the_parent_adapter_reaches_training_as_a_platform_owned_key():
