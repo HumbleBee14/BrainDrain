@@ -918,18 +918,421 @@ class ModalGpuProvider:
         )
 
 
+class BeamGpuProvider:
+    """Run GPU work on Beam (beam.cloud) serverless task queues.
+
+    Mirrors ModalGpuProvider's durability contract with Beam's REST surface:
+    submitting to a deployed task queue returns a task id immediately, the id
+    is persisted to the row's reservation column BEFORE polling, and a retry /
+    worker restart reattaches to the in-flight task instead of paying for a
+    duplicate GPU run. The deployed queues (apps/workers/beam_app.py) wrap the
+    same compute cores as the Modal functions, so results are shape-identical.
+
+    Reservations share the Modal columns and the "<function>:<id>" tag format.
+    A reservation left by the other provider (e.g. after switching
+    APP_GPU_PROVIDER mid-flight) reattaches to a task Beam has never heard of;
+    the status endpoint 404s and the provider falls back to a fresh submit.
+
+    Not yet supported on Beam (raises with the reason):
+      - on-policy distillation and logprob extraction (need a validated
+        multi-GPU / vLLM-sidecar queue)
+      - GGUF export (needs the llama.cpp build baked into a Beam image)
+    """
+
+    TERMINAL_STATUSES = frozenset({"COMPLETE", "ERROR", "TIMEOUT", "CANCELLED"})
+
+    def __init__(self, infra):
+        self.infra = infra
+        settings = infra.settings
+        if not settings.beam_token:
+            raise RuntimeError("gpu_provider='beam' requires APP_BEAM_TOKEN")
+        if not settings.beam_workspace_id:
+            raise RuntimeError("gpu_provider='beam' requires APP_BEAM_WORKSPACE_ID")
+        if not settings.beam_queue_urls:
+            raise RuntimeError(
+                "gpu_provider='beam' requires APP_BEAM_QUEUE_URLS "
+                '(JSON map of {"train": "<invoke url>", ...} printed by beam deploy)'
+            )
+
+    def _resolve_gpu(self, gpu_class: str | None) -> str:
+        from src.constants import BEAM_GPU_MAP
+
+        key = (gpu_class or "").lower()
+        gpu = BEAM_GPU_MAP.get(key)
+        if gpu is None:
+            raise RuntimeError(
+                f"GPU class {gpu_class!r} is not available on the Beam provider. "
+                f"Available: {', '.join(sorted(BEAM_GPU_MAP))}"
+            )
+        return gpu
+
+    def _queue_url(self, function_name: str, gpu_class: str | None) -> str:
+        """The invoke URL for this function on this GPU class.
+
+        A Beam queue's hardware is fixed at deploy time (there is no per-call
+        GPU override), so honoring the billed gpu_class means deploying one
+        queue per (function, class) actually used. Lookup order:
+          1. "<function>@<gpu_class>"  — class-specific deployment
+          2. "<function>"              — single-class deployment; only correct
+                                          when it was deployed WITH that class.
+        """
+        urls = self.infra.settings.beam_queue_urls
+        key = (gpu_class or "").lower()
+        url = urls.get(f"{function_name}@{key}") or urls.get(function_name)
+        if not url:
+            raise RuntimeError(
+                f"No Beam queue configured for {function_name!r} (gpu_class={gpu_class!r}); "
+                "add it to APP_BEAM_QUEUE_URLS"
+            )
+        return url
+
+    def _headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.infra.settings.beam_token}"}
+
+    def _task_status_url(self, task_id: str) -> str:
+        settings = self.infra.settings
+        return f"{settings.beam_task_api_base}/{settings.beam_workspace_id}/{task_id}"
+
+    async def _submit(self, http, function_name: str, payload: dict, gpu_class: str | None) -> str:
+        """Submit to the queue; the body becomes the queue function's kwargs."""
+        response = await http.post(
+            self._queue_url(function_name, gpu_class),
+            json={"payload": payload},
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()["task_id"]
+
+    async def _fetch_task(self, http, task_id: str) -> dict | None:
+        """The task's current API record, or None if Beam does not know the id."""
+        response = await http.get(self._task_status_url(task_id), headers=self._headers())
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _decode_result(result) -> dict:
+        """Beam stores non-JSON results as base64-pickled blobs; the cores
+        return plain dicts, which standard pickle loads without cloudpickle."""
+        if isinstance(result, dict) and "base64" in result:
+            import base64
+            import pickle
+
+            return pickle.loads(base64.b64decode(result["base64"]))  # noqa: S301
+        if isinstance(result, str):
+            import json
+
+            return json.loads(result)
+        return result
+
+    async def _cancel_task(self, task_id: str) -> None:
+        """Best-effort stop of an in-flight Beam task (mirrors Modal cancel)."""
+        import asyncio
+
+        def _stop():
+            from beta9.channel import Channel
+            from beta9.clients.gateway import GatewayServiceStub, StopTasksRequest
+
+            settings = self.infra.settings
+            with Channel("gateway.beam.cloud", 443, ssl=True, token=settings.beam_token) as ch:
+                GatewayServiceStub(ch).stop_tasks(StopTasksRequest(task_ids=[task_id]))
+
+        await asyncio.to_thread(_stop)
+
+    async def _run_remote(
+        self,
+        *,
+        function_name: str,
+        payload: dict,
+        gpu_class: str | None,
+        table: str,
+        row_id: str,
+        tenant_id: str,
+        label: str,
+        clear_after: bool,
+        column: str = "modal_call_id",
+    ) -> dict:
+        """Submit (or reattach), poll to a terminal status, return the result.
+
+        Identical reservation flow to ModalGpuProvider._run_remote; see its
+        docstring for the tag-matching rules the two providers share.
+        """
+        import asyncio
+
+        import httpx
+        from temporalio import activity
+
+        if table not in _RESERVATION_TABLES:
+            raise ValueError(f"Unknown reservation table: {table}")
+        if column not in _RESERVATION_COLUMNS:
+            raise ValueError(f"Unknown reservation column: {column}")
+
+        settings = self.infra.settings
+        db = self.infra.db
+
+        stored = await db.fetchval(
+            f"SELECT {column} FROM {table} WHERE id = $1 AND tenant_id = $2",  # noqa: S608
+            row_id,
+            tenant_id,
+        )
+        tag, sep, stored_id = (stored or "").partition(":")
+        task_id = stored_id if (sep and tag == function_name) else None
+
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            record = None
+            if task_id:
+                record = await self._fetch_task(http, task_id)
+                if record is None:
+                    logger.info(
+                        "Stored id %s unknown to Beam (other provider or purged); resubmitting",
+                        task_id,
+                    )
+                    task_id = None
+                else:
+                    logger.info("Reattached Beam task %s for %s %s", task_id, label, row_id[:8])
+
+            if task_id is None:
+                logger.info(
+                    "Submitting Beam %s (row=%s, gpu_class=%s)", label, row_id[:8], gpu_class
+                )
+                task_id = await self._submit(http, function_name, payload, gpu_class)
+                await db.execute(
+                    f"UPDATE {table} SET {column} = $1 WHERE id = $2 AND tenant_id = $3",  # noqa: S608
+                    f"{function_name}:{task_id}",
+                    row_id,
+                    tenant_id,
+                )
+
+            try:
+                while True:
+                    record = await self._fetch_task(http, task_id)
+                    if record is None:
+                        raise RuntimeError(f"Beam task {task_id} disappeared mid-run")
+                    status = (record.get("status") or "").upper()
+                    if status in self.TERMINAL_STATUSES:
+                        break
+                    activity.heartbeat()
+                    await asyncio.sleep(settings.beam_poll_interval_secs)
+            except asyncio.CancelledError:
+                logger.info("Activity cancelled; stopping in-flight Beam task %s", task_id)
+                try:
+                    await self._cancel_task(task_id)
+                except Exception:
+                    logger.warning("Failed to stop Beam task on cancellation", exc_info=True)
+                raise
+
+        if status != "COMPLETE":
+            raise RuntimeError(f"Beam {label} task {task_id} ended {status}")
+
+        if clear_after:
+            await db.execute(
+                f"UPDATE {table} SET {column} = NULL WHERE id = $1 AND tenant_id = $2",  # noqa: S608
+                row_id,
+                tenant_id,
+            )
+
+        logger.info("Beam %s complete (row=%s)", label, row_id[:8])
+        return self._decode_result(record.get("result"))
+
+    async def run_training(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        dataset_path: str,
+        base_model: str,
+        method: str,
+        mode: str,
+        hyperparams: dict,
+        gpu_class: str | None,
+        llm_config: dict,
+    ) -> dict:
+        from src.constants import ON_POLICY_DISTILL_METHOD
+
+        if hyperparams.get("distill_method") == ON_POLICY_DISTILL_METHOD:
+            raise RuntimeError(
+                "On-policy distillation is not yet supported on the Beam provider: "
+                "it needs a validated multi-GPU queue with a vLLM teacher sidecar. "
+                "Run it with gpu_provider='modal'."
+            )
+        payload = {
+            "input": {
+                "tenant_id": tenant_id,
+                "training_job_id": training_job_id,
+                "dataset_path": dataset_path,
+                "base_model": base_model,
+                "method": method,
+                "mode": mode,
+                "hyperparams": hyperparams,
+                "gpu_class": gpu_class,
+            },
+            "llm_config": llm_config,
+        }
+        self._resolve_gpu(gpu_class)
+        return await self._run_remote(
+            function_name="train",
+            payload=payload,
+            gpu_class=gpu_class,
+            table="training_jobs",
+            row_id=training_job_id,
+            tenant_id=tenant_id,
+            label="training",
+            clear_after=False,
+        )
+
+    async def run_sft_round(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        dataset_path: str,
+        base_model: str,
+        method: str,
+        hyperparams: dict,
+        iteration: int,
+        adapter_path: str | None,
+        gpu_class: str | None,
+    ) -> dict:
+        payload = {
+            "input": {
+                "tenant_id": tenant_id,
+                "training_job_id": training_job_id,
+                "dataset_path": dataset_path,
+                "base_model": base_model,
+                "method": method,
+                "hyperparams": hyperparams,
+                "iteration": iteration,
+                "adapter_path": adapter_path,
+                "gpu_class": gpu_class,
+            }
+        }
+        self._resolve_gpu(gpu_class)
+        return await self._run_remote(
+            function_name="train_sft_round",
+            payload=payload,
+            gpu_class=gpu_class,
+            table="training_jobs",
+            row_id=training_job_id,
+            tenant_id=tenant_id,
+            label=f"sft_round(iter={iteration})",
+            clear_after=True,
+        )
+
+    async def run_evaluate_holdout(
+        self,
+        *,
+        tenant_id: str,
+        training_job_id: str,
+        adapter_path: str,
+        base_model: str,
+        method: str,
+        dataset_path: str,
+        hyperparams: dict,
+        iteration: int,
+        gpu_class: str | None,
+    ) -> dict:
+        payload = {
+            "input": {
+                "tenant_id": tenant_id,
+                "training_job_id": training_job_id,
+                "adapter_path": adapter_path,
+                "base_model": base_model,
+                "method": method,
+                "dataset_path": dataset_path,
+                "hyperparams": hyperparams,
+                "iteration": iteration,
+                "gpu_class": gpu_class,
+            }
+        }
+        self._resolve_gpu(gpu_class)
+        return await self._run_remote(
+            function_name="evaluate_holdout",
+            payload=payload,
+            gpu_class=gpu_class,
+            table="training_jobs",
+            row_id=training_job_id,
+            tenant_id=tenant_id,
+            label=f"holdout_eval(iter={iteration})",
+            clear_after=True,
+        )
+
+    async def run_evaluation(
+        self,
+        *,
+        tenant_id: str,
+        model_id: str,
+        evaluation_id: str,
+        adapter_path: str,
+        base_model: str,
+        dataset_path: str,
+        judge_model: str,
+        judge_api_base: str,
+        gpu_class: str | None,
+        llm_config: dict,
+        mode: str = "",
+        dataset_config: dict | None = None,
+        job_config: dict | None = None,
+    ) -> dict:
+        payload = {
+            "input": {
+                "tenant_id": tenant_id,
+                "model_id": model_id,
+                "evaluation_id": evaluation_id,
+                "adapter_path": adapter_path,
+                "base_model": base_model,
+                "dataset_path": dataset_path,
+                "judge_model": judge_model,
+                "judge_api_base": judge_api_base,
+                "gpu_class": gpu_class,
+                "mode": mode,
+                "dataset_config": dataset_config,
+                "job_config": job_config,
+            },
+            "llm_config": llm_config,
+        }
+        self._resolve_gpu(gpu_class)
+        return await self._run_remote(
+            function_name="run_evaluation",
+            payload=payload,
+            gpu_class=gpu_class,
+            table="evaluations",
+            row_id=evaluation_id,
+            tenant_id=tenant_id,
+            label="evaluation",
+            clear_after=False,
+        )
+
+    async def run_export_gguf(self, **_kwargs) -> dict:
+        raise RuntimeError(
+            "GGUF export is not yet supported on the Beam provider: the llama.cpp "
+            "toolchain is not baked into a Beam image. Run it with gpu_provider='modal'."
+        )
+
+    async def extract_logprobs(self, **_kwargs) -> dict:
+        raise RuntimeError(
+            "Teacher logprob extraction is not yet supported on the Beam provider: "
+            "it needs the pinned-vLLM extraction queue. Run it with gpu_provider='modal'."
+        )
+
+
 def create_gpu_provider(infra, provider_name: str = "local") -> GpuProvider:
     """Factory function to create the configured GPU provider.
 
     Args:
         infra: InfraContainer with S3, DB, Redis clients
-        provider_name: "local" or "modal"
+        provider_name: "local", "modal", or "beam"
     """
     if provider_name == "modal":
         logger.info("GPU provider: Modal (serverless)")
         return ModalGpuProvider(infra)
+    elif provider_name == "beam":
+        logger.info("GPU provider: Beam (serverless)")
+        return BeamGpuProvider(infra)
     elif provider_name == "local":
         logger.info("GPU provider: Local (worker GPU)")
         return LocalGpuProvider(infra)
     else:
-        raise ValueError(f"Unknown GPU provider: {provider_name}. Valid options: local, modal")
+        raise ValueError(
+            f"Unknown GPU provider: {provider_name}. Valid options: local, modal, beam"
+        )
