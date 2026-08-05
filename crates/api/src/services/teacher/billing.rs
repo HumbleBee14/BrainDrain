@@ -1,11 +1,16 @@
 //! Teacher-GPU spend cap.
 //!
-//! Extraction burns our own metered GPU time (unlike Stage 1, where teacher
-//! cost sat on the tenant's own API key), so it gets its own monthly budget
-//! line — separate from the general plan spend cap in `plan_service` — that
-//! an operator can configure per plan tier via `TEACHER_GPU_SPEND_CAP_*`.
-//! Shape mirrors `plan_service::check_spend_cap`: resolve the cap, sum
-//! committed spend for the month, refuse if the estimate would push over it.
+//! Extraction and on-policy improve passes burn our own metered GPU time
+//! (unlike Stage 1, where teacher cost sat on the tenant's own API key), so they
+//! share a monthly budget line — separate from the general plan spend cap in
+//! `plan_service` — that an operator can configure per plan tier via
+//! `TEACHER_GPU_SPEND_CAP_*`. Shape mirrors `plan_service::check_spend_cap`:
+//! resolve the cap, sum committed spend for the month, refuse if the estimate
+//! would push over it.
+//!
+//! The sum spans every operation in `BillingOperation::teacher_gpu_operations`.
+//! Counting only one of them would leave the other unbounded: a tenant could run
+//! improve passes back to back, each admitted against a total that never grew.
 
 use uuid::Uuid;
 
@@ -34,7 +39,7 @@ pub fn teacher_gpu_spend_would_exceed_cap(
     }
 }
 
-/// Refuse an extraction whose estimated cost would push the tenant's
+/// Refuse a teacher-GPU run whose estimated cost would push the tenant's
 /// teacher-GPU spend this month over its configured cap. `cap` is resolved by
 /// the caller (`Config::teacher_gpu_spend_cap`) from the tenant's plan, since
 /// this module has no `Config` dependency of its own.
@@ -48,15 +53,13 @@ pub async fn check_teacher_gpu_spend_cap(
         return Ok(());
     };
 
-    let spent = billing_repo
-        .sum_cost_since_for_operation(
-            tenant_id,
-            platform_shared::enums::BillingOperation::Extraction
-                .to_string()
-                .as_str(),
-            current_month_start(),
-        )
-        .await?;
+    let month_start = current_month_start();
+    let mut spent = 0.0;
+    for operation in platform_shared::enums::BillingOperation::teacher_gpu_operations() {
+        spent += billing_repo
+            .sum_cost_since_for_operation(tenant_id, operation.to_string().as_str(), month_start)
+            .await?;
+    }
 
     if teacher_gpu_spend_would_exceed_cap(Some(cap), spent, estimate_cost_usd) {
         return Err(AppError::Forbidden {
@@ -75,11 +78,12 @@ mod tests {
     use platform_db::models::BillingEvent;
     use std::sync::Mutex;
 
-    /// Ledger stand-in that answers only the one query the cap makes, recording
-    /// which operation it was asked about. Everything else is out of scope for a
+    /// Ledger stand-in that answers only the queries the cap makes, recording
+    /// which operations it was asked about. Everything else is out of scope for a
     /// spend cap and would be a bug to call.
     struct LedgerStub {
         extraction_spend: f64,
+        teacher_serving_spend: f64,
         asked: Mutex<Vec<String>>,
     }
 
@@ -87,6 +91,15 @@ mod tests {
         fn with_spend(extraction_spend: f64) -> Self {
             Self {
                 extraction_spend,
+                teacher_serving_spend: 0.0,
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_teacher_serving_spend(teacher_serving_spend: f64) -> Self {
+            Self {
+                extraction_spend: 0.0,
+                teacher_serving_spend,
                 asked: Mutex::new(Vec::new()),
             }
         }
@@ -107,10 +120,10 @@ mod tests {
                 .lock()
                 .expect("stub lock")
                 .push(operation.to_string());
-            let spend = if operation == "extraction" {
-                self.extraction_spend
-            } else {
-                0.0
+            let spend = match operation {
+                "extraction" => self.extraction_spend,
+                "teacher_serving" => self.teacher_serving_spend,
+                _ => 0.0,
             };
             Box::pin(async move { Ok(spend) })
         }
@@ -204,18 +217,50 @@ mod tests {
             .expect("45 + 5 is exactly at a 50 cap");
     }
 
-    /// The cap sums the same operation the worker writes. If either side renames
-    /// it, the recorded spend silently stops counting.
+    /// The cap sums the same operations the workers write. If either side renames
+    /// one, or a new teacher-GPU operation is added to the enum without being
+    /// summed here, the recorded spend silently stops counting.
     #[tokio::test]
-    async fn the_cap_counts_the_extraction_operation() {
+    async fn the_cap_counts_every_teacher_gpu_operation() {
         let ledger = LedgerStub::with_spend(100.00);
 
         let _ = check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(1.00), 0.01).await;
 
-        assert_eq!(
-            ledger.operations_asked_about(),
-            vec![platform_shared::enums::BillingOperation::Extraction.to_string()]
-        );
+        let expected: Vec<String> =
+            platform_shared::enums::BillingOperation::teacher_gpu_operations()
+                .iter()
+                .map(|operation| operation.to_string())
+                .collect();
+        assert_eq!(ledger.operations_asked_about(), expected);
+    }
+
+    /// On-policy spend lands under `teacher_serving`, not `extraction`. Counting
+    /// only extraction left improve passes unbounded: each was admitted against a
+    /// total that its own predecessors never contributed to.
+    #[tokio::test]
+    async fn recorded_on_policy_spend_alone_can_breach_the_cap() {
+        let ledger = LedgerStub::with_teacher_serving_spend(45.00);
+
+        let refusal = check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(50.00), 6.00)
+            .await
+            .expect_err("45 of on-policy spend + 6 is over a 50 cap");
+
+        assert!(matches!(refusal, AppError::Forbidden { .. }));
+    }
+
+    /// The two operations share one budget line, so neither can be spent up to the
+    /// cap independently of the other.
+    #[tokio::test]
+    async fn extraction_and_on_policy_spend_accumulate_against_one_cap() {
+        let ledger = LedgerStub {
+            extraction_spend: 30.00,
+            teacher_serving_spend: 25.00,
+            asked: Mutex::new(Vec::new()),
+        };
+
+        check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(50.00), 0.01)
+            .await
+            .expect_err("30 + 25 already exceeds a 50 cap");
     }
 
     #[tokio::test]

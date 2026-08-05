@@ -130,7 +130,56 @@ class TeacherServerConfig:
         return env
 
 
-def split_devices(device_count: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+def _nvml_device_count() -> int:
+    """Physical GPU count, read without initializing CUDA.
+
+    Deliberately not `torch.cuda.device_count()`: that caches its answer and, on
+    the way to it, makes the process's device set permanent. Everything about the
+    split has to be decided before any CUDA state exists, because
+    `CUDA_VISIBLE_DEVICES` stops having any effect the moment it does.
+    """
+    try:
+        import pynvml
+    except ImportError as exc:
+        raise TeacherServerError(
+            "Cannot enumerate GPUs: pynvml is missing, so this is not the on-policy image."
+        ) from exc
+
+    pynvml.nvmlInit()
+    try:
+        return int(pynvml.nvmlDeviceGetCount())
+    finally:
+        pynvml.nvmlShutdown()
+
+
+def container_gpu_ids(env: dict[str, str] | None = None, count_devices=_nvml_device_count):
+    """GPU ordinals this process is allowed to use.
+
+    Honours an inherited `CUDA_VISIBLE_DEVICES` rather than assuming the container
+    owns every card the driver can see. A scheduler that hands out `2,3` on an
+    8-GPU host means device 2 and device 3 — splitting `range(8)` there would
+    address six cards belonging to other jobs and one of them would be a teacher.
+
+    Returns the ids as CUDA will interpret them in a child process: absolute, so
+    passing a subset straight back down to `CUDA_VISIBLE_DEVICES` selects the same
+    physical cards.
+    """
+    declared = (env if env is not None else os.environ).get("CUDA_VISIBLE_DEVICES")
+    if declared is None or not declared.strip():
+        return tuple(range(count_devices()))
+
+    entries = [entry.strip() for entry in declared.split(",") if entry.strip()]
+    if not all(entry.isdigit() for entry in entries):
+        # GPU-UUID and MIG forms are legal here and cannot be split by ordinal.
+        raise TeacherServerError(
+            f"CUDA_VISIBLE_DEVICES is set to '{declared}', which names devices by "
+            f"identifier rather than index. On-policy distillation needs to assign "
+            f"cards to the teacher and the student by index."
+        )
+    return tuple(int(entry) for entry in entries)
+
+
+def split_devices(device_ids) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """Partition a container's GPUs into (teacher, student) ordinals.
 
     The teacher takes the leading devices and the student the last one. Raises on
@@ -138,12 +187,13 @@ def split_devices(device_count: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
     student's training state is the failure this whole arrangement exists to
     avoid, and it must not degrade quietly into an out-of-memory kill.
     """
-    if device_count < 2:
+    ids = tuple(device_ids)
+    if len(ids) < 2:
         raise TeacherServerError(
             f"On-policy distillation needs at least 2 GPUs in the container, found "
-            f"{device_count}. The teacher and the student cannot share one card."
+            f"{len(ids)}. The teacher and the student cannot share one card."
         )
-    return tuple(range(device_count - 1)), (device_count - 1,)
+    return ids[:-1], ids[-1:]
 
 
 def _probe(url: str, timeout: float) -> bool:

@@ -77,3 +77,64 @@ def test_other_strategies_declare_no_engine_and_keep_the_faster_path():
     """Only the strategy that needs a live teacher pays the Unsloth-less cost."""
     for key in ("quick", "distill", "distill_logit", "aligned", "reasoning"):
         assert getattr(get_strategy(key), "required_engine", None) is None
+
+
+def test_only_on_policy_declares_a_resident_teacher():
+    """The declaration is what makes the caller carve up the container's GPUs, and
+    doing that to a single-card run would refuse a job that was fine."""
+    assert DistillOnPolicyStrategy.runs_resident_teacher is True
+    for key in ("quick", "distill", "distill_logit", "aligned", "reasoning"):
+        assert getattr(get_strategy(key), "runs_resident_teacher", False) is False
+
+
+@pytest.mark.asyncio
+async def test_the_student_gpu_is_claimed_before_any_weights_are_loaded(monkeypatch):
+    """The ordering IS the fix. `CUDA_VISIBLE_DEVICES` is inert once a process has
+    touched CUDA, so a reservation made after `load_model` leaves the student on
+    device 0 — the card the teacher fills to 90%. This test fails if the two calls
+    are ever swapped back.
+    """
+    import src.activities.train_model as tm
+
+    from .helpers_training_core import fake_core_dependencies, run_core
+
+    order = fake_core_dependencies(monkeypatch, strategy=_TeacherStrategy())
+    monkeypatch.setattr(
+        tm,
+        "_reserve_student_devices",
+        lambda strategy: order.append("reserve") or (0,),
+    )
+
+    await run_core(mode="distill", hyperparams={"distill_method": "on_policy"})
+
+    assert order.index("reserve") < order.index("load_model")
+
+
+@pytest.mark.asyncio
+async def test_the_reserved_teacher_gpu_reaches_the_strategy(monkeypatch):
+    """Whoever claims the cards has to say which ones, or the teacher falls back to
+    a default and lands on the student's."""
+    import src.activities.train_model as tm
+
+    from .helpers_training_core import fake_core_dependencies, run_core
+
+    strategy = _TeacherStrategy()
+    fake_core_dependencies(monkeypatch, strategy=strategy)
+    monkeypatch.setattr(tm, "_reserve_student_devices", lambda _: (2, 3))
+
+    await run_core(mode="distill", hyperparams={"distill_method": "on_policy"})
+
+    assert strategy.seen["teacher_devices"] == (2, 3)
+
+
+class _TeacherStrategy:
+    name = "distill_on_policy"
+    required_engine = "transformers"
+    runs_resident_teacher = True
+
+    def __init__(self):
+        self.seen = {}
+
+    def execute(self, **kwargs):
+        self.seen = kwargs
+        return {"train_runtime": 1.0}
