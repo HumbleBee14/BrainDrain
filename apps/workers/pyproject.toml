@@ -93,6 +93,9 @@ on-policy = [
     "trl==1.9.2",
     "peft>=0.14.0",
     "accelerate>=1.2.0",
+    # transformers' 4-bit loading path requires >=0.46.1 on this stack, so the
+    # floor is higher than the ml extra's.
+    "bitsandbytes>=0.46.1",
     "datasets>=3.2.0",
     "pynvml>=12.0.0",
 ]

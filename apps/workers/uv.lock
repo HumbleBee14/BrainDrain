@@ -369,7 +369,8 @@ name = "bitsandbytes"
 version = "0.49.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.13' and extra == 'extra-16-platform-workers-on-policy') or (extra == 'extra-16-platform-workers-extraction' and extra == 'extra-16-platform-workers-ml') or (extra == 'extra-16-platform-workers-extraction' and extra == 'extra-16-platform-workers-on-policy') or (extra == 'extra-16-platform-workers-ml' and extra == 'extra-16-platform-workers-on-policy')" },
+    { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.13' and extra == 'extra-16-platform-workers-on-policy') or extra == 'extra-16-platform-workers-ml' or (extra == 'extra-16-platform-workers-extraction' and extra == 'extra-16-platform-workers-on-policy')" },
     { name = "packaging" },
     { name = "torch" },
 ]
@@ -4301,6 +4302,7 @@ ml = [
 ]
 on-policy = [
     { name = "accelerate" },
+    { name = "bitsandbytes" },
     { name = "datasets", version = "5.0.1", source = { registry = "https://pypi.org/simple" } },
     { name = "peft" },
     { name = "pynvml" },
@@ -4326,6 +4328,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "bitsandbytes", marker = "extra == 'ml'", specifier = ">=0.45.0" },
+    { name = "bitsandbytes", marker = "extra == 'on-policy'", specifier = ">=0.46.1" },
     { name = "boto3", specifier = ">=1.36.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "datasets", marker = "extra == 'ml'", specifier = ">=3.2.0" },

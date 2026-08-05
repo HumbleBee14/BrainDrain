@@ -134,6 +134,7 @@ on_policy_image = (
         f"trl=={TRL_ON_POLICY_VERSION}",
         "peft>=0.14.0",
         "accelerate>=1.2.0",
+        "bitsandbytes>=0.46.1",
         "datasets>=3.2.0",
         "pynvml>=12.0.0",
     )
