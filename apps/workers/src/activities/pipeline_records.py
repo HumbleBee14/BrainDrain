@@ -248,12 +248,14 @@ async def _fail_job_after_scoring(
     job_id: str,
     error_message: str | None,
 ) -> None:
-    """Move the job itself to failed, because nothing downstream will.
+    """Move the job itself to failed, because nothing downstream will do it well.
 
     Scoring runs before the training activity claims the job, so the job is still
-    `pending`: the handler that writes every other training failure never runs,
-    and the reaper only considers `training` and `provisioning`. The status guard
-    leaves an already-settled job alone.
+    `pending` and the handler that writes every other training failure never runs.
+    The reaper can eventually close an abandoned scoring pass, but only after its
+    staleness timeout and with a generic message; this write is immediate and
+    carries the teacher's own error. The status guard leaves an already-settled
+    job alone.
     """
     failed_id = await conn.fetchval(
         """UPDATE training_jobs

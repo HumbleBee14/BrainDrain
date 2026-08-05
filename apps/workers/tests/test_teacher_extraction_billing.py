@@ -50,6 +50,7 @@ def rust_teacher_gpu_operations() -> list[str]:
     assert variants, "teacher_gpu_operations() listed no operations"
     return [re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower() for variant in variants]
 
+
 TENANT = "11111111-1111-1111-1111-111111111111"
 JOB = "22222222-2222-2222-2222-222222222222"
 OTHER_TENANT = "33333333-3333-3333-3333-333333333333"
@@ -364,8 +365,8 @@ class TestTheJobTheTenantSees:
     """What the job row says after a scoring failure.
 
     Nothing downstream of a failed pass runs, so if this activity does not fail
-    the job, nothing does: it sits on `pending` forever, invisible to the reaper,
-    with no error to show.
+    the job, the tenant waits for the reaper's staleness timeout and gets its
+    generic message instead of the teacher's own error.
     """
 
     def test_a_failed_pass_fails_the_job_and_says_why(self):

@@ -38,6 +38,7 @@ use crate::temporal::WorkflowOrchestrator;
 struct StuckJob {
     id: Uuid,
     tenant_id: Uuid,
+    status: String,
     started_at: Option<chrono::DateTime<chrono::Utc>>,
     gpu_class: Option<String>,
     temporal_workflow_id: Option<String>,
@@ -47,17 +48,19 @@ struct StuckJob {
     teacher_extraction_status: Option<String>,
 }
 
-/// Jobs abandoned by a dead worker, in either of the two states one can be
-/// abandoned in: mid-training, or mid-scoring before training ever claimed it.
-/// A scoring pass runs while the job is still `pending`, so without the second
-/// arm an extraction that dies with its worker leaves the row untouched forever
-/// and its teacher's GPU call unswept.
+/// Jobs abandoned by a dead worker, in any of the states one can be abandoned
+/// in: mid-training, or still `pending` because a scoring pass ran first. The
+/// second arm covers both a scoring pass that died with its worker and a
+/// workflow terminated after scoring finished but before training claimed the
+/// job — either way the row would otherwise sit untouched forever and the
+/// teacher's GPU call unswept. A `pending` job that never had a scoring pass
+/// carries a NULL extraction status and stays out of reach.
 const STUCK_JOB_PREDICATE: &str = "(status IN ('training', 'provisioning') \
-     OR (status = 'pending' AND teacher_extraction_status = 'running'))";
+     OR (status = 'pending' AND teacher_extraction_status IN ('running', 'completed')))";
 
 fn stuck_job_select_sql() -> String {
     format!(
-        "SELECT id, tenant_id, started_at, gpu_class, temporal_workflow_id, \
+        "SELECT id, tenant_id, status, started_at, gpu_class, temporal_workflow_id, \
                 mode, method, base_model, teacher_extraction_status \
          FROM training_jobs \
          WHERE {STUCK_JOB_PREDICATE} \
@@ -130,12 +133,18 @@ fn status_indicates_running(status: &str) -> bool {
 
 /// What the tenant is told about a job the reaper closed. A job abandoned before
 /// training claimed it never ran a step, so blaming the trainer would send them
-/// looking in the wrong place.
+/// looking in the wrong place — and if the scoring pass finished, blaming the
+/// scoring pass would too. Only a still-`pending` job can be pre-training;
+/// once training claims it, a `completed` extraction status just records history.
 fn reaped_message(job: &StuckJob) -> &'static str {
-    if job.teacher_extraction_status.as_deref() == Some("running") {
-        "The teacher scoring pass stopped responding; job reaped before training started"
+    if job.status != "pending" {
+        return "Training worker stopped responding; job reaped";
+    }
+    if job.teacher_extraction_status.as_deref() == Some("completed") {
+        "The worker stopped responding after the teacher finished scoring; \
+         job reaped before training started"
     } else {
-        "Training worker stopped responding; job reaped"
+        "The teacher scoring pass stopped responding; job reaped before training started"
     }
 }
 
@@ -475,17 +484,18 @@ mod tests {
         stuck_job_select_sql,
     };
 
-    fn job(status: Option<&str>) -> StuckJob {
+    fn job(status: &str, extraction: Option<&str>) -> StuckJob {
         StuckJob {
             id: uuid::Uuid::nil(),
             tenant_id: uuid::Uuid::nil(),
+            status: status.into(),
             started_at: None,
             gpu_class: None,
             temporal_workflow_id: None,
             mode: "distill".into(),
             method: "lora".into(),
             base_model: "m".into(),
-            teacher_extraction_status: status.map(str::to_string),
+            teacher_extraction_status: extraction.map(str::to_string),
         }
     }
 
@@ -498,14 +508,27 @@ mod tests {
     #[test]
     fn a_job_abandoned_while_its_teacher_scored_is_reapable() {
         assert!(STUCK_JOB_PREDICATE.contains("status = 'pending'"));
-        assert!(STUCK_JOB_PREDICATE.contains("teacher_extraction_status = 'running'"));
+        assert!(
+            STUCK_JOB_PREDICATE.contains("teacher_extraction_status IN ('running', 'completed')")
+        );
     }
 
     #[test]
     fn a_job_reaped_before_training_started_does_not_blame_the_trainer() {
-        assert!(reaped_message(&job(Some("running"))).contains("teacher scoring pass"));
-        assert!(reaped_message(&job(None)).contains("Training worker"));
-        assert!(reaped_message(&job(Some("completed"))).contains("Training worker"));
+        assert!(reaped_message(&job("pending", Some("running"))).contains("teacher scoring pass"));
+        assert!(
+            reaped_message(&job("pending", Some("running"))).contains("before training started")
+        );
+        assert!(reaped_message(&job("training", None)).contains("Training worker"));
+        assert!(reaped_message(&job("training", Some("completed"))).contains("Training worker"));
+    }
+
+    #[test]
+    fn a_job_whose_scoring_finished_is_not_blamed_on_the_scoring_pass() {
+        let message = reaped_message(&job("pending", Some("completed")));
+        assert!(message.contains("after the teacher finished scoring"));
+        assert!(message.contains("before training started"));
+        assert!(!message.contains("scoring pass stopped responding"));
     }
 
     #[test]
