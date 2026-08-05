@@ -94,6 +94,7 @@ def _make_provider(db, function_apps=None):
         modal_app_name = "app"
         modal_function_apps = function_apps or {}
         modal_function_name = "train"
+        modal_export_function_name = "export_gguf"
         modal_poll_interval_secs = 0
 
     class _Infra:
@@ -145,6 +146,32 @@ async def test_spawns_and_persists_call_id_before_poll(monkeypatch):
     # persisted value must be the spawned object_id, tagged with the function name
     _, args = db.updates[0]
     assert args[0] == "train:call-xyz"
+
+
+@pytest.mark.asyncio
+async def test_export_reserves_on_model_exports_table(monkeypatch):
+    """The export path must pass the reservation allowlist — it reserves on
+    model_exports, which trains/evals never touch. A missing allowlist entry
+    fails every export at submit time (found live, 2026-08-05)."""
+    monkeypatch.setattr("asyncio.sleep", _noop_sleep)
+    _install_fake_modal(monkeypatch, spawn_result={"storage_path": "s3://e", "size": 1})
+    monkeypatch.setattr("temporalio.activity.heartbeat", lambda *a, **k: None)
+    db = _FakeDB(existing_call_id=None)
+    prov = _make_provider(db)
+
+    out = await prov.run_export_gguf(
+        tenant_id="t",
+        model_id="m",
+        export_id="e",
+        adapter_path="adapters/t/j/",
+        base_model="b",
+        quant_type="Q4_K_M",
+    )
+
+    assert out["storage_path"] == "s3://e"
+    _, args = db.updates[0]
+    assert args[0] == "export_gguf:call-xyz"
+    assert "model_exports" in db.updates[0][0]
 
 
 @pytest.mark.asyncio

@@ -377,7 +377,7 @@ class LocalGpuProvider:
 
 # Reservation tables are internal constants (never user input) — safe to
 # interpolate into the reservation SQL below.
-_RESERVATION_TABLES = ("training_jobs", "evaluations")
+_RESERVATION_TABLES = ("training_jobs", "evaluations", "model_exports")
 
 # Reservation columns, likewise internal literals. Extraction gets its own column
 # so a teacher scoring call in flight is never mistaken for the training call on
