@@ -23,10 +23,10 @@ use crate::services::teacher::fidelity::hosted_scorer_for;
 /// Completion tokens an improve pass generates per training example, per epoch.
 ///
 /// The student writes a fresh answer for every prompt it trains on, so this is the
-/// rollout budget rather than a property of the dataset. Matches the trainer's own
-/// `max_completion_length` default; a run that generates shorter answers costs
-/// less than quoted, which is the direction an estimate should err in.
-/// Matches `DEFAULT_MAX_COMPLETION_LENGTH` in the worker's on-policy trainer.
+/// rollout budget rather than a property of the dataset. Matches
+/// `DEFAULT_MAX_COMPLETION_LENGTH` in the worker's on-policy trainer; a run that
+/// generates shorter answers costs less than quoted, which is the direction an
+/// estimate should err in.
 const DEFAULT_MAX_COMPLETION_LENGTH: i64 = 512;
 
 /// The trainer's own name for the rollout budget, which a caller may set.
