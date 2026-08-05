@@ -13,4 +13,8 @@ export type TrainingJobResponse = { id: string, project_id: string, dataset_id: 
 /**
  * Distill mode: teacher provenance (host + model only — never the key).
  */
-teacher: TeacherProvenance | null, created_at: string, updated_at: string, };
+teacher: TeacherProvenance | null, 
+/**
+ * The model this run improved on, when it was an improve pass.
+ */
+parent_model_id?: string, created_at: string, updated_at: string, };

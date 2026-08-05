@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import {
   api,
   type ClassifyTeacherResponse,
+  type ImproveOfferResponse,
   type TeacherCatalogEntry,
   type TeacherCostEstimateResponse,
 } from "@/lib/api-client";
@@ -65,6 +66,25 @@ export function useTeacherCostEstimate(
       });
     },
     enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * Whether a trained model can be sharpened against its own teacher, and what
+ * that costs. Ineligibility is a normal answer carrying its own reason — most
+ * models have no teacher behind them — so the caller renders nothing.
+ */
+export function useImproveOffer(modelId: string | null) {
+  const { getToken } = useAuth();
+  return useQuery<ImproveOfferResponse>({
+    queryKey: ["improve-offer", modelId],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.teachers.improveOffer(token, modelId as string);
+    },
+    enabled: Boolean(modelId),
     staleTime: 5 * 60 * 1000,
   });
 }

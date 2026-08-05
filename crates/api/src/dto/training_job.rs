@@ -32,6 +32,10 @@ pub struct CreateTrainingJobRequest {
     /// Distill mode: fidelity options. Absent means the text path.
     #[ts(optional)]
     pub distill: Option<DistillOptionsDto>,
+    /// The model this run improves on. Only meaningful for an on-policy improve
+    /// pass, where it is what makes the before/after parity comparison possible.
+    #[ts(optional)]
+    pub parent_model_id: Option<String>,
 }
 
 /// Training job information returned by API.
@@ -55,6 +59,9 @@ pub struct TrainingJobResponse {
     pub error_message: Option<String>,
     /// Distill mode: teacher provenance (host + model only — never the key).
     pub teacher: Option<TeacherProvenance>,
+    /// The model this run improved on, when it was an improve pass.
+    #[ts(optional)]
+    pub parent_model_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -88,6 +95,7 @@ impl From<TrainingJob> for TrainingJobResponse {
             completed_at: j.completed_at,
             error_message: j.error_message,
             teacher: j.teacher_config.as_ref().and_then(provenance_from_config),
+            parent_model_id: j.parent_model_id.map(|id| id.to_string()),
             created_at: j.created_at,
             updated_at: j.updated_at,
         }

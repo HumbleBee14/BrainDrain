@@ -6,7 +6,8 @@ use crate::dto::training_job::{
 };
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{
-    BillingEventRepository, DatasetRepository, TenantRepository, TrainingJobRepository,
+    BillingEventRepository, DatasetRepository, ModelRepository, TenantRepository,
+    TrainingJobRepository,
 };
 use crate::services::plan_service::PlanService;
 use crate::services::secret_cipher::SecretCipher;
@@ -25,10 +26,46 @@ use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
 
+/// A parent model is only meaningful for a run that improves on it.
+const PARENT_NOT_APPLICABLE_MESSAGE: &str =
+    "parent_model_id only applies to an improve pass (distill method 'on_policy').";
+
+/// The parent anchors the before/after comparison, so one that cannot be read is
+/// refused rather than silently dropped — a run with no parent shows no comparison.
+const PARENT_MODEL_NOT_FOUND_MESSAGE: &str = "The model this run would improve on was not found.";
+
 /// Business logic for training job operations.
 pub struct TrainingJobService;
 
 impl TrainingJobService {
+    /// Validate and resolve the model an improve pass is sharpening.
+    async fn resolve_parent_model(
+        model_repo: &dyn ModelRepository,
+        tenant_id: Uuid,
+        requested: &Option<String>,
+        is_improve_pass: bool,
+    ) -> AppResult<Option<Uuid>> {
+        let Some(raw) = requested.as_deref() else {
+            return Ok(None);
+        };
+        if !is_improve_pass {
+            return Err(AppError::BadRequest {
+                message: PARENT_NOT_APPLICABLE_MESSAGE.to_string(),
+            });
+        }
+        let parent_id = raw.parse::<Uuid>().map_err(|_| AppError::BadRequest {
+            message: "Invalid parent_model_id format".to_string(),
+        })?;
+        // Tenant-scoped read: the id came from a request, so this is what stops an
+        // improve pass from pointing at another tenant's model.
+        if model_repo.get_by_id(tenant_id, parent_id).await?.is_none() {
+            return Err(AppError::BadRequest {
+                message: PARENT_MODEL_NOT_FOUND_MESSAGE.to_string(),
+            });
+        }
+        Ok(Some(parent_id))
+    }
+
     /// Create a new training job and auto-trigger the TrainWorkflow.
     /// Uses atomic plan limit enforcement when max_models is provided.
     /// If the estimated cost exceeds `cost_approval_threshold`, the job is created
@@ -39,6 +76,7 @@ impl TrainingJobService {
         dataset_repo: &dyn DatasetRepository,
         tenant_repo: &dyn TenantRepository,
         billing_repo: &dyn BillingEventRepository,
+        model_repo: &dyn ModelRepository,
         orchestrator: Option<&dyn WorkflowOrchestrator>,
         cipher: &SecretCipher,
         tenant_id: Uuid,
@@ -199,6 +237,17 @@ impl TrainingJobService {
         let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref());
         let teacher_config = attach_on_policy_to_teacher_config(teacher_config, improve.as_ref());
 
+        // Recorded only for an improve pass, and only after checking the parent is
+        // this tenant's: it is the anchor for the before/after parity comparison,
+        // so a parent from elsewhere would compare two unrelated models.
+        let parent_model_id = Self::resolve_parent_model(
+            model_repo,
+            tenant_id,
+            &req.parent_model_id,
+            improve.is_some(),
+        )
+        .await?;
+
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
             training_repo
@@ -213,6 +262,7 @@ impl TrainingJobService {
                     gpu_class.as_deref(),
                     Some(cost_estimate),
                     teacher_config.clone(),
+                    parent_model_id,
                     max,
                 )
                 .await?
@@ -235,6 +285,7 @@ impl TrainingJobService {
                     gpu_class.as_deref(),
                     Some(cost_estimate),
                     teacher_config,
+                    parent_model_id,
                 )
                 .await?
         };
@@ -1029,6 +1080,7 @@ mod tests {
     #[test]
     fn empty_base_model_fails_validation() {
         let req = CreateTrainingJobRequest {
+            parent_model_id: None,
             dataset_id: uuid::Uuid::new_v4().to_string(),
             base_model: "   ".to_string(),
             method: None,
@@ -1044,6 +1096,7 @@ mod tests {
     #[test]
     fn invalid_dataset_id_format_fails_parse() {
         let req = CreateTrainingJobRequest {
+            parent_model_id: None,
             dataset_id: "not-a-uuid".to_string(),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             method: None,
@@ -1060,6 +1113,7 @@ mod tests {
     fn valid_dataset_id_parses() {
         let id = uuid::Uuid::new_v4();
         let req = CreateTrainingJobRequest {
+            parent_model_id: None,
             dataset_id: id.to_string(),
             base_model: "meta-llama/Llama-3.1-8B".to_string(),
             method: None,
@@ -1075,6 +1129,7 @@ mod tests {
     #[test]
     fn default_method_is_qlora() {
         let req = CreateTrainingJobRequest {
+            parent_model_id: None,
             dataset_id: uuid::Uuid::new_v4().to_string(),
             base_model: "model".to_string(),
             method: None,
@@ -1091,6 +1146,7 @@ mod tests {
     #[test]
     fn default_mode_is_quick() {
         let req = CreateTrainingJobRequest {
+            parent_model_id: None,
             dataset_id: uuid::Uuid::new_v4().to_string(),
             base_model: "model".to_string(),
             method: None,
@@ -1102,5 +1158,255 @@ mod tests {
         };
         let mode = req.mode.unwrap_or(TrainingMode::Quick);
         assert_eq!(mode, TrainingMode::Quick);
+    }
+}
+
+#[cfg(test)]
+mod parent_model_tests {
+    use super::*;
+    use crate::repositories::traits::ModelRepository;
+    use futures::future::BoxFuture;
+    use platform_db::models::Model;
+    use platform_shared::enums::DeploymentStatus;
+    use std::sync::Mutex;
+
+    /// Answers only the lookup a parent check makes, recording the tenant it was
+    /// asked about. Everything else would be a bug to call from here.
+    struct ModelLookupStub {
+        exists: bool,
+        asked: Mutex<Vec<(Uuid, Uuid)>>,
+    }
+
+    impl ModelLookupStub {
+        fn new(exists: bool) -> Self {
+            Self {
+                exists,
+                asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn lookups(&self) -> Vec<(Uuid, Uuid)> {
+            self.asked.lock().expect("stub lock").clone()
+        }
+    }
+
+    impl ModelRepository for ModelLookupStub {
+        fn get_by_id(
+            &self,
+            tenant_id: Uuid,
+            model_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<Option<Model>>> {
+            self.asked
+                .lock()
+                .expect("stub lock")
+                .push((tenant_id, model_id));
+            let exists = self.exists;
+            Box::pin(async move {
+                Ok(exists.then(|| Model {
+                    id: model_id,
+                    tenant_id,
+                    project_id: Uuid::new_v4(),
+                    training_job_id: Uuid::new_v4(),
+                    name: "parent".to_string(),
+                    base_model: "Qwen/Qwen3-8B".to_string(),
+                    version: 1,
+                    adapter_path: None,
+                    adapter_size_bytes: None,
+                    eval_scores: serde_json::json!({}),
+                    deployment_status: DeploymentStatus::Undeployed.to_string(),
+                    inference_instance_id: None,
+                    deployment_config: serde_json::json!({}),
+                    capture_traffic: false,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                }))
+            })
+        }
+
+        fn list_by_project(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _offset: i64,
+            _limit: i64,
+        ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn count_by_project(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn count_by_deployment_status(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _status: DeploymentStatus,
+        ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn count_active_by_base_model(&self, _base_model: &str) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn claim_deployment_slot(
+            &self,
+            _tenant_id: Uuid,
+            _model_id: Uuid,
+            _base_model: &str,
+            _max_loras: i64,
+        ) -> BoxFuture<'_, AppResult<bool>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn reap_stale_deployments(&self, _stale_minutes: i64) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn update_deployment_status(
+            &self,
+            _tenant_id: Uuid,
+            _model_id: Uuid,
+            _status: DeploymentStatus,
+        ) -> BoxFuture<'_, AppResult<Option<Model>>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn update_eval_scores(
+            &self,
+            _tenant_id: Uuid,
+            _model_id: Uuid,
+            _scores: serde_json::Value,
+        ) -> BoxFuture<'_, AppResult<bool>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn count_by_tenant(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn count_by_tenant_deployment_status(
+            &self,
+            _tenant_id: Uuid,
+            _status: DeploymentStatus,
+        ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn list_versions(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _base_model: &str,
+        ) -> BoxFuture<'_, AppResult<Vec<Model>>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn get_max_version(
+            &self,
+            _tenant_id: Uuid,
+            _project_id: Uuid,
+            _base_model: &str,
+        ) -> BoxFuture<'_, AppResult<i32>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn set_capture_traffic(
+            &self,
+            _tenant_id: Uuid,
+            _model_id: Uuid,
+            _enabled: bool,
+        ) -> BoxFuture<'_, AppResult<bool>> {
+            unimplemented!("a parent check only reads one model")
+        }
+    }
+
+    #[tokio::test]
+    async fn no_parent_requested_reads_nothing() {
+        let repo = ModelLookupStub::new(true);
+
+        let resolved =
+            TrainingJobService::resolve_parent_model(&repo, Uuid::new_v4(), &None, true).await;
+
+        assert_eq!(resolved.expect("no parent is fine"), None);
+        assert!(repo.lookups().is_empty());
+    }
+
+    /// The lookup is what confines a caller-supplied id to this tenant. Without
+    /// it an improve pass could name any model in the database as its parent.
+    #[tokio::test]
+    async fn the_parent_is_looked_up_under_the_callers_own_tenant() {
+        let repo = ModelLookupStub::new(true);
+        let tenant_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+
+        let resolved = TrainingJobService::resolve_parent_model(
+            &repo,
+            tenant_id,
+            &Some(parent_id.to_string()),
+            true,
+        )
+        .await
+        .expect("parent exists");
+
+        assert_eq!(resolved, Some(parent_id));
+        assert_eq!(repo.lookups(), vec![(tenant_id, parent_id)]);
+    }
+
+    #[tokio::test]
+    async fn a_parent_this_tenant_cannot_see_is_refused() {
+        let repo = ModelLookupStub::new(false);
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &Some(Uuid::new_v4().to_string()),
+            true,
+        )
+        .await
+        .expect_err("a parent that does not resolve must not be silently dropped");
+
+        assert_eq!(refusal.to_string(), PARENT_MODEL_NOT_FOUND_MESSAGE);
+    }
+
+    /// A parent on a run that is not an improve pass would record a lineage the
+    /// run does not have, and show a before/after comparison for training that
+    /// never involved the parent.
+    #[tokio::test]
+    async fn a_parent_without_an_improve_pass_is_refused() {
+        let repo = ModelLookupStub::new(true);
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &Some(Uuid::new_v4().to_string()),
+            false,
+        )
+        .await
+        .expect_err("parent_model_id has no meaning without an improve pass");
+
+        assert_eq!(refusal.to_string(), PARENT_NOT_APPLICABLE_MESSAGE);
+        assert!(repo.lookups().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_malformed_parent_id_is_a_request_error() {
+        let repo = ModelLookupStub::new(true);
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &Some("not-a-uuid".to_string()),
+            true,
+        )
+        .await
+        .expect_err("malformed ids are rejected");
+
+        assert!(matches!(refusal, AppError::BadRequest { .. }));
     }
 }

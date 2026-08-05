@@ -97,6 +97,7 @@ pub async fn create_training_job(
         state.dataset_repo(),
         state.tenant_repo(),
         state.billing_event_repo(),
+        state.model_repo(),
         state.orchestrator(),
         state.secret_cipher(),
         user.tenant_id,

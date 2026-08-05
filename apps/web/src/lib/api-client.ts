@@ -82,6 +82,7 @@ export type {
   ProviderPolicy,
   ClassifyTeacherResponse,
   TeacherCostEstimateResponse,
+  ImproveOfferResponse,
   DistillOptionsDto,
   TeacherPrecision,
 } from "./generated";
@@ -656,6 +657,12 @@ export const api = {
       request<import("./generated").TeacherCostEstimateResponse>(
         "/api/v1/teachers/cost-estimate",
         { token, method: "POST", body: JSON.stringify(body) },
+      ),
+
+    improveOffer: (token: string, modelId: string) =>
+      request<import("./generated").ImproveOfferResponse>(
+        `/api/v1/models/${modelId}/improve-offer`,
+        { token },
       ),
   },
 
