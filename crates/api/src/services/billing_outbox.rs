@@ -8,7 +8,7 @@
 //! - Advisory lock always released (guard pattern) on all exit paths.
 //! - `FOR UPDATE SKIP LOCKED` within a transaction for row-level safety.
 //! - Per-row savepoints: one poison row cannot stall the batch.
-//! - Idempotent delivery via `ON CONFLICT ON CONSTRAINT billing_events_pkey`.
+//! - Idempotent delivery via `ON CONFLICT (id, created_at) DO NOTHING`.
 //! - `created_at` preserved from outbox for correct partition routing.
 //! - Relay loops until empty per tick (not one batch per tick).
 //! - Failed deliveries retried every poll interval up to 5 attempts.
@@ -617,6 +617,13 @@ async fn reap_stale_teacher_reservations(
 }
 
 /// Idempotent delivery: uses outbox `(id, created_at)` as billing_events composite PK.
+///
+/// The conflict target is the PK's column list, never its constraint name: the
+/// partitioning migration rebuilt `billing_events` next to the legacy table it
+/// renamed, and the legacy table kept the `billing_events_pkey` name — so on
+/// every database that ran that migration, the partitioned table's constraint
+/// is `billing_events_pkey1` and delivery naming the old constraint fails on
+/// every row, silently parking all billing in the outbox at max attempts.
 async fn deliver_to_ledger(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     row: &OutboxRow,
@@ -626,7 +633,7 @@ async fn deliver_to_ledger(
          (id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
           gpu_seconds, cost_usd, metadata, created_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
-         ON CONFLICT ON CONSTRAINT billing_events_pkey DO NOTHING",
+         ON CONFLICT (id, created_at) DO NOTHING",
     )
     .bind(row.id)
     .bind(row.tenant_id)
