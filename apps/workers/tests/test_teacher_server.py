@@ -61,6 +61,11 @@ def config(**overrides) -> TeacherServerConfig:
     return TeacherServerConfig(**{**base, **overrides})
 
 
+def config_with_default_port(**overrides) -> TeacherServerConfig:
+    """A config that reserves its port the way a real run does."""
+    return TeacherServerConfig(model="Qwen/Qwen3-32B", devices=(0,), **overrides)
+
+
 def test_two_gpus_give_the_teacher_and_student_a_card_each():
     assert split_devices((0, 1)) == ((0,), (1,))
 
@@ -147,6 +152,27 @@ def test_ready_when_health_answers(monkeypatch):
     server = TeacherServer(config(), FakeProcess())
 
     server.wait_until_ready(now=lambda: 0.0, sleep=lambda _: None)
+
+
+def test_each_teacher_claims_its_own_port():
+    """Two teachers on one machine at a fixed port is a run graded by the wrong
+    model: the second one's health probe answers from the first one's teacher, and
+    `trl vllm-serve` does not say which model it holds, so nothing notices."""
+    first, second = config_with_default_port(), config_with_default_port()
+
+    assert first.port != second.port
+    assert first.base_url != second.base_url
+
+
+def test_a_healthy_port_owned_by_someone_else_is_not_accepted(monkeypatch):
+    """The remaining race after per-run ports: our child dies while the probe is in
+    flight, and whatever else holds the port answers it perfectly well. Alive at the
+    top of the loop, gone by the time the port replied."""
+    monkeypatch.setattr(server_module, "_probe", lambda url, timeout: True)
+    server = TeacherServer(config(), FakeProcess(poll_results=[None, 1]))
+
+    with pytest.raises(TeacherServerError, match="belongs to another process"):
+        server.wait_until_ready(now=lambda: 0.0, sleep=lambda _: None)
 
 
 def test_a_teacher_that_dies_at_boot_reports_its_exit_code(monkeypatch):

@@ -31,6 +31,7 @@ import logging
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import time
 import urllib.error
@@ -40,7 +41,6 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("platform.teacher.server")
 
-DEFAULT_PORT = 8000
 DEFAULT_HOST = "127.0.0.1"
 
 # `trl vllm-serve` has to load tens of gigabytes of weights before it answers, and
@@ -59,6 +59,21 @@ TEACHER_UNAVAILABLE_MESSAGE = (
 )
 
 
+def reserve_loopback_port(host: str = DEFAULT_HOST) -> int:
+    """A free port on loopback, claimed by binding it and letting it go.
+
+    Not a fixed port, because a fixed port is a way to train against the wrong
+    teacher: where two runs share a machine — which the local provider allows —
+    the second one's health probe answers from the first one's teacher, and the
+    student is then graded by a model that has nothing to do with its dataset.
+    Nothing in the readiness check can tell the difference, since `trl vllm-serve`
+    does not report which model it is holding.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
 class TeacherServerError(RuntimeError):
     """The teacher could not be started, or stopped being available.
 
@@ -73,13 +88,16 @@ class TeacherServerConfig:
 
     `devices` is the set of GPU ordinals the teacher may use, and the trainer must
     use the complement — the two share a container, not a card.
+
+    `port` defaults to a freshly reserved one rather than a well-known number, so
+    that two runs on one machine cannot end up talking to each other's teacher.
     """
 
     model: str
     revision: str | None = None
     devices: tuple[int, ...] = (0,)
     host: str = DEFAULT_HOST
-    port: int = DEFAULT_PORT
+    port: int = field(default_factory=reserve_loopback_port)
     dtype: str = "bfloat16"
     gpu_memory_utilization: float = 0.90
     max_model_len: int | None = None
@@ -259,6 +277,15 @@ class TeacherServer:
                 )
 
             if _probe(health_url, timeout=HEALTH_POLL_INTERVAL_SECS):
+                # Something is listening — confirm it is our child. A teacher that
+                # lost the race for its port dies immediately, and whatever won the
+                # race answers a health check just as happily.
+                code = self.exit_code()
+                if code is not None:
+                    raise TeacherServerError(
+                        f"The teacher server exited with code {code} while its port "
+                        f"answered, so {self.base_url} belongs to another process."
+                    )
                 logger.info("Teacher server ready at %s", self.base_url)
                 return
 
