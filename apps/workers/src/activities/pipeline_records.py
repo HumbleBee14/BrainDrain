@@ -80,6 +80,7 @@ class SetTeacherExtractionStatusInput:
     # before it existed still binds; `None` means "runtime unknown", which the
     # charge below is careful not to read as "no runtime".
     metrics: dict | None = None
+    error_message: str | None = None
 
 
 def extraction_billing_event_id(job_id: str) -> uuid.UUID:
@@ -237,6 +238,40 @@ async def _finalize_extraction_charge(
     return None if billed is None else float(billed)
 
 
+SCORING_FAILED_MESSAGE = "The teacher scoring pass failed before training could start."
+
+
+async def _fail_job_after_scoring(
+    conn,
+    *,
+    tenant_id: str,
+    job_id: str,
+    error_message: str | None,
+) -> None:
+    """Move the job itself to failed, because nothing downstream will.
+
+    Scoring runs before the training activity claims the job, so the job is still
+    `pending`: the handler that writes every other training failure never runs,
+    and the reaper only considers `training` and `provisioning`. The status guard
+    leaves an already-settled job alone.
+    """
+    failed_id = await conn.fetchval(
+        """UPDATE training_jobs
+        SET status = 'failed', error_message = $3, completed_at = NOW()
+        WHERE id = $1::uuid AND tenant_id = $2::uuid
+          AND status IN ('pending', 'provisioning', 'training')
+        RETURNING id""",
+        job_id,
+        tenant_id,
+        (error_message or SCORING_FAILED_MESSAGE)[:2000],
+    )
+    if failed_id is None:
+        logger.info(
+            "Job %s was already settled when its scoring pass failed; leaving its status alone",
+            job_id,
+        )
+
+
 class CreateTrainingJobActivity:
     def __init__(self, infra: InfraContainer):
         self.infra = infra
@@ -363,6 +398,14 @@ class SetTeacherExtractionStatusActivity:
                     input.status,
                     cost,
                 )
+
+                if input.status == TeacherExtractionStatus.FAILED:
+                    await _fail_job_after_scoring(
+                        conn,
+                        tenant_id=input.tenant_id,
+                        job_id=input.training_job_id,
+                        error_message=input.error_message,
+                    )
 
         logger.info(
             "Teacher extraction for job %s is %s (billed %s)",

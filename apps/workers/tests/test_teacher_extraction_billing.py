@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.activities.pipeline_records import (
+    SCORING_FAILED_MESSAGE,
     SetTeacherExtractionStatusActivity,
     SetTeacherExtractionStatusInput,
     TeacherExtractionStatus,
@@ -84,16 +85,22 @@ class _FakeConn:
     age_seconds: float | None = None
     rows: dict = field(default_factory=dict)
     job_updates: list = field(default_factory=list)
+    job_failures: list = field(default_factory=list)
     queries: list = field(default_factory=list)
+    write_depths: list = field(default_factory=list)
+    job_already_settled: bool = False
+    depth: int = 0
 
     def transaction(self):
         conn = self
 
         class _Tx:
             async def __aenter__(self):
+                conn.depth += 1
                 return conn
 
             async def __aexit__(self, *exc):
+                conn.depth -= 1
                 return False
 
         return _Tx()
@@ -111,6 +118,7 @@ class _FakeConn:
 
     async def execute(self, query, *args):
         self.queries.append(query)
+        self.write_depths.append(self.depth)
         if "INSERT INTO billing_outbox" in query:
             assert "DO NOTHING" in query
             self.rows.setdefault(args[0], _row_from(args))
@@ -121,6 +129,12 @@ class _FakeConn:
 
     async def fetchval(self, query, *args):
         self.queries.append(query)
+        self.write_depths.append(self.depth)
+        if "SET status = 'failed'" in query:
+            self.job_failures.append(
+                {"job_id": args[0], "tenant_id": args[1], "error_message": args[2]}
+            )
+            return None if self.job_already_settled else args[0]
         if "INSERT INTO billing_outbox" in query:
             assert "DO UPDATE" in query
             existing = self.rows.get(args[0])
@@ -174,7 +188,15 @@ def _activity(conn, *, min_billable_seconds=300):
     return act
 
 
-def _set_status(conn, status, *, metrics=None, tenant_id=TENANT, min_billable_seconds=300):
+def _set_status(
+    conn,
+    status,
+    *,
+    metrics=None,
+    tenant_id=TENANT,
+    min_billable_seconds=300,
+    error_message=None,
+):
     asyncio.run(
         _activity(conn, min_billable_seconds=min_billable_seconds).run(
             SetTeacherExtractionStatusInput(
@@ -182,6 +204,7 @@ def _set_status(conn, status, *, metrics=None, tenant_id=TENANT, min_billable_se
                 training_job_id=JOB,
                 status=status,
                 metrics=metrics,
+                error_message=error_message,
             )
         )
     )
@@ -335,6 +358,65 @@ class TestFailedPass:
         _set_status(conn, TeacherExtractionStatus.FAILED)
 
         assert _only_row(conn).cost_usd == 1.60
+
+
+class TestTheJobTheTenantSees:
+    """What the job row says after a scoring failure.
+
+    Nothing downstream of a failed pass runs, so if this activity does not fail
+    the job, nothing does: it sits on `pending` forever, invisible to the reaper,
+    with no error to show.
+    """
+
+    def test_a_failed_pass_fails_the_job_and_says_why(self):
+        conn = _FakeConn(context=dict(PLAN_CONTEXT))
+
+        _set_status(conn, TeacherExtractionStatus.FAILED, error_message="Teacher ran out of memory")
+
+        assert conn.job_failures == [
+            {"job_id": JOB, "tenant_id": TENANT, "error_message": "Teacher ran out of memory"}
+        ]
+
+    def test_a_failure_with_no_reason_still_leaves_one(self):
+        conn = _FakeConn(context=dict(PLAN_CONTEXT))
+
+        _set_status(conn, TeacherExtractionStatus.FAILED)
+
+        assert conn.job_failures[0]["error_message"] == SCORING_FAILED_MESSAGE
+
+    def test_the_job_only_fails_from_a_state_that_was_still_running(self):
+        conn = _FakeConn(context=dict(PLAN_CONTEXT))
+
+        _set_status(conn, TeacherExtractionStatus.FAILED)
+
+        guard = next(q for q in conn.queries if "SET status = 'failed'" in q)
+        assert "status IN ('pending', 'provisioning', 'training')" in guard
+
+    def test_a_job_already_settled_elsewhere_is_left_alone(self):
+        """A cancel or a reap got there first; re-failing would overwrite it."""
+        conn = _FakeConn(context=dict(PLAN_CONTEXT), job_already_settled=True)
+
+        _set_status(conn, TeacherExtractionStatus.FAILED)
+
+        assert _only_row(conn).cost_usd == 1.60
+
+    def test_the_job_is_failed_in_the_transaction_that_billed_it(self):
+        conn = _FakeConn(context=dict(PLAN_CONTEXT))
+
+        _set_status(conn, TeacherExtractionStatus.FAILED)
+
+        assert conn.write_depths, "no writes recorded"
+        assert all(depth > 0 for depth in conn.write_depths)
+
+    @pytest.mark.parametrize(
+        "status", [TeacherExtractionStatus.RUNNING, TeacherExtractionStatus.COMPLETED]
+    )
+    def test_a_pass_that_has_not_failed_never_touches_the_job_status(self, status):
+        conn = _FakeConn(context=dict(PLAN_CONTEXT), age_seconds=900.0)
+
+        _set_status(conn, status, metrics=MEASURED_METRICS)
+
+        assert conn.job_failures == []
 
 
 class TestTenantScoping:

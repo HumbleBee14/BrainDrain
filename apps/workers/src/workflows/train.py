@@ -26,6 +26,7 @@ from temporalio.exceptions import ApplicationError
 with workflow.unsafe.imports_passed_through():
     from src import timeouts
     from src.activities.pipeline_records import (
+        SCORING_FAILED_MESSAGE,
         SetTeacherExtractionStatusInput,
         TeacherExtractionStatus,
     )
@@ -42,6 +43,7 @@ with workflow.unsafe.imports_passed_through():
     from src.constants import (
         ON_POLICY_DISTILL_METHOD as ON_POLICY_METHOD,
     )
+    from src.failure_message import root_cause_message
     from src.workflows.train_aligned import TrainAlignedWorkflow
     from src.workflows.train_iterative import TrainIterativeWorkflow
     from src.workflows.train_reasoning import TrainReasoningWorkflow
@@ -375,9 +377,11 @@ class TrainWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
                 result_type=ExtractTeacherLogprobsOutput,
             )
-        except Exception:
-            await self._set_extraction_status(
-                tenant_id, training_job_id, TeacherExtractionStatus.FAILED
+        except Exception as exc:
+            await self._fail_extraction(
+                tenant_id,
+                training_job_id,
+                root_cause_message(exc, fallback=SCORING_FAILED_MESSAGE),
             )
             raise
 
@@ -395,13 +399,40 @@ class TrainWorkflow:
         )
         return hyperparams_with_artifacts(hyperparams, result.artifact_prefix)
 
+    async def _fail_extraction(self, tenant_id: str, job_id: str, error_message: str) -> None:
+        """Record the failure without letting its own failure replace the original.
+
+        Called from an `except` block about to re-raise: if this write is what
+        breaks, Temporal must still record why the scoring pass failed.
+        """
+        try:
+            await self._set_extraction_status(
+                tenant_id,
+                job_id,
+                TeacherExtractionStatus.FAILED,
+                error_message=error_message,
+            )
+        except Exception:
+            workflow.logger.exception(
+                "Failed to record the failed scoring pass for job %s", job_id
+            )
+
     async def _set_extraction_status(
-        self, tenant_id: str, job_id: str, status: str, metrics: dict | None = None
+        self,
+        tenant_id: str,
+        job_id: str,
+        status: str,
+        metrics: dict | None = None,
+        error_message: str | None = None,
     ) -> None:
         await workflow.execute_activity(
             "set_teacher_extraction_status",
             SetTeacherExtractionStatusInput(
-                tenant_id=tenant_id, training_job_id=job_id, status=status, metrics=metrics
+                tenant_id=tenant_id,
+                training_job_id=job_id,
+                status=status,
+                metrics=metrics,
+                error_message=error_message,
             ),
             start_to_close_timeout=timeouts.db_lookup(),
             retry_policy=RetryPolicy(maximum_attempts=3),
