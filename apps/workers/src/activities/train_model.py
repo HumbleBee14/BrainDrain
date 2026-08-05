@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import tempfile
 import time
 import uuid
@@ -50,7 +51,14 @@ from src.activities.training_engine import (
     register_strategy,
 )
 from src.backends.judge import get as get_judge
-from src.constants import GPU_DEFAULT_HOURLY_RATE, GPU_HOURLY_RATES, TrainingJobStatus
+from src.constants import (
+    GPU_DEFAULT_HOURLY_RATE,
+    GPU_HOURLY_RATES,
+    LOGIT_DISTILL_METHOD,
+    ON_POLICY_DISTILL_METHOD,
+    TEXT_DISTILL_METHOD,
+    TrainingJobStatus,
+)
 from src.gpu_provider import GpuProvider
 from src.heartbeat import safe_heartbeat
 from src.infra import InfraContainer
@@ -66,14 +74,28 @@ _JUDGE_BACKED_MODES = frozenset({"aligned", "reasoning"})
 _MAX_WARMUP_FRACTION = 0.1
 
 _DISTILL_MODE = "distill"
-_DEFAULT_DISTILL_METHOD = "text"
+_DEFAULT_DISTILL_METHOD = TEXT_DISTILL_METHOD
 
 # The public TrainingMode stays `distill`; how much of the teacher a run copies is
 # an orthogonal axis, so the registry key is composite and no internal strategy
 # name can ever leak into the API enum.
-_DISTILL_STRATEGY_KEYS = {"text": "distill", "logit": "distill_logit"}
+_DISTILL_STRATEGY_KEYS = {
+    TEXT_DISTILL_METHOD: "distill",
+    LOGIT_DISTILL_METHOD: "distill_logit",
+    ON_POLICY_DISTILL_METHOD: "distill_on_policy",
+}
 
 _TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
+
+# vLLM's `--dtype` takes no quantized values: fp8 and int4 are separate
+# quantization flags with their own weight formats. Mapping them onto bfloat16
+# would run a full-precision teacher while reporting a quantized one, and the
+# teacher's distribution is the entire product of this pass.
+_TEACHER_DTYPE_BY_PRECISION = {"bf16": "bfloat16"}
+
+# A teacher this size is minutes of weight loading even from a warm cache, and a
+# cold cache pulls tens of gigabytes first.
+_DEFAULT_TEACHER_STARTUP_TIMEOUT_SECS = 1800
 
 
 def resolve_strategy_key(mode: str, distill_method: str | None) -> str:
@@ -600,9 +622,14 @@ async def run_training_core(
     No Postgres, no Redis. Runs identically in-process (LocalGpuProvider) or
     inside a remote Modal GPU container.
     """
-    engine = get_engine(settings)
     hp = input.hyperparams
     job_id = input.training_job_id
+
+    # The strategy is resolved before the engine because a strategy can require
+    # one: on-policy distillation cannot run under Unsloth, whose image is unable
+    # to carry the vLLM its teacher needs.
+    strategy = get_strategy(resolve_strategy_key(input.mode, hp.get("distill_method")))
+    engine = get_engine(settings, required=getattr(strategy, "required_engine", None))
 
     _get_metrics_collector(settings)
 
@@ -633,7 +660,6 @@ async def run_training_core(
             target_modules=target_modules,
         )
 
-        strategy = get_strategy(resolve_strategy_key(input.mode, hp.get("distill_method")))
         metrics = strategy.execute(
             model=model,
             tokenizer=tokenizer,
@@ -954,6 +980,35 @@ class DistillLogitStrategy:
         )
 
 
+@register_strategy("distill_on_policy")
+class DistillOnPolicyStrategy:
+    """Distillation from the teacher's grading of the student's own output.
+
+    Never named in the public API: `TrainingMode` stays `distill` and
+    `resolve_strategy_key` selects this strategy for `distill_method = on_policy`.
+
+    Declares its engine because it cannot run under any other: the teacher is a
+    vLLM process in this container, and Unsloth cannot be installed beside vLLM.
+    """
+
+    name = "distill_on_policy"
+    required_engine = "transformers"
+
+    def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
+        return _train_distill_on_policy(
+            model,
+            tokenizer,
+            dataset,
+            hp,
+            job_id,
+            max_seq_length,
+            tenant_id=kwargs.get("tenant_id"),
+            s3=kwargs.get("s3"),
+            bucket=kwargs.get("bucket"),
+            settings=kwargs.get("settings"),
+        )
+
+
 @register_strategy("aligned")
 class AlignedStrategy:
     """SFT → DPO pipeline for production quality alignment."""
@@ -1236,6 +1291,191 @@ def _train_distill_logit(
         "ce_alpha": loss_config.ce_alpha,
         "kd_temperature": loss_config.temperature,
         "tail_beta": loss_config.tail_beta,
+    }
+
+
+def _build_teacher_liveness_callback_class(server):
+    """A callback that stops training the moment the teacher dies.
+
+    Built lazily so importing this module does not require transformers.
+
+    Without it, a dead teacher becomes a run that keeps taking gradient steps
+    against failed requests and finishes reporting success — the worst outcome
+    available, because the model looks trained and learned nothing.
+    """
+    from transformers import TrainerCallback
+
+    class TeacherLivenessCallback(TrainerCallback):
+        def on_step_end(self, args, state, control, **kwargs):
+            server.check_alive()
+            return control
+
+    return TeacherLivenessCallback
+
+
+def _resolve_teacher_devices():
+    """Split the container's GPUs between teacher and student.
+
+    Reads the real device count rather than trusting the requested GPU class: if
+    a container came up with fewer cards than were asked for, the two models
+    would silently land on one and die out of memory mid-run.
+    """
+    import torch
+
+    from src.teacher.server import split_devices
+
+    if not torch.cuda.is_available():
+        raise ApplicationError(
+            "On-policy distillation needs GPUs and none are visible",
+            non_retryable=True,
+        )
+    return split_devices(torch.cuda.device_count())
+
+
+def _train_distill_on_policy(
+    model,
+    tokenizer,
+    dataset,
+    hp,
+    job_id,
+    max_seq_length,
+    *,
+    tenant_id=None,
+    s3=None,
+    bucket=None,
+    settings=None,
+):
+    """Train the student on the teacher's grading of the student's own output.
+
+    The teacher runs as a subprocess on its own GPU in this container, and the
+    trainer talks to it over loopback. See `src/teacher/server.py` for why that is
+    a sidecar rather than a separately scheduled server.
+    """
+    from src.activities.on_policy import OnPolicyConfigError, plan_on_policy
+    from src.teacher.server import TeacherServerConfig, TeacherServerError, teacher_server
+
+    teacher_model = hp.get("teacher_model")
+    if not teacher_model:
+        raise ApplicationError(
+            "On-policy distillation needs a teacher to grade against, and this job "
+            "was started without one",
+            non_retryable=True,
+        )
+
+    precision = hp.get("teacher_precision") or "bf16"
+    if precision not in _TEACHER_DTYPE_BY_PRECISION:
+        raise ApplicationError(
+            f"A served teacher cannot run at {precision}: quantized weights need a "
+            f"separate vLLM quantization path that this run does not set up. "
+            f"Supported: {', '.join(_TEACHER_DTYPE_BY_PRECISION)}.",
+            non_retryable=True,
+        )
+
+    teacher_devices, student_devices = _resolve_teacher_devices()
+    teacher_config = TeacherServerConfig(
+        model=teacher_model,
+        revision=hp.get("teacher_revision") or None,
+        devices=teacher_devices,
+        dtype=_TEACHER_DTYPE_BY_PRECISION[precision],
+        max_model_len=hp.get("teacher_max_model_len") or max_seq_length,
+        startup_timeout_secs=int(
+            hp.get("teacher_startup_timeout_secs", _DEFAULT_TEACHER_STARTUP_TIMEOUT_SECS)
+        ),
+    )
+
+    # The student must not touch the teacher's cards. Set before the trainer moves
+    # any weights, and scoped to this process only.
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in student_devices)
+
+    with tempfile.TemporaryDirectory(prefix=f"distill-onpolicy-{job_id[:8]}-") as tmpdir:
+        try:
+            with teacher_server(teacher_config) as server:
+                plan = plan_on_policy(
+                    hp,
+                    teacher_model=teacher_model,
+                    teacher_url=server.base_url,
+                    teacher_revision=teacher_config.revision,
+                )
+                metrics = _run_on_policy_trainer(
+                    model=model,
+                    tokenizer=tokenizer,
+                    dataset=dataset,
+                    plan=plan,
+                    hp=hp,
+                    job_id=job_id,
+                    output_dir=tmpdir,
+                    server=server,
+                    tenant_id=tenant_id,
+                    s3=s3,
+                    bucket=bucket,
+                )
+        except OnPolicyConfigError as exc:
+            raise ApplicationError(str(exc), non_retryable=True) from exc
+        except TeacherServerError as exc:
+            # Non-retryable: a retry re-books the same container and the same
+            # teacher, so it fails the same way while charging for it again.
+            raise ApplicationError(str(exc), non_retryable=True) from exc
+
+    logger.info(
+        "On-policy distillation finished for job %s: %s steps against teacher %s",
+        job_id,
+        metrics.get("on_policy_train_steps"),
+        teacher_model,
+    )
+    return metrics
+
+
+def _run_on_policy_trainer(
+    *,
+    model,
+    tokenizer,
+    dataset,
+    plan,
+    hp,
+    job_id,
+    output_dir,
+    server,
+    tenant_id,
+    s3,
+    bucket,
+):
+    """Drive TRL's on-policy trainer for one run.
+
+    Separated from teacher startup so the import of `trl.experimental` — which
+    only exists in the on-policy image — happens after the teacher is confirmed
+    healthy, and so this half can be read without the lifecycle noise.
+    """
+    from trl.experimental.iw_opd import IWOPDConfig, IWOPDTrainer
+
+    from src.activities.on_policy import trainer_config_kwargs
+
+    callbacks = [
+        _build_callback_class()(job_id, phase="distill_on_policy"),
+        _build_teacher_liveness_callback_class(server)(),
+    ]
+    if tenant_id is not None:
+        callbacks.append(_build_checkpoint_callback_class(tenant_id, job_id, s3, bucket)())
+
+    config = IWOPDConfig(**trainer_config_kwargs(plan, output_dir=output_dir, hp=hp))
+    trainer = IWOPDTrainer(
+        model=model,
+        args=config,
+        train_dataset=dataset,
+        processing_class=tokenizer,
+        callbacks=callbacks,
+    )
+    train_result = trainer.train()
+
+    return {
+        "on_policy_train_loss": train_result.training_loss,
+        "on_policy_train_steps": train_result.global_step,
+        "on_policy_train_runtime": train_result.metrics.get("train_runtime", 0),
+        "on_policy_teacher_model": plan.teacher_model,
+        "on_policy_objective": plan.objective,
+        "on_policy_beta": plan.beta,
+        "on_policy_lambda": plan.lmbda,
+        "on_policy_rollout_temperature": plan.temperature,
+        "on_policy_loss_top_k": plan.loss_top_k,
     }
 
 

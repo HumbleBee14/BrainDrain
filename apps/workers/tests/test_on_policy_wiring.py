@@ -1,0 +1,110 @@
+"""How an admitted on-policy plan reaches the training activity.
+
+The seam matters because the two fidelity methods diverge here: `logit` runs a
+scoring pass first, `on_policy` must not, since the text its teacher grades does
+not exist until the student writes it. And both share the rule that a caller
+cannot name the teacher we boot on our own GPU.
+"""
+
+import pytest
+from src.workflows.train import (
+    DISTILL_METHOD_HYPERPARAM,
+    ON_POLICY_METHOD,
+    TEACHER_MODEL_HYPERPARAM,
+    TEACHER_PRECISION_HYPERPARAM,
+    TEACHER_REVISION_HYPERPARAM,
+    borrowed_fidelity_keys,
+    extraction_plan,
+    hyperparams_with_live_teacher,
+    unsupported_plan_reason,
+)
+
+PLAN = {
+    "distill_method": "on_policy",
+    "teacher_model": "Qwen/Qwen3-32B",
+    "teacher_revision": "9216db57",
+    "precision": "bf16",
+    "gpu_class": "a10080gb_dual",
+}
+
+
+def test_an_on_policy_plan_is_carried_on_the_same_teacher_config_block():
+    assert extraction_plan({"extraction": PLAN}) == PLAN
+
+
+def test_a_job_with_no_teacher_config_is_untouched():
+    """Every mode that predates fidelity upgrades must reach training unchanged."""
+    assert extraction_plan(None) is None
+    assert extraction_plan({}) is None
+
+
+def test_an_on_policy_plan_is_supported():
+    assert unsupported_plan_reason(PLAN, "distill") is None
+
+
+def test_a_fidelity_plan_outside_distill_mode_is_refused():
+    assert "no meaning for training mode" in unsupported_plan_reason(PLAN, "quick")
+
+
+def test_an_unknown_method_is_refused_before_a_gpu_is_booked():
+    plan = {**PLAN, "distill_method": "telepathy"}
+
+    assert "Unsupported distillation method" in unsupported_plan_reason(plan, "distill")
+
+
+def test_a_plan_with_no_teacher_is_refused():
+    plan = {**PLAN, "teacher_model": ""}
+
+    assert unsupported_plan_reason(plan, "distill") == "The fidelity plan names no teacher model"
+
+
+def test_the_teacher_reaches_training_pinned_to_its_revision():
+    resolved = hyperparams_with_live_teacher({"epochs": 1}, PLAN)
+
+    assert resolved[DISTILL_METHOD_HYPERPARAM] == ON_POLICY_METHOD
+    assert resolved[TEACHER_MODEL_HYPERPARAM] == "Qwen/Qwen3-32B"
+    assert resolved[TEACHER_REVISION_HYPERPARAM] == "9216db57"
+    assert resolved[TEACHER_PRECISION_HYPERPARAM] == "bf16"
+    assert resolved["epochs"] == 1
+
+
+def test_an_unpinned_teacher_carries_no_revision_key():
+    resolved = hyperparams_with_live_teacher({}, {**PLAN, "teacher_revision": ""})
+
+    assert TEACHER_REVISION_HYPERPARAM not in resolved
+
+
+def test_caller_supplied_knobs_survive_the_merge():
+    """The advanced knobs are the user's; only teacher identity is the platform's."""
+    resolved = hyperparams_with_live_teacher({"on_policy_lambda": 0.5}, PLAN)
+
+    assert resolved["on_policy_lambda"] == 0.5
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        DISTILL_METHOD_HYPERPARAM,
+        TEACHER_MODEL_HYPERPARAM,
+        TEACHER_REVISION_HYPERPARAM,
+        TEACHER_PRECISION_HYPERPARAM,
+        "teacher_artifacts_prefix",
+    ],
+)
+def test_a_caller_cannot_supply_a_platform_owned_key(key):
+    """Naming the teacher would mean booting a model of the caller's choosing on our
+    metered GPU; naming the artifact prefix would mean reading another tenant's
+    distributions. Both are rejected before the run starts."""
+    assert borrowed_fidelity_keys({key: "anything"}) == [key]
+
+
+def test_ordinary_hyperparams_are_not_mistaken_for_platform_keys():
+    assert borrowed_fidelity_keys({"epochs": 3, "learning_rate": 1e-5}) == []
+
+
+def test_every_key_the_platform_writes_is_also_a_key_it_refuses_to_accept():
+    """The invariant behind both functions: anything written from an admitted plan
+    must be rejected when it arrives from a caller, or the guard has a hole."""
+    written = set(hyperparams_with_live_teacher({}, PLAN)) - {"epochs"}
+
+    assert written <= set(borrowed_fidelity_keys(dict.fromkeys(written, "x")))

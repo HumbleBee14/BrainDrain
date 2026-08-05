@@ -9,10 +9,12 @@ Routes to the appropriate child workflow based on training mode:
 FullPipelineWorkflow still calls TrainWorkflow.run — this dispatcher
 is transparent to upstream callers.
 
-A distill job whose teacher config carries an `extraction` block first runs one
-teacher scoring pass and trains the student on the stored distributions. That
-block is the only gate: without it, every mode reaches training by the same path
-it always did.
+A distill job whose teacher config carries an `extraction` block trains against
+the teacher rather than only its text. That block is the only gate: without it,
+every mode reaches training by the same path it always did. Which method it names
+decides how the teacher is reached — `logit` runs one scoring pass up front and
+trains on the stored distributions, while `on_policy` skips scoring entirely,
+because the text it grades is written by the student during the run.
 """
 
 from datetime import timedelta
@@ -34,15 +36,35 @@ with workflow.unsafe.imports_passed_through():
         StartTrainingInput,
         StartTrainingOutput,
     )
+    from src.constants import (
+        LOGIT_DISTILL_METHOD as LOGIT_METHOD,
+    )
+    from src.constants import (
+        ON_POLICY_DISTILL_METHOD as ON_POLICY_METHOD,
+    )
     from src.workflows.train_aligned import TrainAlignedWorkflow
     from src.workflows.train_iterative import TrainIterativeWorkflow
     from src.workflows.train_reasoning import TrainReasoningWorkflow
 
 DISTILL_MODE = "distill"
-LOGIT_METHOD = "logit"
 
 TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
 DISTILL_METHOD_HYPERPARAM = "distill_method"
+TEACHER_MODEL_HYPERPARAM = "teacher_model"
+TEACHER_REVISION_HYPERPARAM = "teacher_revision"
+TEACHER_PRECISION_HYPERPARAM = "teacher_precision"
+
+# Hyperparams the platform writes from an admitted plan, and nothing else may
+# supply. Hyperparams are otherwise free-form and caller-controlled, so any key
+# that names a model we will execute, or a storage prefix we will read, has to be
+# on this list — see `borrowed_fidelity_keys`.
+_PLATFORM_OWNED_HYPERPARAMS = (
+    DISTILL_METHOD_HYPERPARAM,
+    TEACHER_ARTIFACTS_HYPERPARAM,
+    TEACHER_MODEL_HYPERPARAM,
+    TEACHER_REVISION_HYPERPARAM,
+    TEACHER_PRECISION_HYPERPARAM,
+)
 
 
 def extraction_plan(teacher_config: dict | None) -> dict | None:
@@ -104,17 +126,14 @@ def hyperparams_with_artifacts(hyperparams: dict, artifact_prefix: str) -> dict:
 def borrowed_fidelity_keys(hyperparams: dict) -> list[str]:
     """Fidelity hyperparams that arrived from outside this workflow.
 
-    Hyperparams are free-form and caller-supplied, but these two keys are written
-    here from the plan the API priced and admitted, and by nothing else. A copy
-    arriving with the request would otherwise select the logit strategy — and name
-    the S3 prefix it reads a teacher's distributions from — for a run that was
-    never admitted and whose artifacts may not be its own.
+    Hyperparams are free-form and caller-supplied, but these keys are written here
+    from the plan the API priced and admitted, and by nothing else. A copy arriving
+    with the request would otherwise select a fidelity strategy — and name the S3
+    prefix it reads a teacher's distributions from, or the model it boots on our
+    own GPU — for a run that was never admitted and whose teacher may not be its
+    own.
     """
-    return sorted(
-        key
-        for key in (DISTILL_METHOD_HYPERPARAM, TEACHER_ARTIFACTS_HYPERPARAM)
-        if key in hyperparams
-    )
+    return sorted(key for key in _PLATFORM_OWNED_HYPERPARAMS if key in hyperparams)
 
 
 def unsupported_plan_reason(plan: dict, mode: str) -> str | None:
@@ -125,11 +144,32 @@ def unsupported_plan_reason(plan: dict, mode: str) -> str | None:
     """
     if mode != DISTILL_MODE:
         return f"A fidelity upgrade has no meaning for training mode '{mode}'"
-    if plan.get("distill_method") != LOGIT_METHOD:
+    if plan.get("distill_method") not in (LOGIT_METHOD, ON_POLICY_METHOD):
         return f"Unsupported distillation method: {plan.get('distill_method')!r}"
     if not plan.get("teacher_model"):
         return "The fidelity plan names no teacher model"
     return None
+
+
+def hyperparams_with_live_teacher(hyperparams: dict, plan: dict) -> dict:
+    """Hyperparams that make the training activity pick the on-policy strategy.
+
+    Unlike the logit path there is no scoring pass to run first: the teacher is
+    started by the training container itself, so all that has to cross the seam is
+    which teacher, pinned to which revision. The keys travel together for the same
+    reason as the artifact prefix — the strategy refuses to run without a teacher,
+    and the method is what selects the strategy.
+    """
+    resolved = {
+        **hyperparams,
+        DISTILL_METHOD_HYPERPARAM: ON_POLICY_METHOD,
+        TEACHER_MODEL_HYPERPARAM: plan["teacher_model"],
+    }
+    if plan.get("teacher_revision"):
+        resolved[TEACHER_REVISION_HYPERPARAM] = plan["teacher_revision"]
+    if plan.get("precision"):
+        resolved[TEACHER_PRECISION_HYPERPARAM] = plan["precision"]
+    return resolved
 
 
 @workflow.defn
@@ -167,15 +207,23 @@ class TrainWorkflow:
 
         plan = extraction_plan(teacher_config)
         if plan is not None:
-            hyperparams = await self._score_with_teacher(
-                plan,
-                tenant_id=tenant_id,
-                training_job_id=training_job_id,
-                dataset_path=dataset_path,
-                base_model=base_model,
-                mode=mode,
-                hyperparams=hyperparams,
-            )
+            reason = unsupported_plan_reason(plan, mode)
+            if reason:
+                raise ApplicationError(reason, non_retryable=True)
+
+            if plan["distill_method"] == ON_POLICY_METHOD:
+                # No scoring pass: an on-policy teacher grades text that does not
+                # exist yet, so it is started by the training container itself.
+                hyperparams = hyperparams_with_live_teacher(hyperparams, plan)
+            else:
+                hyperparams = await self._score_with_teacher(
+                    plan,
+                    tenant_id=tenant_id,
+                    training_job_id=training_job_id,
+                    dataset_path=dataset_path,
+                    base_model=base_model,
+                    hyperparams=hyperparams,
+                )
 
         if mode in ("quick", "distill"):
             # Direct activity — single SFT round, no multi-phase. Text distill is
@@ -282,7 +330,6 @@ class TrainWorkflow:
         training_job_id: str,
         dataset_path: str,
         base_model: str,
-        mode: str,
         hyperparams: dict,
     ) -> dict:
         """Score the dataset with the teacher, then point training at the result.
@@ -299,10 +346,6 @@ class TrainWorkflow:
         hands over the runtimes it measured, a failed one has no result to hand
         over and is billed from how long its reservation stood.
         """
-        reason = unsupported_plan_reason(plan, mode)
-        if reason is not None:
-            raise ApplicationError(reason, non_retryable=True)
-
         workflow.set_current_details(f"Scoring with teacher {plan['teacher_model']}")
         await self._set_extraction_status(
             tenant_id, training_job_id, TeacherExtractionStatus.RUNNING
