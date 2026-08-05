@@ -105,6 +105,7 @@ pub async fn create_training_job(
         Some(limits.max_models),
         None, // use default cost approval threshold
         state.config().teacher_gpu_spend_cap(&plan),
+        state.config().on_policy_tokens_per_sec,
         trace_ctx,
     )
     .await?;

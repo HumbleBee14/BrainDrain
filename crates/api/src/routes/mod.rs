@@ -145,6 +145,7 @@ fn v1_router() -> Router<AppState> {
         teacher::get_teacher_catalog,
         teacher::classify_teacher,
         teacher::estimate_teacher_cost,
+        teacher::get_improve_offer,
         // Evaluations
         evaluations::create_evaluation,
         evaluations::list_evaluations,
@@ -251,6 +252,7 @@ fn v1_router() -> Router<AppState> {
         crate::services::teacher::policy::ProviderPolicy,
         crate::services::teacher::policy::TeacherCatalogEntry,
         teacher::ClassifyTeacherRequest,
+        teacher::ImproveOfferResponse,
         teacher::ClassifyTeacherResponse,
         teacher::TeacherCostEstimateRequest,
         teacher::TeacherCostEstimateResponse,
