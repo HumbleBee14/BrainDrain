@@ -16,7 +16,7 @@ use crate::services::teacher::config::{
     provenance_from_config, validate_teacher_for_launch,
 };
 use crate::services::teacher::extraction::{
-    admit_extraction, attach_to_teacher_config, plan_extraction,
+    DistillOptionsDto, admit_extraction, attach_to_teacher_config, plan_extraction,
 };
 use crate::services::teacher::on_policy::{
     admit_on_policy, attach_to_teacher_config as attach_on_policy_to_teacher_config,
@@ -33,6 +33,20 @@ const PARENT_NOT_APPLICABLE_MESSAGE: &str =
 /// The parent anchors the before/after comparison, so one that cannot be read is
 /// refused rather than silently dropped — a run with no parent shows no comparison.
 const PARENT_MODEL_NOT_FOUND_MESSAGE: &str = "The model this run would improve on was not found.";
+
+/// Both fidelity methods copy more of a teacher than its text, so both need a
+/// teacher to copy from — which is what makes a run a distill run.
+const DISTILL_NOT_APPLICABLE_MESSAGE: &str =
+    "A distill method only applies to training mode 'distill'.";
+
+/// Whether these options ask for a run that puts a teacher on our own GPU.
+///
+/// Both such runs are priced and admitted against the teacher-GPU budget before a
+/// job row exists, and both carry their plan on the job's `teacher` block. Asking
+/// for either outside distill mode has to be refused, not ignored.
+fn asks_for_a_teacher_gpu(options: &DistillOptionsDto) -> bool {
+    options.wants_logits() || wants_on_policy(options)
+}
 
 /// Business logic for training job operations.
 pub struct TrainingJobService;
@@ -169,6 +183,15 @@ impl TrainingJobService {
                     message: TEACHER_NOT_APPLICABLE_MESSAGE.to_string(),
                 });
             }
+            // A fidelity plan is attached to the `teacher` block, which only a
+            // distill run has. Left to itself, the plan was priced, admitted, and
+            // then dropped for want of somewhere to live: the tenant paid a
+            // two-card rate for a run that trained as plain SFT.
+            if req.distill.as_ref().is_some_and(asks_for_a_teacher_gpu) {
+                return Err(AppError::BadRequest {
+                    message: DISTILL_NOT_APPLICABLE_MESSAGE.to_string(),
+                });
+            }
             None
         };
 
@@ -234,8 +257,8 @@ impl TrainingJobService {
             None => (req.gpu_class.clone(), cost_estimate),
         };
 
-        let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref());
-        let teacher_config = attach_on_policy_to_teacher_config(teacher_config, improve.as_ref());
+        let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref())?;
+        let teacher_config = attach_on_policy_to_teacher_config(teacher_config, improve.as_ref())?;
 
         // Recorded only for an improve pass, and only after checking the parent is
         // this tenant's: it is the anchor for the before/after parity comparison,
@@ -770,10 +793,42 @@ fn estimate_cost(
 mod tests {
     use super::*;
     use crate::dto::training_job::CreateTrainingJobRequest;
-    use platform_shared::enums::{TrainingMethod, TrainingMode};
+    use platform_shared::enums::{DistillMethod, TrainingMethod, TrainingMode};
     use std::str::FromStr;
 
     // ── billable_gpu_cost ──
+
+    /// A fidelity plan lives on the `teacher` block, which only a distill run has.
+    /// Outside distill mode the plan used to be priced, admitted, given a two-card
+    /// GPU class, and then dropped — so the tenant paid a teacher's rate for a run
+    /// that trained as plain SFT. `req.teacher` was already guarded; `req.distill`
+    /// was not.
+    #[test]
+    fn both_fidelity_methods_are_refused_outside_distill_mode() {
+        for method in [DistillMethod::Logit, DistillMethod::OnPolicy] {
+            let options = DistillOptionsDto {
+                method: Some(method),
+                ..Default::default()
+            };
+            assert!(
+                asks_for_a_teacher_gpu(&options),
+                "{method} puts a teacher on our GPU and must not be silently ignored"
+            );
+        }
+    }
+
+    /// The text path books no teacher GPU, so it has nothing to refuse and no plan
+    /// to lose.
+    #[test]
+    fn the_text_path_is_not_treated_as_a_teacher_gpu_request() {
+        for method in [None, Some(DistillMethod::Text)] {
+            let options = DistillOptionsDto {
+                method,
+                ..Default::default()
+            };
+            assert!(!asks_for_a_teacher_gpu(&options));
+        }
+    }
 
     #[test]
     fn short_runs_are_voided() {

@@ -15,7 +15,7 @@ use uuid::Uuid;
 use platform_db::models::Dataset;
 use platform_shared::enums::{DistillMethod, TeacherPrecision};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::repositories::traits::BillingEventRepository;
 use crate::services::teacher::billing::check_teacher_gpu_spend_cap;
 use crate::services::teacher::cost::{ExtractionEstimate, estimate_extraction, scored_tokens_for};
@@ -76,17 +76,25 @@ impl ExtractionPlan {
 /// The plan is recorded alongside the teacher rather than in a column of its
 /// own, because it is entirely a statement about this job's teacher — and this
 /// module owns that column, so the merge happens here rather than at the call
-/// site. A job with no teacher, or no fidelity upgrade, is returned untouched.
+/// site. A job with no fidelity upgrade is returned untouched.
+///
+/// An admitted plan with no block to live on is an error rather than a plan
+/// dropped: the tenant has already been quoted for the teacher's GPU pass and
+/// admitted against their teacher budget, so a run that proceeded without the plan
+/// would be charged for scoring that never happened.
 pub fn attach_to_teacher_config(
     teacher_config: Option<serde_json::Value>,
     plan: Option<&ExtractionPlan>,
-) -> Option<serde_json::Value> {
+) -> AppResult<Option<serde_json::Value>> {
     match (teacher_config, plan) {
         (Some(mut block), Some(plan)) => {
             block["extraction"] = plan.workflow_value();
-            Some(block)
+            Ok(Some(block))
         }
-        (block, _) => block,
+        (None, Some(_)) => Err(AppError::Internal(anyhow::anyhow!(
+            "an extraction plan was admitted for a job with no teacher provenance"
+        ))),
+        (block, None) => Ok(block),
     }
 }
 
@@ -268,7 +276,9 @@ mod tests {
     fn attaching_a_plan_preserves_the_teacher_it_is_merged_into() {
         let teacher = json!({"host": "inference.example.com", "model": "Qwen/Qwen3-32B"});
 
-        let merged = attach_to_teacher_config(Some(teacher), Some(&logit_plan())).unwrap();
+        let merged = attach_to_teacher_config(Some(teacher), Some(&logit_plan()))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(merged["host"], "inference.example.com");
         assert_eq!(merged["model"], "Qwen/Qwen3-32B");
@@ -281,15 +291,25 @@ mod tests {
     fn no_plan_leaves_the_teacher_block_untouched() {
         let teacher = json!({"model": "Qwen/Qwen3-32B"});
 
-        let merged = attach_to_teacher_config(Some(teacher.clone()), None).unwrap();
+        let merged = attach_to_teacher_config(Some(teacher.clone()), None)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(merged, teacher);
     }
 
     #[test]
     fn a_job_without_a_teacher_stays_without_one() {
-        assert!(attach_to_teacher_config(None, Some(&logit_plan())).is_none());
-        assert!(attach_to_teacher_config(None, None).is_none());
+        assert!(attach_to_teacher_config(None, None).unwrap().is_none());
+    }
+
+    /// The plan has been priced and admitted against the teacher-GPU budget by the
+    /// time this runs, so there is no correct way to continue without it: the run
+    /// would train as plain SFT on hardware the tenant is paying a teacher rate for.
+    /// Returning the job unchanged is what made that silent.
+    #[test]
+    fn an_admitted_plan_with_nowhere_to_live_is_an_error_not_a_dropped_plan() {
+        assert!(attach_to_teacher_config(None, Some(&logit_plan())).is_err());
     }
 
     #[test]
