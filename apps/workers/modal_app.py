@@ -82,7 +82,9 @@ _base_image = (
 )
 
 # `src` is mounted, not built, so it must be the final layer of any derived image.
-image = _base_image.add_local_python_source("src")
+image = _base_image.add_local_python_source("src").add_local_dir(
+    "src/activities/benchmarks", remote_path="/root/src/activities/benchmarks"
+)
 
 
 # Teacher logprob extraction runs vLLM, which cannot share the training image:
@@ -111,6 +113,9 @@ extract_image = (
         }
     )
     .add_local_python_source("src")
+    .add_local_dir(
+        "src/activities/benchmarks", remote_path="/root/src/activities/benchmarks"
+    )
 )
 
 
@@ -148,6 +153,9 @@ on_policy_image = (
         }
     )
     .add_local_python_source("src")
+    .add_local_dir(
+        "src/activities/benchmarks", remote_path="/root/src/activities/benchmarks"
+    )
 )
 
 
@@ -162,6 +170,9 @@ export_image = (
         "cmake --build /opt/llama.cpp/build --target llama-quantize -j 4",
     )
     .add_local_python_source("src")
+    .add_local_dir(
+        "src/activities/benchmarks", remote_path="/root/src/activities/benchmarks"
+    )
 )
 
 app = modal.App("platform-training")

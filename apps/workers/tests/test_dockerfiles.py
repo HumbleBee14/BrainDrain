@@ -149,3 +149,18 @@ def test_beam_image_covers_pyproject_runtime_deps():
     installed = {_package_name(tok) for tok in _beam_app().split('"') if tok.strip()}
     missing = sorted(dep for dep in _pyproject_runtime_deps() if dep not in installed)
     assert not missing, f"Beam image is missing runtime deps: {missing}"
+
+
+def test_modal_images_mount_every_src_data_file():
+    """add_local_python_source ships only .py files, so any data file an
+    activity reads must have its directory mounted explicitly — otherwise it
+    surfaces as FileNotFoundError inside the GPU container (found live with
+    the evaluation benchmarks, 2026-08-05)."""
+    modal_app = (W / "modal_app.py").read_text()
+    data_dirs = {
+        str(p.parent.relative_to(W))
+        for p in (W / "src").rglob("*")
+        if p.is_file() and p.suffix != ".py" and "__pycache__" not in p.parts
+    }
+    unmounted = sorted(d for d in data_dirs if d not in modal_app)
+    assert not unmounted, f"Modal images do not mount data dirs: {unmounted}"
