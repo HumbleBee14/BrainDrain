@@ -124,6 +124,12 @@ class WorkerSettings(BaseSettings):
     # a reasoning judge thinks for tens of seconds per verdict, and a
     # scale-to-zero judge endpoint can take minutes to cold-start.
     judge_timeout_seconds: float = 600.0
+    # Reasoning judges deliberate 30-60s per verdict; off turns judge-bound
+    # stages (eval, DPO filtering, GRPO rewards) from hours into minutes.
+    judge_enable_thinking: bool = False
+    # Concurrent judge verdicts per evaluation suite. Generation stays serial
+    # (one model, one GPU); only the HTTP judge calls fan out.
+    eval_judge_concurrency: int = 4
     # Caps how many items each evaluation suite scores (0 = full suite). Every
     # item costs a judge round-trip, so the full ~260-item run with a reasoning
     # judge exceeds the evaluation activity timeout; a small cap turns it into

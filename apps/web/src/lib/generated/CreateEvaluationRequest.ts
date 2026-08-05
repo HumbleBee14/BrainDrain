@@ -3,4 +3,10 @@
 /**
  * Request to create a new evaluation.
  */
-export type CreateEvaluationRequest = { judge_model?: string, judge_api_base?: string, };
+export type CreateEvaluationRequest = { judge_model?: string, judge_api_base?: string, 
+/**
+ * Let a reasoning judge think before each verdict. Far more thorough
+ * per-verdict deliberation, but multiplies evaluation time and token
+ * spend many times over; off by default.
+ */
+judge_thinking?: boolean, };

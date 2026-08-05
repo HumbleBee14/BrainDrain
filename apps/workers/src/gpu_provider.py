@@ -106,6 +106,7 @@ class GpuProvider(Protocol):
         dataset_config: dict | None = None,
         job_config: dict | None = None,
         max_items_per_suite: int = 0,
+        judge_thinking: bool | None = None,
     ) -> dict:
         """Run the full evaluation suite on a fine-tuned model.
 
@@ -313,6 +314,7 @@ class LocalGpuProvider:
         dataset_config: dict | None = None,
         job_config: dict | None = None,
         max_items_per_suite: int = 0,
+        judge_thinking: bool | None = None,
     ) -> dict:
         logger.info("Running evaluation locally (eval=%s, model=%s)", evaluation_id[:8], base_model)
 
@@ -334,6 +336,7 @@ class LocalGpuProvider:
             dataset_config=dataset_config,
             job_config=job_config,
             max_items_per_suite=max_items_per_suite,
+            judge_thinking=judge_thinking,
         )
         result = await run_evaluation_core(
             input_data,
@@ -842,6 +845,7 @@ class ModalGpuProvider:
         dataset_config: dict | None = None,
         job_config: dict | None = None,
         max_items_per_suite: int = 0,
+        judge_thinking: bool | None = None,
     ) -> dict:
         payload = {
             "input": {
@@ -858,6 +862,7 @@ class ModalGpuProvider:
                 "dataset_config": dataset_config,
                 "job_config": job_config,
                 "max_items_per_suite": max_items_per_suite,
+                "judge_thinking": judge_thinking,
             },
             "llm_config": llm_config,
         }
@@ -1287,6 +1292,7 @@ class BeamGpuProvider:
         dataset_config: dict | None = None,
         job_config: dict | None = None,
         max_items_per_suite: int = 0,
+        judge_thinking: bool | None = None,
     ) -> dict:
         payload = {
             "input": {
@@ -1303,6 +1309,7 @@ class BeamGpuProvider:
                 "dataset_config": dataset_config,
                 "job_config": job_config,
                 "max_items_per_suite": max_items_per_suite,
+                "judge_thinking": judge_thinking,
             },
             "llm_config": llm_config,
         }

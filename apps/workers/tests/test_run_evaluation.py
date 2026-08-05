@@ -404,3 +404,49 @@ class TestSuiteItemCap:
             max_items_per_suite=5,
         )
         assert _build_context(inp).max_items_per_suite == 5
+
+
+class TestJudgeMap:
+    def test_preserves_order(self):
+        from src.activities.run_evaluation import EvaluationContext, _judge_map
+
+        ctx = EvaluationContext(judge_concurrency=4)
+        assert _judge_map(lambda x: x * 2, [3, 1, 2], ctx) == [6, 2, 4]
+
+    def test_runs_concurrently(self):
+        import threading
+        import time
+
+        from src.activities.run_evaluation import EvaluationContext, _judge_map
+
+        ctx = EvaluationContext(judge_concurrency=4)
+        active = {"now": 0, "peak": 0}
+        lock = threading.Lock()
+
+        def slow(x):
+            with lock:
+                active["now"] += 1
+                active["peak"] = max(active["peak"], active["now"])
+            time.sleep(0.05)
+            with lock:
+                active["now"] -= 1
+            return x
+
+        assert _judge_map(slow, list(range(4)), ctx) == [0, 1, 2, 3]
+        assert active["peak"] > 1
+
+    def test_exceptions_propagate(self):
+        import pytest
+
+        from src.activities.run_evaluation import EvaluationContext, _judge_map
+
+        def boom(_):
+            raise ValueError("judge down")
+
+        with pytest.raises(ValueError, match="judge down"):
+            _judge_map(boom, [1, 2], EvaluationContext(judge_concurrency=2))
+
+    def test_serial_when_concurrency_one(self):
+        from src.activities.run_evaluation import EvaluationContext, _judge_map
+
+        assert _judge_map(lambda x: x, [1, 2], EvaluationContext()) == [1, 2]

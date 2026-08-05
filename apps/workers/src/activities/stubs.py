@@ -159,6 +159,7 @@ class RunEvaluationInput:
     dataset_config: dict | None = None
     job_config: dict | None = None
     max_items_per_suite: int = 0
+    judge_thinking: bool | None = None
 
 
 @dataclass

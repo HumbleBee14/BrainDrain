@@ -1,0 +1,44 @@
+name: GPU Smoke Test
+
+# A real (tiny) SFT run through the deployed Modal training function — the
+# class of gap unit tests cannot see (image deps, mounts, secrets, training
+# core on an actual GPU). Costs a few cents of GPU time per run, so it is
+# manual-trigger only; add a schedule when budget allows.
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_path:
+        description: Object-storage key of a small training dataset (.jsonl)
+        required: true
+      base_model:
+        description: Base model to fine-tune
+        default: Qwen/Qwen3-0.6B
+      gpu:
+        description: Modal GPU type
+        default: T4
+
+concurrency:
+  group: gpu-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Tiny SFT on ${{ inputs.gpu }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Run smoke training
+        working-directory: apps/workers
+        run: |
+          uv run --with modal python scripts/gpu_smoke.py \
+            --dataset-path "${{ inputs.dataset_path }}" \
+            --base-model "${{ inputs.base_model }}" \
+            --gpu "${{ inputs.gpu }}"

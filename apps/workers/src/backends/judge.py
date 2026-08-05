@@ -28,13 +28,18 @@ def get(
     model: str,
     max_retries: int = 3,
     on_failure: str = "error",
+    **kwargs,
 ) -> LLMJudge:
-    """Instantiate the named LLMJudge with credentials + failure policy."""
+    """Instantiate the named LLMJudge with credentials + failure policy.
+
+    Extra keyword arguments (completion budget, timeout, thinking mode) pass
+    through to the backend so new judge knobs never require a factory change.
+    """
     cls = _REGISTRY.get(name)
     if cls is None:
         available = list(_REGISTRY)
         raise ValueError(f"Unknown judge_backend '{name}'. Available: {available}")
-    return cls(api_base, api_key, model, max_retries=max_retries, on_failure=on_failure)
+    return cls(api_base, api_key, model, max_retries=max_retries, on_failure=on_failure, **kwargs)
 
 
 __all__ = ["LLMJudge", "register", "get"]

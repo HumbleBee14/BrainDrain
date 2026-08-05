@@ -89,6 +89,7 @@ class OpenAICompatibleJudge:
         on_failure: str = "error",
         max_completion_tokens: int = 2000,
         timeout_seconds: float = 600.0,
+        enable_thinking: bool = False,
     ):
         # Reasoning judges think for tens of seconds per verdict, and a
         # scale-to-zero judge endpoint can take minutes to cold-start.
@@ -105,6 +106,12 @@ class OpenAICompatibleJudge:
         # budget inside <think> before emitting them — the budget must cover
         # the thinking, and answer_text() recovers the short verdict after.
         self.max_completion_tokens = max_completion_tokens
+        # Off by default: a reasoning judge deliberates 30-60s per verdict,
+        # which turns every judge-bound stage (eval, DPO pair filtering, GRPO
+        # rewards) from minutes into hours. The soft switch below is plain
+        # prompt text: reasoning models that support it skip the think block;
+        # everything else ignores a trailing token.
+        self.enable_thinking = enable_thinking
         # "error"  → raise JudgeUnavailableError so the run fails loudly (default,
         #            correctness-first). "heuristic" → advanced opt-in: log and
         #            fall back to the length/keyword heuristics.
@@ -118,6 +125,8 @@ class OpenAICompatibleJudge:
         (e.g. 401/403 bad credentials, 400 bad request). Never returns "" —
         callers must not mistake an outage for a low-quality response.
         """
+        if not self.enable_thinking:
+            prompt = f"{prompt} /no_think"
         last_err: str | None = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -344,4 +353,5 @@ async def create_judge_for_tenant(
         on_failure=getattr(settings, "judge_on_failure", "error"),
         max_completion_tokens=llm_config.max_tokens,
         timeout_seconds=getattr(settings, "judge_timeout_seconds", 600.0),
+        enable_thinking=getattr(settings, "judge_enable_thinking", False),
     )

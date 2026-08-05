@@ -1842,6 +1842,7 @@ def _train_grpo(model, tokenizer, dataset, hp, job_id, max_seq_length, llm_confi
         on_failure=getattr(settings, "judge_on_failure", "error"),
         max_completion_tokens=llm_config.max_tokens,
         timeout_seconds=getattr(settings, "judge_timeout_seconds", 600.0),
+        enable_thinking=getattr(settings, "judge_enable_thinking", False),
     )
 
     reasoning_reward = _build_grpo_reward(judge)
@@ -2200,6 +2201,7 @@ def _create_dpo_pairs(model, dataset, tokenizer, hp, llm_config, settings=None):
         on_failure=getattr(settings, "judge_on_failure", "error"),
         max_completion_tokens=llm_config.max_tokens,
         timeout_seconds=getattr(settings, "judge_timeout_seconds", 600.0),
+        enable_thinking=getattr(settings, "judge_enable_thinking", False),
     )
     inference = get_inference("hf")
 
