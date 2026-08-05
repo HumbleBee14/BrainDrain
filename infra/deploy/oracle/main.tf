@@ -118,6 +118,16 @@ resource "oci_core_instance" "box" {
     ssh_authorized_keys = file(pathexpand(var.ssh_public_key_path))
     user_data           = base64encode(file("${path.module}/cloud-init.yaml"))
   }
+
+  # cloud-init runs only on first boot and the image data source floats to
+  # the newest release — neither may replace a LIVE box. Recreation is always
+  # deliberate: `terraform apply -replace=oci_core_instance.box`.
+  lifecycle {
+    ignore_changes = [
+      metadata["user_data"],
+      source_details[0].source_id,
+    ]
+  }
 }
 
 # ------------------- Reserved (stable) public IP -------------------

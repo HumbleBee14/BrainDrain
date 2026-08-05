@@ -1,10 +1,13 @@
 #cloud-config
-# Runs once on first boot: installs Docker + compose plugin (ARM64).
+# Runs once on first boot: installs Docker + compose plugin (ARM64) and the
+# OCI CLI (used by render-env.sh to fetch the app .env from Vault).
 package_update: true
 packages:
   - ca-certificates
   - curl
+  - python3-pip
 runcmd:
+  - pip3 install oci-cli
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc
