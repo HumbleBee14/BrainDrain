@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 
 from src.datagen.prompts import PromptLibrary, xml_escape
 from src.datagen.protocols import Facet, FaithfulnessVerdict, GeneratedPair, RatedSample
-from src.llm_output import strip_reasoning
+from src.llm_output import answer_text
 
 LlmCall = Callable[[str], Awaitable[str]]
 
@@ -64,7 +64,7 @@ def _parse_json_object(raw: str, *, required_keys: tuple[str, ...]) -> dict:
 
     Raises ValueError (not a silent default) on malformed JSON or a missing key.
     """
-    raw = strip_reasoning(raw)
+    raw = answer_text(raw)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:

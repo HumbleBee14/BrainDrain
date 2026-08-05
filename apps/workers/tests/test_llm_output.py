@@ -11,13 +11,19 @@ import json
 import pytest
 
 from src.datagen.impls import _parse_json_object
-from src.llm_output import strip_reasoning
+from src.llm_output import answer_text, strip_code_fence, strip_reasoning
 
 QWEN3_STYLE_COMPLETION = (
     "<think>\nAlright, let's tackle this query. The user wants Q&A pairs.\n"
     "I need to structure each pair into the required JSON format.\n</think>\n\n"
     '{"generated_qna_pairs": [{"query": "What are the six stages?", '
     '"answer": "Upload, parse, refine, train, evaluate, and deploy."}]}'
+)
+
+FENCED_VERDICT_COMPLETION = (
+    '```json\n{"consistent": true, "score": 1.0, "reason": "The response correctly '
+    "lists PDF, DOCX, HTML, and Markdown as supported formats, which are explicitly "
+    "stated in the source text under the 'Upload and parsing' section.\"}\n```"
 )
 
 
@@ -51,12 +57,58 @@ def test_only_the_leading_block_is_removed():
     assert strip_reasoning(text) == "real answer <think>quoted</think> tail"
 
 
+def test_a_fenced_verdict_is_unwrapped():
+    """The exact failure from the second live run: the faithfulness judge wrote
+    a valid verdict wrapped in a markdown code fence."""
+    data = json.loads(strip_code_fence(FENCED_VERDICT_COMPLETION))
+
+    assert data["consistent"] is True
+
+
+def test_a_fence_without_a_language_tag_is_unwrapped():
+    assert strip_code_fence('```\n{"a": 1}\n```') == '{"a": 1}'
+
+
+def test_unfenced_text_passes_through_unchanged():
+    assert strip_code_fence('{"a": 1}') == '{"a": 1}'
+
+
+def test_a_fence_with_trailing_prose_is_content_not_packaging():
+    text = '```json\n{"a": 1}\n```\nHope that helps!'
+
+    assert strip_code_fence(text) == text
+
+
+def test_an_unterminated_fence_is_a_cut_off_completion_not_an_answer():
+    truncated = '```json\n{"a": 1'
+
+    assert strip_code_fence(truncated) == truncated
+
+
+def test_a_fence_inside_the_answer_is_left_alone():
+    text = 'Use ```json\n{"a": 1}\n``` to format it'
+
+    assert strip_code_fence(text) == text
+
+
+def test_answer_text_removes_reasoning_then_fence():
+    completion = '<think>\nformatting now\n</think>\n```json\n{"a": 1}\n```'
+
+    assert json.loads(answer_text(completion)) == {"a": 1}
+
+
 def test_the_datagen_parser_reads_a_reasoning_teachers_pairs():
     """The exact failure from the first live run: Qwen3-32B wrote valid pairs
     the parser never saw."""
     data = _parse_json_object(QWEN3_STYLE_COMPLETION, required_keys=("generated_qna_pairs",))
 
     assert len(data["generated_qna_pairs"]) == 1
+
+
+def test_the_datagen_parser_reads_a_fenced_verdict():
+    data = _parse_json_object(FENCED_VERDICT_COMPLETION, required_keys=("consistent", "score"))
+
+    assert data["score"] == 1.0
 
 
 def test_the_datagen_parser_still_refuses_malformed_output():
