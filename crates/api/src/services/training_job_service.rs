@@ -649,6 +649,11 @@ pub(crate) fn billable_gpu_cost(elapsed_seconds: i64, rate: f64) -> (i32, f64) {
     (seconds as i32, cost)
 }
 
+/// Epochs a job trains for when the caller names no number. Public because
+/// pricing has to quote the same figure the run will use — see
+/// `teacher::on_policy::DEFAULT_EPOCHS`.
+pub const DEFAULT_NUM_TRAIN_EPOCHS: i64 = 3;
+
 /// Merge user-provided hyperparams with smart defaults.
 fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Value {
     let mut defaults = serde_json::json!({
@@ -662,7 +667,7 @@ fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Valu
         "learning_rate": 2e-4,
         "per_device_train_batch_size": 2,
         "gradient_accumulation_steps": 4,
-        "num_train_epochs": 3,
+        "num_train_epochs": DEFAULT_NUM_TRAIN_EPOCHS,
         "warmup_steps": 10,
         "optim": "adamw_8bit",
         "lr_scheduler_type": "cosine",

@@ -53,6 +53,14 @@ SERVER_REVERSE_KL_TOP_K = 1
 DEFAULT_MAX_COMPLETION_LENGTH = 512
 DEFAULT_NUM_GENERATIONS = 1
 
+# The trainer's own name for the epoch count, and the platform default behind it.
+# Both have to match what the API priced: an on-policy epoch is a full pass of
+# student rollouts graded token by token, so training one more than was quoted
+# spends a teacher-hour nobody was charged for. Reading a different key entirely —
+# which this did — silently trained one epoch against a three-epoch quote.
+EPOCHS_HYPERPARAM = "num_train_epochs"
+DEFAULT_EPOCHS = 3
+
 # HF `generate` for rollouts rather than colocated vLLM. Slower per token, but it
 # cannot compete with the student for GPU memory mid-run, and an out-of-memory kill
 # costs the whole container. Flipping this on is the first optimization to measure
@@ -249,7 +257,7 @@ def trainer_config_kwargs(plan: OnPolicyPlan, *, output_dir: str, hp: dict) -> d
         "gradient_accumulation_steps": plan.gradient_accumulation_steps,
         "use_vllm": plan.use_vllm_rollouts,
         "learning_rate": float(hp.get("learning_rate", 1e-5)),
-        "num_train_epochs": float(hp.get("epochs", 1)),
+        "num_train_epochs": float(hp.get(EPOCHS_HYPERPARAM, DEFAULT_EPOCHS)),
         "logging_steps": int(hp.get("logging_steps", 1)),
         "bf16": True,
         "report_to": [],
