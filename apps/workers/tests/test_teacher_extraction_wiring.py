@@ -341,6 +341,48 @@ class TestExtractionStatus:
         assert statuses == [TeacherExtractionStatus.RUNNING, TeacherExtractionStatus.FAILED]
         assert "start_training" not in names
 
+    def test_the_failure_carries_the_teachers_own_words(self, monkeypatch, recorded):
+        """Temporal's own wrapper text is what reaches the tenant otherwise."""
+
+        async def failing_activity(name, arg=None, **kwargs):
+            recorded.append((name, arg, kwargs))
+            if name == "extract_teacher_logprobs":
+                raise ApplicationError("Teacher ran out of memory on a10080gb")
+            return None
+
+        monkeypatch.setattr(train_wf.workflow, "execute_activity", failing_activity)
+
+        with pytest.raises(ApplicationError):
+            run_train(teacher_config={"extraction": PLAN})
+
+        failed = [
+            arg
+            for name, arg, _ in recorded
+            if name == "set_teacher_extraction_status"
+            and arg.status == TeacherExtractionStatus.FAILED
+        ]
+        assert failed[0].error_message == "Teacher ran out of memory on a10080gb"
+
+    def test_a_status_write_that_fails_does_not_replace_the_real_error(
+        self, monkeypatch, recorded
+    ):
+        """The recording is best-effort; the extraction's own error is not."""
+
+        async def failing_activity(name, arg=None, **kwargs):
+            recorded.append((name, arg, kwargs))
+            if name == "extract_teacher_logprobs":
+                raise ApplicationError("teacher OOM")
+            if name == "set_teacher_extraction_status" and arg.status == (
+                TeacherExtractionStatus.FAILED
+            ):
+                raise RuntimeError("database is down")
+            return None
+
+        monkeypatch.setattr(train_wf.workflow, "execute_activity", failing_activity)
+
+        with pytest.raises(ApplicationError, match="teacher OOM"):
+            run_train(teacher_config={"extraction": PLAN})
+
     def test_cancellation_leaves_the_status_running(self, monkeypatch, recorded):
         """A cancelled extraction must stay distinguishable from a failed one."""
 
