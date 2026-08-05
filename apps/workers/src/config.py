@@ -80,6 +80,18 @@ class WorkerSettings(BaseSettings):
     # kept running and billing. Set <= 0 to disable the sweep.
     modal_orphan_sweep_interval_secs: int = 300
 
+    # Cloud GPU (Beam serverless) — used when gpu_provider="beam".
+    # Beam assigns each deployed task queue a generated invoke URL (printed by
+    # `beam deploy apps/workers/beam_app.py:<name>`), so queues are configured
+    # as {logical function name: invoke URL} rather than derived from a name.
+    # Logical names match the queues in apps/workers/beam_app.py:
+    # "train", "train_sft_round", "evaluate_holdout", "run_evaluation".
+    beam_token: str = ""
+    beam_workspace_id: str = ""
+    beam_queue_urls: dict[str, str] = {}
+    beam_task_api_base: str = "https://app.beam.cloud/api/v1/task"
+    beam_poll_interval_secs: int = 15
+
     # Backend selection — swap any processing layer without code changes
     pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
     language_detector_backend: str = "langdetect"  # "langdetect" | "null"

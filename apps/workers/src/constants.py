@@ -50,6 +50,21 @@ MODAL_GPU_MAP: dict[str, str] = {
 }
 MODAL_DEFAULT_GPU: str = "T4"
 
+# Maps gpu_class values to Beam GPU type strings (beam.GpuType values), for
+# gpu_provider="beam". Unlike the Modal map there is NO default fallback: an
+# unmapped class raises in BeamGpuProvider, because Beam schedules whatever
+# type string it is handed and a silent substitute would bill one class while
+# running another. Multi-device classes are deliberately absent until Beam
+# multi-GPU task queues are validated end to end.
+BEAM_GPU_MAP: dict[str, str] = {
+    "t4": "T4",
+    "a10g": "A10G",
+    "l40s": "L40S",
+    "a10040gb": "A100-40",
+    "a10080gb": "A100-80",
+    "h100": "H100",
+}
+
 # Devices per GPU class, mirroring `GpuClass::device_count()`. Billing needs this
 # separately from the Modal map because it applies to the local provider too: an
 # on-policy container's cost has to be split between the student's training time

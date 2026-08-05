@@ -130,3 +130,22 @@ def test_on_policy_stack_excludes_unsloth():
         for spec in _pyproject()["project"]["optional-dependencies"]["on-policy"]
     }
     assert "unsloth" not in packages
+
+
+def _beam_app() -> str:
+    return (W / "beam_app.py").read_text()
+
+
+def test_beam_pins_match_modal_app():
+    """beam_app.py repeats modal_app's training-image literals (it cannot import
+    modal_app inside a Beam container). Same duplication rule: safe only while
+    disagreement fails a test."""
+    match = re.search(r'^TRL_UNSLOTH_VERSION = "([^"]+)"', _beam_app(), re.MULTILINE)
+    assert match, "TRL_UNSLOTH_VERSION is not defined in beam_app.py"
+    assert match.group(1) == _modal_constant("TRL_UNSLOTH_VERSION")
+
+
+def test_beam_image_covers_pyproject_runtime_deps():
+    installed = {_package_name(tok) for tok in _beam_app().split('"') if tok.strip()}
+    missing = sorted(dep for dep in _pyproject_runtime_deps() if dep not in installed)
+    assert not missing, f"Beam image is missing runtime deps: {missing}"
