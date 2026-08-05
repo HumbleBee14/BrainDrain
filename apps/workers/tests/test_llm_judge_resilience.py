@@ -137,3 +137,24 @@ def test_failure_message_keeps_root_cause(monkeypatch):
     monkeypatch.setattr(j.client, "post", lambda *a, **k: _Resp(401, text="invalid api key"))
     with pytest.raises(JudgeUnavailableError, match="invalid api key"):
         j.score_domain("p", "g", "e")
+
+
+def test_verdict_calls_send_the_configured_completion_budget(monkeypatch):
+    """A reasoning judge spends its budget inside <think> before the verdict, so
+    every scoring call must send the configured budget, not a tiny literal."""
+    j = OpenAICompatibleJudge("http://x", "k", "m", max_completion_tokens=4096)
+    sent = {}
+
+    def _post(_path, json):
+        sent["max_tokens"] = json["max_tokens"]
+        return _ok("<think>hmm</think>8")
+
+    monkeypatch.setattr(j.client, "post", _post)
+    assert j.score_response("p", "r") == 8.0
+    assert sent["max_tokens"] == 4096
+
+
+def test_reasoning_block_is_stripped_from_verdict(monkeypatch):
+    j = _judge()
+    monkeypatch.setattr(j.client, "post", lambda *a, **k: _ok("<think>x</think>\nyes"))
+    assert j.check_correctness("a", "e") is True

@@ -87,6 +87,7 @@ class OpenAICompatibleJudge:
         model: str,
         max_retries: int = 3,
         on_failure: str = "error",
+        max_completion_tokens: int = 2000,
     ):
         self.client = httpx.Client(
             base_url=api_base,
@@ -97,12 +98,16 @@ class OpenAICompatibleJudge:
         self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
+        # Verdicts are a handful of tokens, but reasoning judges spend their
+        # budget inside <think> before emitting them — the budget must cover
+        # the thinking, and answer_text() recovers the short verdict after.
+        self.max_completion_tokens = max_completion_tokens
         # "error"  → raise JudgeUnavailableError so the run fails loudly (default,
         #            correctness-first). "heuristic" → advanced opt-in: log and
         #            fall back to the length/keyword heuristics.
         self.on_failure = on_failure
 
-    def _call(self, prompt: str, max_tokens: int = 200) -> str:
+    def _call(self, prompt: str, max_tokens: int | None = None) -> str:
         """Call the judge, retrying transient errors with backoff+jitter.
 
         Raises JudgeUnavailableError if no usable response is obtained after
@@ -118,7 +123,7 @@ class OpenAICompatibleJudge:
                     json={
                         "model": self.model,
                         "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": max_tokens,
+                        "max_tokens": max_tokens or self.max_completion_tokens,
                         "temperature": 0.0,
                     },
                 )
@@ -194,7 +199,7 @@ class OpenAICompatibleJudge:
             return min(10.0, len(response) / 100 + 3)
 
         try:
-            result = self._call(judge_prompt, max_tokens=5)
+            result = self._call(judge_prompt)
             return max(1.0, min(10.0, float(result.strip().split()[0])))
         except (ValueError, IndexError) as e:
             return self._handle_failure("score_response (unparseable)", _heuristic, e)
@@ -214,7 +219,7 @@ class OpenAICompatibleJudge:
             "Score (1-10):"
         )
         try:
-            result = self._call(judge_prompt, max_tokens=5)
+            result = self._call(judge_prompt)
             raw_score = float(result.strip().split()[0])
             return max(-1.0, min(1.0, (raw_score - 5.5) / 4.5))
         except (ValueError, IndexError) as e:
@@ -263,7 +268,7 @@ class OpenAICompatibleJudge:
             "Respond with ONLY one letter: A, B, or T (for tie)."
         )
         try:
-            result = self._call(judge_prompt, max_tokens=5).strip().upper()
+            result = self._call(judge_prompt).strip().upper()
         except JudgeUnavailableError as e:
             return self._handle_failure("compare_ab", lambda: "tie", e)
         if result.startswith("A"):
@@ -281,7 +286,7 @@ class OpenAICompatibleJudge:
             "Respond with ONLY 'yes' or 'no'."
         )
         try:
-            result = self._call(judge_prompt, max_tokens=5)
+            result = self._call(judge_prompt)
         except JudgeUnavailableError as e:
             return self._handle_failure("check_correctness", lambda: False, e)
         return result.strip().lower().startswith("y")
@@ -334,4 +339,5 @@ async def create_judge_for_tenant(
         model=llm_config.model,
         max_retries=getattr(settings, "judge_max_retries", 3),
         on_failure=getattr(settings, "judge_on_failure", "error"),
+        max_completion_tokens=llm_config.max_tokens,
     )

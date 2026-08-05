@@ -426,6 +426,7 @@ class TestDpoToolSkips:
             api_base_url = "http://x"
             api_key = "k"
             model = "m"
+            max_tokens = 256
 
         with caplog.at_level("WARNING"):
             out = tm._create_dpo_pairs(None, dataset, _ToolTok(), {}, _LlmConfig())

@@ -35,6 +35,7 @@ class _LlmConfig:
     api_base_url = "http://x"
     api_key = "k"
     model = "m"
+    max_tokens = 256
 
 
 class _Tok:
