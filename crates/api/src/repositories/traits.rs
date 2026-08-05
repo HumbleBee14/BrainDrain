@@ -311,6 +311,7 @@ pub trait TrainingJobRepository: Send + Sync {
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
         teacher_config: Option<serde_json::Value>,
+        parent_model_id: Option<Uuid>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
     /// Atomic create with plan limit enforcement.
@@ -328,6 +329,7 @@ pub trait TrainingJobRepository: Send + Sync {
         gpu_class: Option<&str>,
         cost_estimate: Option<f64>,
         teacher_config: Option<serde_json::Value>,
+        parent_model_id: Option<Uuid>,
         max_models: i64,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 

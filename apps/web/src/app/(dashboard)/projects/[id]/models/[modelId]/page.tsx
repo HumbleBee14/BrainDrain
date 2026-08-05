@@ -25,6 +25,7 @@ import {
 } from "@/hooks/use-exports";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { DeploymentPanel } from "@/components/deployment-panel";
+import { SharpenOffer } from "@/components/sharpen-offer";
 import { AdapterDownloadButton } from "@/components/adapter-download-button";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -353,6 +354,14 @@ export default function ModelDetailPage() {
           )}
         </div>
       )}
+
+      <SharpenOffer
+        projectId={params.id}
+        modelId={params.modelId}
+        trainingJobId={model.training_job_id}
+        baseModel={model.base_model}
+        evalScores={model.eval_scores}
+      />
 
       {/* Eval scores summary (if available) */}
       {model.eval_scores &&

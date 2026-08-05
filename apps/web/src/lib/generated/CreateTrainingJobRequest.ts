@@ -17,4 +17,9 @@ teacher?: TeacherConfigDto,
 /**
  * Distill mode: fidelity options. Absent means the text path.
  */
-distill?: DistillOptionsDto, };
+distill?: DistillOptionsDto, 
+/**
+ * The model this run improves on. Only meaningful for an on-policy improve
+ * pass, where it is what makes the before/after parity comparison possible.
+ */
+parent_model_id?: string, };

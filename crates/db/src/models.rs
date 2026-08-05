@@ -124,6 +124,9 @@ pub struct TrainingJob {
     /// Finalized teacher-GPU cost for extraction, billed separately from
     /// `actual_cost` (the training run's own cost).
     pub teacher_extraction_cost: Option<f64>,
+    /// Model this run improves on (on-policy distillation). NULL for every run
+    /// that is not an improve pass.
+    pub parent_model_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
