@@ -161,7 +161,7 @@ class GenerateFacetsActivity:
 
         doc_texts = [text[:6000] for _, text in docs]
 
-        async with httpx.AsyncClient(timeout=120.0) as http:
+        async with httpx.AsyncClient(timeout=settings.datagen_llm_timeout_seconds) as http:
             llm_call = _llm_call_closure(
                 self.infra, llm_config, provider, http, settings.generation_temperature
             )
@@ -229,7 +229,7 @@ class GeneratePreviewActivity:
         # defaults to kept (matches the DTO default on the Rust side).
         facets = [Facet(**f) for f in input.facets if f.get("keep", True)] if input.facets else []
 
-        async with httpx.AsyncClient(timeout=120.0) as http:
+        async with httpx.AsyncClient(timeout=settings.datagen_llm_timeout_seconds) as http:
             llm_call = _llm_call_closure(
                 self.infra, llm_config, provider, http, settings.generation_temperature
             )
@@ -326,7 +326,7 @@ class RefineGuidanceActivity:
 
         rated_samples = [RatedSample(**r) for r in input.rated]
 
-        async with httpx.AsyncClient(timeout=120.0) as http:
+        async with httpx.AsyncClient(timeout=settings.datagen_llm_timeout_seconds) as http:
             llm_call = _llm_call_closure(
                 self.infra, llm_config, provider, http, settings.generation_temperature
             )

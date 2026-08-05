@@ -106,6 +106,7 @@ def _settings(**overrides):
         "settings_encryption_key": KEY_B64,
         "generation_temperature": 0.7,
         "judge_temperature": 0.0,
+        "datagen_llm_timeout_seconds": 600.0,
         "datagen_pair_backend": "llm",
         "datagen_facet_backend": "llm",
         "datagen_faithfulness_backend": "llm",

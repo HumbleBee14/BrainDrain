@@ -99,6 +99,11 @@ class WorkerSettings(BaseSettings):
     datagen_pair_backend: str = "llm"  # "llm"
     datagen_refiner_backend: str = "llm"  # "llm"
     datagen_faithfulness_backend: str = "llm"  # "llm"
+    # Per-call HTTP timeout for datagen LLM requests. Sized for a self-hosted
+    # reasoning teacher writing a full chunk's pairs (plus its think block) in
+    # one completion, which routinely exceeds the ~2 minutes a hosted-API
+    # default would allow. The Temporal activity timeout still bounds the run.
+    datagen_llm_timeout_seconds: float = 600.0
 
     # Data Studio synthetic data-generation
     faithfulness_gate_enabled: bool = True

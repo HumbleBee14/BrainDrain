@@ -422,7 +422,7 @@ class GeneratePairsActivity:
         run_key = scope_run_key(self._run_key(), teacher_config)
         checkpoint = self._build_checkpoint(input, run_key)
 
-        async with httpx.AsyncClient(timeout=120.0) as http:
+        async with httpx.AsyncClient(timeout=settings.datagen_llm_timeout_seconds) as http:
 
             def make_llm_call(temperature: float):
                 async def llm_call(prompt: str) -> str:
