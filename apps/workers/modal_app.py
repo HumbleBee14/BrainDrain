@@ -52,6 +52,18 @@ _RUNTIME_DEPS = (
     "opentelemetry-instrumentation-logging>=0.50b0",
 )
 
+# Version pins are declared in pyproject.toml — the manifest is the single source
+# of truth. They are repeated as literals here because Modal builds these image
+# layers from this file at deploy time, and this module is also imported inside
+# the container, where pyproject.toml is not present to read. Drift between the
+# two is a test failure, not something to notice later:
+# tests/test_dockerfiles.py::test_modal_pins_match_pyproject.
+#
+# Two TRL versions, because unsloth constrains trl to <=0.24.0: the on-policy
+# trainers exist only in the 1.x line, which is exactly why on-policy runs on its
+# own image rather than this one.
+TRL_UNSLOTH_VERSION = "0.24.0"
+
 _base_image = (
     modal.Image.debian_slim(python_version="3.11")
     # GPU/ML stack — remote-only, absent from pyproject's runtime deps.
@@ -59,7 +71,7 @@ _base_image = (
         "unsloth>=2025.12",
         "transformers>=4.51.0,<5.0.0",
         "datasets>=3.2.0",
-        "trl>=0.16.0",
+        f"trl=={TRL_UNSLOTH_VERSION}",
         "peft>=0.14.0",
         "accelerate>=1.2.0",
         "bitsandbytes>=0.45.0",
@@ -80,7 +92,8 @@ image = _base_image.add_local_python_source("src")
 # since vLLM is by far the more fragile half.
 # Pinned to the version the extraction contract was measured against
 # (docs/distillation/STAGE2-SPIKE-FINDINGS.md); prompt logprobs are known to vary
-# across versions, so the pin is part of the artifact's provenance.
+# across versions, so the pin is part of the artifact's provenance. Declared in
+# pyproject.toml's `extraction` extra.
 VLLM_EXTRACTION_VERSION = "0.26.0"
 
 extract_image = (
@@ -94,6 +107,42 @@ extract_image = (
             # fails without nvcc, which a slim image has no reason to carry.
             # Scoring never samples, so switching it off is free. Measured on a
             # real GPU start, not a precaution.
+            "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        }
+    )
+    .add_local_python_source("src")
+)
+
+
+# On-policy distillation runs the teacher as a `trl vllm-serve` sidecar inside the
+# trainer's own container, so this image needs the training stack AND vLLM — which
+# rules out the Unsloth image for the reason given above. The student therefore
+# trains through the `transformers` engine rather than Unsloth.
+#
+# The vLLM pin is NOT the extraction pin: TRL 1.9.2 requires vllm<=0.25.1, and
+# extraction deliberately runs 0.26.0 (its measured prompt_logprobs contract
+# belongs to that version). Two purposes, two pins, neither bumpable without
+# re-measuring what depends on it. Declared in pyproject.toml's `on-policy` extra.
+VLLM_ON_POLICY_VERSION = "0.25.1"
+TRL_ON_POLICY_VERSION = "1.9.2"
+
+on_policy_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(*_RUNTIME_DEPS)
+    .pip_install(
+        f"vllm=={VLLM_ON_POLICY_VERSION}",
+        f"trl=={TRL_ON_POLICY_VERSION}",
+        "peft>=0.14.0",
+        "accelerate>=1.2.0",
+        "datasets>=3.2.0",
+        "pynvml>=12.0.0",
+    )
+    .env(
+        {
+            "HF_HOME": _HF_CACHE_PATH,
+            # Same JIT problem as extraction: FlashInfer's sampler compiles CUDA at
+            # engine warmup and there is no nvcc in a slim image. The teacher only
+            # ever scores, and student rollouts fall back to the PyTorch sampler.
             "VLLM_USE_FLASHINFER_SAMPLER": "0",
         }
     )
@@ -284,6 +333,44 @@ async def extract_logprobs(payload: dict) -> dict:
         "scored_positions": result.scored_positions,
         "skipped_records": result.skipped_records,
         "shards": result.shards,
+        "metrics": result.metrics,
+    }
+
+
+@app.function(
+    image=on_policy_image,
+    gpu="A100-80GB:2",
+    timeout=86400,
+    secrets=[_secret, _metrics_secret],
+    volumes={_HF_CACHE_PATH: _weights_cache},
+)
+async def train_on_policy(payload: dict) -> dict:
+    """Remote on-policy distillation. payload = {"input": {...}, "llm_config": {...}}.
+
+    Same core as `train`, on the image that can host the teacher sidecar. The
+    default GPU is multi-device because a single card cannot hold both models;
+    the worker still overrides it per call from the job's gpu_class.
+    """
+    _remote_env_setup()
+
+    from src.activities.stubs import StartTrainingInput
+    from src.activities.train_model import run_training_core
+    from src.modal_runtime import build_s3_client, build_settings
+    from src.tenant_config import TenantLlmConfig
+
+    settings = build_settings()
+    s3, bucket = build_s3_client(settings)
+
+    result = await run_training_core(
+        StartTrainingInput(**payload["input"]),
+        s3=s3,
+        s3_bucket=bucket,
+        settings=settings,
+        llm_config=TenantLlmConfig(**payload["llm_config"]),
+    )
+    return {
+        "adapter_path": result.adapter_path,
+        "adapter_size_bytes": result.adapter_size_bytes,
         "metrics": result.metrics,
     }
 

@@ -10,4 +10,4 @@
  * `Text` is the default everywhere: higher fidelity costs GPU time, so it is
  * only ever entered deliberately.
  */
-export type DistillMethod = "text" | "logit";
+export type DistillMethod = "text" | "logit" | "on_policy";

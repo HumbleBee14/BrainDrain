@@ -2,7 +2,10 @@
 name = "platform-workers"
 version = "0.1.0"
 description = "ML pipeline workers (Temporal)"
-requires-python = ">=3.11"
+# Upper bound is real, not defensive: the GPU stacks (unsloth, vllm, torch) ship
+# no 3.14-compatible release, and every image we build runs 3.11. Without the
+# bound, resolution is attempted for interpreters no ML dependency supports.
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "temporalio>=1.9.0",
     "pydantic>=2.10.0",
@@ -50,7 +53,13 @@ ml = [
     "unsloth>=2025.12",
     "transformers>=4.51.0,<5.0.0",
     "datasets>=3.2.0",
-    "trl>=0.16.0",
+    # Pinned exactly, not floated, so a rebuild cannot change training behaviour
+    # with no code change. This is NOT the on-policy TRL version: unsloth
+    # constrains trl to <=0.24.0, so the two stacks are on different majors and
+    # the on-policy trainers simply do not exist in this one. 0.24.0 is the
+    # newest release unsloth allows, which is what an unpinned install resolved
+    # to anyway.
+    "trl==0.24.0",
     "peft>=0.14.0",
     "accelerate>=1.2.0",
     "bitsandbytes>=0.45.0",
@@ -61,9 +70,43 @@ gpu-cloud = [
     # (used in ModalGpuProvider); it did not exist on modal.Function before then.
     "modal>=1.4.3",
 ]
+# Teacher logprob extraction (offline distillation). vLLM cannot share the `ml`
+# stack: unsloth pins its own torch build and resolving both produces a broken
+# pair. Pinned to the version the extraction contract was measured against —
+# prompt logprobs are known to vary across versions, so the pin is part of the
+# artifact's provenance.
+extraction = [
+    "vllm==0.26.0",
+]
+# On-policy distillation: the teacher runs as a `trl vllm-serve` sidecar inside
+# the trainer's own container, so this stack needs vLLM *and* the training
+# libraries, and must not contain unsloth. The vLLM pin deliberately differs
+# from `extraction` above because TRL 1.9.2 requires vllm<=0.25.1.
+on-policy = [
+    "vllm==0.25.1",
+    # The on-policy trainers live in trl.experimental, whose stated contract is
+    # that APIs may change without notice — hence an exact pin. Unreachable from
+    # the `ml` stack above, which unsloth holds at <=0.24.0.
+    "trl==1.9.2",
+    "peft>=0.14.0",
+    "accelerate>=1.2.0",
+    "datasets>=3.2.0",
+    "pynvml>=12.0.0",
+]
 # Alternative PDF backend (richer structure extraction, larger install)
 pdf-ml = [
     "docling>=2.0.0",
+]
+
+# These three groups are one-per-container by design and cannot co-resolve: the
+# unsloth stack pins its own torch build, and the two vLLM groups pin different
+# vLLM versions on purpose (see each group above). Declaring the conflict is what
+# lets each keep an honest, exact pin instead of being widened into a range that
+# satisfies a resolver while matching none of the three contracts. Each Modal
+# image installs exactly one of them.
+[tool.uv]
+conflicts = [
+    [{ extra = "ml" }, { extra = "extraction" }, { extra = "on-policy" }],
 ]
 
 [build-system]

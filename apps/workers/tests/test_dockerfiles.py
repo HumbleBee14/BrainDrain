@@ -1,7 +1,31 @@
 # apps/workers/tests/test_dockerfiles.py
+import re
+import tomllib
 from pathlib import Path
 
 W = Path(__file__).resolve().parents[1]
+
+
+def _pyproject() -> dict:
+    with (W / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _extra(name: str) -> dict[str, str]:
+    """Exact pins in an optional-dependency group, as {package: version}."""
+    specs = _pyproject()["project"]["optional-dependencies"][name]
+    return dict(
+        match.groups()
+        for spec in specs
+        if (match := re.fullmatch(r"([A-Za-z0-9_.-]+)==([0-9][^,;\s]*)", spec.strip()))
+    )
+
+
+def _modal_constant(name: str) -> str:
+    body = (W / "modal_app.py").read_text()
+    match = re.search(rf'^{name} = "([^"]+)"', body, re.MULTILINE)
+    assert match, f"{name} is not defined in modal_app.py"
+    return match.group(1)
 
 
 def test_default_image_installs_modal_client_not_ml():
@@ -44,3 +68,65 @@ def test_modal_image_covers_pyproject_runtime_deps():
     installed = {_package_name(tok) for tok in modal_app.split('"') if tok.strip()}
     missing = sorted(dep for dep in _pyproject_runtime_deps() if dep not in installed)
     assert not missing, f"Modal image is missing runtime deps: {missing}"
+
+
+def test_modal_pins_match_pyproject():
+    """pyproject.toml declares the pins; modal_app.py repeats them as literals
+    because Modal builds image layers from this file at deploy time and the module
+    is also imported in the container, where pyproject.toml is absent. That
+    duplication is only safe while something fails when the two disagree."""
+    assert _modal_constant("TRL_UNSLOTH_VERSION") == _extra("ml")["trl"]
+    assert _modal_constant("TRL_ON_POLICY_VERSION") == _extra("on-policy")["trl"]
+    assert _modal_constant("VLLM_EXTRACTION_VERSION") == _extra("extraction")["vllm"]
+    assert _modal_constant("VLLM_ON_POLICY_VERSION") == _extra("on-policy")["vllm"]
+
+
+def test_unsloth_stack_keeps_the_trl_version_unsloth_allows():
+    """unsloth constrains trl to <=0.24.0. Raising the `ml` extra to the on-policy
+    version makes the training image unresolvable at build time — which is why
+    on-policy needs an image of its own rather than a version bump."""
+    unsloth_trl = _extra("ml")["trl"]
+    on_policy_trl = _extra("on-policy")["trl"]
+
+    assert tuple(int(p) for p in unsloth_trl.split(".")) <= (0, 24, 0), (
+        f"ml pins trl {unsloth_trl}, above what unsloth permits"
+    )
+    assert unsloth_trl != on_policy_trl, (
+        "the two stacks share a trl pin; one of them cannot resolve"
+    )
+
+
+def test_trl_is_pinned_exactly_wherever_it_appears():
+    """The trainers we use live in trl.experimental, which reserves the right to
+    change without notice, and TRL has already deleted a trainer between the
+    versions an open range would span."""
+    for group in ("ml", "on-policy"):
+        specs = _pyproject()["project"]["optional-dependencies"][group]
+        trl = [spec for spec in specs if _package_name(spec) == "trl"]
+        assert trl, f"trl missing from the '{group}' extra"
+        assert all("==" in spec for spec in trl), f"trl is not pinned in '{group}': {trl}"
+
+
+def test_the_two_vllm_pins_stay_distinct_and_bounded():
+    """Extraction's pin carries its measured logprob contract; the on-policy pin is
+    bounded by what TRL supports. Collapsing them silently breaks one or the other."""
+    extraction = _extra("extraction")["vllm"]
+    on_policy = _extra("on-policy")["vllm"]
+
+    assert extraction != on_policy, (
+        "extraction and on-policy share a vLLM pin; one of them is now running a "
+        "version its contract was not established against"
+    )
+    assert tuple(int(p) for p in on_policy.split(".")) <= (0, 25, 1), (
+        f"on-policy vLLM {on_policy} exceeds the ceiling TRL {_extra('on-policy')['trl']} allows"
+    )
+
+
+def test_on_policy_stack_excludes_unsloth():
+    """Unsloth pins its own torch build and cannot resolve alongside vLLM, which
+    the on-policy trainer needs in-process to reach the teacher."""
+    packages = {
+        _package_name(spec)
+        for spec in _pyproject()["project"]["optional-dependencies"]["on-policy"]
+    }
+    assert "unsloth" not in packages
