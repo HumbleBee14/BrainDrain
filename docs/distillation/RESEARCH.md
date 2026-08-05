@@ -126,7 +126,7 @@ That is why the design spec treats teacher parity as evidence, not proof of corr
 | **Forward KL** | KL(teacher‖student): "cover everything the teacher might say" — mode-covering | Student spreads mass; risks bland/hallucinated text |
 | **Reverse KL** | KL(student‖teacher): "never say what the teacher wouldn't" — mode-seeking | Student stays sharp; the MiniLLM/GKD default for generation |
 | **SeqKD** | Sequence-level KD: teacher writes full outputs, student does plain SFT on them | "Generate 5k answers with the teacher, fine-tune on them" |
-| **GKD** | Generalized Knowledge Distillation: the on-policy algorithm (student samples, teacher grades per-token) | TRL's `GKDTrainer` |
+| **GKD** | Generalized Knowledge Distillation: the on-policy algorithm (student samples, teacher grades per-token) | The algorithm Stage 3 runs (see §8.1 for which trainer implements it now) |
 | **Parity** | How close the student is to the teacher *on your data*, measured | "Student matches teacher on 94% of held-out tasks" |
 
 ---
@@ -252,7 +252,7 @@ On-policy distillation fixes this by making the student generate its own answer 
 - It is effectively **RL with a dense per-token reward** of "agree with the teacher" — but ~10–30× cheaper than real RL because supervision is per-token, not one bit at the end.
 - **Efficiency evidence:** on-policy GKD with 5% of the data beats supervised KD on the full dataset.
 - **Production template (Qwen 3):** phase 1 *off-policy* (SFT on teacher responses) → phase 2 *on-policy* (student generates, aligns its logits to the teacher's via KL). This two-phase recipe is the best-documented production template to date.
-- **Implementations:** TRL `GKDTrainer` (lambda/beta = λ / JSD interpolation), verl's OPD (top-k teacher logprobs "lightweight like a reward").
+- **Implementations:** TRL's `trl.experimental.iw_opd` / `server_distillation` (`lmbda` = λ, `beta` = JSD interpolation; `GKDTrainer`, which used to carry these, has been removed — §8.1), verl's OPD (top-k teacher logprobs "lightweight like a reward").
 
 ### 3.4 Feature / hidden-state distillation — why we skip it
 
@@ -377,8 +377,10 @@ Dividing logits by T>1 before softmax flattens both distributions so near-miss t
 
 | Library | What it offers | Verdict for us |
 | --- | --- | --- |
-| **TRL `GKDTrainer`** | On-policy GKD (`lmbda` = on-policy fraction, `beta` = JSD interpolation 0≈forward-KL → 1≈reverse-KL, `seq_kd` flag). LoRA students via `peft_config`. Teacher must fit on training GPUs, same tokenizer. | Solid, but superseded by ↓ |
-| **TRL `DistillationTrainer`** | The production-oriented successor: **teacher-server mode** (teacher on a separate vLLM server → 70B+ teachers without fitting on training GPUs, binary logprob payloads), generation buffering via vLLM (~large speedups for on-policy), Liger fused JSD, LoRA supported. Defaults: reverse KL (`beta=1.0`), `temperature=1.0`. Important server-mode constraint: remote-teacher reverse KL/JSD currently uses top-1 sampled support; richer top-k is for forward KL or local/colocated teachers. | **Primary candidate for on-policy experiments; use deliberately for offline/logit stages** |
+| ~~**TRL `GKDTrainer`**~~ | On-policy GKD (`lmbda` = on-policy fraction, `beta` = JSD interpolation 0≈forward-KL → 1≈reverse-KL, `seq_kd` flag). LoRA students via `peft_config`. Teacher must fit on training GPUs, same tokenizer. | **Removed from TRL — no longer exists as of v1.9.x.** Replaced by the modules below |
+| **TRL `DistillationTrainer`** (`trl.experimental.distillation`) | Generalized-JSD distillation with a **local, in-process teacher only**; `beta` selects the divergence (0 = forward KL, 1 = reverse KL); vLLM accelerates *student* rollouts. No `lmbda`, no teacher-server support — the teacher-server flags widely documented for this class do not exist in it. | Usable only when teacher + student fit together on the training GPUs |
+| **TRL `ServerDistillationTrainer`** (`trl.experimental.server_distillation`) | Teacher behind a `trl vllm-serve` endpoint, queried per step for top-k logprobs. `beta>0` is restricted to top-1 **sampled** support; `loss_add_tail` models the remaining mass. No `lmbda`. | Real server-teacher path; superset below is preferred |
+| **TRL `IWOPDTrainer`** (`trl.experimental.iw_opd`) | Superset of the two above: local **or** server teacher, `lmbda` on-policy fraction, and `distillation_objective ∈ {"jsd","iw_opd"}` (the latter an importance-weighted on-policy objective). Same top-1 server constraint. | **What Stage 3 ships**, with `"jsd"` + `beta=1.0` as the default objective |
 | **TRL `GOLDTrainer`** | Cross-tokenizer on-policy logit KD (ULD + span alignment + hybrid loss). Experimental. | The only real cross-tokenizer option; watch, don't depend |
 | **axolotl KD plugin** | **Offline top-k-logprob KD**: pre-collect teacher top-k logprobs with vLLM into the dataset (`logprobs_field`), then train decoupled from the teacher. `kd_ce_alpha`/`kd_alpha`/`kd_temperature`. Works with their LoRA/QLoRA stack. | The cleanest *offline* logit-KD design — its decoupled architecture matches our Temporal pipeline shape well |
 | **torchtune KD recipes** | Clean forward-KL + CE (`kd_ratio`), LoRA configs for Llama pairs. | **Maintenance mode since mid-2025 — do not build on it** |
