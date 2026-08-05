@@ -158,6 +158,7 @@ class RunEvaluationInput:
     mode: str = ""
     dataset_config: dict | None = None
     job_config: dict | None = None
+    max_items_per_suite: int = 0
 
 
 @dataclass

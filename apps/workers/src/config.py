@@ -124,6 +124,11 @@ class WorkerSettings(BaseSettings):
     # a reasoning judge thinks for tens of seconds per verdict, and a
     # scale-to-zero judge endpoint can take minutes to cold-start.
     judge_timeout_seconds: float = 600.0
+    # Caps how many items each evaluation suite scores (0 = full suite). Every
+    # item costs a judge round-trip, so the full ~260-item run with a reasoning
+    # judge exceeds the evaluation activity timeout; a small cap turns it into
+    # a minutes-long smoke check.
+    eval_max_items_per_suite: int = 0
 
     # Data Studio synthetic data-generation
     faithfulness_gate_enabled: bool = True

@@ -374,3 +374,33 @@ class TestSuiteNoValDataReturnsNone:
         }
         recs = _generate_recommendations(scores)
         assert any("accuracy" in r.lower() for r in recs)
+
+
+class TestSuiteItemCap:
+    def test_cap_truncates_items(self):
+        from src.activities.run_evaluation import EvaluationContext, _cap_items
+
+        ctx = EvaluationContext(max_items_per_suite=3)
+        assert _cap_items(list(range(10)), ctx) == [0, 1, 2]
+
+    def test_zero_cap_runs_full_suite(self):
+        from src.activities.run_evaluation import EvaluationContext, _cap_items
+
+        items = list(range(10))
+        assert _cap_items(items, EvaluationContext()) == items
+        assert _cap_items(items, None) == items
+
+    def test_cap_travels_from_input_to_context(self):
+        from src.activities.run_evaluation import _build_context
+        from src.activities.stubs import RunEvaluationInput
+
+        inp = RunEvaluationInput(
+            tenant_id="t",
+            model_id="m",
+            evaluation_id="e",
+            adapter_path="a",
+            base_model="b",
+            dataset_path="d",
+            max_items_per_suite=5,
+        )
+        assert _build_context(inp).max_items_per_suite == 5

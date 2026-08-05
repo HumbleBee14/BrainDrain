@@ -68,6 +68,7 @@ class EvaluationContext:
     mode: str = ""
     dataset_config: dict = field(default_factory=dict)
     job_config: dict = field(default_factory=dict)
+    max_items_per_suite: int = 0
     teacher_artifacts: TeacherArtifacts | None = None
 
 
@@ -79,7 +80,17 @@ def _build_context(
         dataset_config=input.dataset_config or {},
         job_config=input.job_config or {},
         teacher_artifacts=teacher_artifacts,
+        max_items_per_suite=input.max_items_per_suite,
     )
+
+
+def _cap_items(items, context):
+    """Apply the per-suite item cap (0 = run the full suite).
+
+    Every capped item costs a judge round-trip, so a small cap turns a
+    multi-hour full evaluation into a minutes-long smoke check."""
+    cap = getattr(context, "max_items_per_suite", 0) if context else 0
+    return items[:cap] if cap > 0 else items
 
 
 # -- EvaluationSuite Protocol & Registry --
@@ -200,6 +211,8 @@ class RunEvaluationActivity:
                     mode=input.mode,
                     dataset_config=input.dataset_config,
                     job_config=input.job_config,
+                    max_items_per_suite=input.max_items_per_suite
+                    or self.infra.settings.eval_max_items_per_suite,
                 )
                 scores, report = result_dict["scores"], result_dict["report"]
             else:
@@ -450,7 +463,7 @@ class DomainSuite:
         samples = []
         skipped = 0
 
-        for item in val_dataset[:50]:
+        for item in _cap_items(val_dataset[:50], context):
             split = _prompt_and_expected(item)
             if split is None:
                 skipped += 1
@@ -526,7 +539,7 @@ class GeneralCapabilitySuite:
         golden_dataset=None,
         context=None,
     ):
-        benchmark = _load_benchmark("general_benchmark.json")
+        benchmark = _cap_items(_load_benchmark("general_benchmark.json"), context)
 
         ft_correct = {"reasoning": 0, "math": 0, "coding": 0, "general_knowledge": 0}
         base_correct = {"reasoning": 0, "math": 0, "coding": 0, "general_knowledge": 0}
@@ -624,7 +637,7 @@ class ABComparisonSuite:
                 {"note": "No validation data available", "comparisons": []},
             )
 
-        samples = val_dataset[:50]
+        samples = _cap_items(val_dataset[:50], context)
         wins = 0
         ties = 0
         losses = 0
@@ -726,7 +739,7 @@ class SafetySuite:
         golden_dataset=None,
         context=None,
     ):
-        prompts = _load_benchmark("safety_prompts.json")
+        prompts = _cap_items(_load_benchmark("safety_prompts.json"), context)
 
         ft_refused = 0
         base_refused = 0
@@ -821,7 +834,7 @@ class DocumentKnowledgeSuite:
         samples = []
         skipped = 0
 
-        for item in golden_dataset[: self.MAX_SAMPLES]:
+        for item in _cap_items(golden_dataset[: self.MAX_SAMPLES], context):
             split = _prompt_and_expected(item)
             if split is None:
                 skipped += 1
@@ -930,7 +943,9 @@ class TeacherParitySuite:
             # Not a distillation — contribute no scores (not zeros).
             return {}, {}
 
-        scores, report = self._judge_against_teacher(model_ft, tok_ft, judge, golden_dataset)
+        scores, report = self._judge_against_teacher(
+            model_ft, tok_ft, judge, golden_dataset, context
+        )
         match = self._distribution_match(model_ft, context)
         if match is not None:
             scores["teacher_student_kl"] = round(match.mean_kl, 4)
@@ -961,7 +976,7 @@ class TeacherParitySuite:
             logger.exception("Could not measure distribution match against the teacher")
             return None
 
-    def _judge_against_teacher(self, model_ft, tok_ft, judge, golden_dataset):
+    def _judge_against_teacher(self, model_ft, tok_ft, judge, golden_dataset, context=None):
         if not golden_dataset:
             return (
                 {},
@@ -973,7 +988,7 @@ class TeacherParitySuite:
         samples = []
         skipped = 0
 
-        for i, item in enumerate(golden_dataset[: self.MAX_SAMPLES]):
+        for i, item in enumerate(_cap_items(golden_dataset[: self.MAX_SAMPLES], context)):
             if i % 10 == 0:
                 safe_heartbeat(f"teacher_parity_{i}")
             split = _prompt_and_expected(item)

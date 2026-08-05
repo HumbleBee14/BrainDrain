@@ -105,6 +105,7 @@ class GpuProvider(Protocol):
         mode: str = "",
         dataset_config: dict | None = None,
         job_config: dict | None = None,
+        max_items_per_suite: int = 0,
     ) -> dict:
         """Run the full evaluation suite on a fine-tuned model.
 
@@ -311,6 +312,7 @@ class LocalGpuProvider:
         mode: str = "",
         dataset_config: dict | None = None,
         job_config: dict | None = None,
+        max_items_per_suite: int = 0,
     ) -> dict:
         logger.info("Running evaluation locally (eval=%s, model=%s)", evaluation_id[:8], base_model)
 
@@ -331,6 +333,7 @@ class LocalGpuProvider:
             mode=mode,
             dataset_config=dataset_config,
             job_config=job_config,
+            max_items_per_suite=max_items_per_suite,
         )
         result = await run_evaluation_core(
             input_data,
@@ -838,6 +841,7 @@ class ModalGpuProvider:
         mode: str = "",
         dataset_config: dict | None = None,
         job_config: dict | None = None,
+        max_items_per_suite: int = 0,
     ) -> dict:
         payload = {
             "input": {
@@ -853,6 +857,7 @@ class ModalGpuProvider:
                 "mode": mode,
                 "dataset_config": dataset_config,
                 "job_config": job_config,
+                "max_items_per_suite": max_items_per_suite,
             },
             "llm_config": llm_config,
         }
@@ -1281,6 +1286,7 @@ class BeamGpuProvider:
         mode: str = "",
         dataset_config: dict | None = None,
         job_config: dict | None = None,
+        max_items_per_suite: int = 0,
     ) -> dict:
         payload = {
             "input": {
@@ -1296,6 +1302,7 @@ class BeamGpuProvider:
                 "mode": mode,
                 "dataset_config": dataset_config,
                 "job_config": job_config,
+                "max_items_per_suite": max_items_per_suite,
             },
             "llm_config": llm_config,
         }
