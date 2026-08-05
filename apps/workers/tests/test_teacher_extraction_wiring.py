@@ -363,9 +363,7 @@ class TestExtractionStatus:
         ]
         assert failed[0].error_message == "Teacher ran out of memory on a10080gb"
 
-    def test_a_status_write_that_fails_does_not_replace_the_real_error(
-        self, monkeypatch, recorded
-    ):
+    def test_a_status_write_that_fails_does_not_replace_the_real_error(self, monkeypatch, recorded):
         """The recording is best-effort; the extraction's own error is not."""
 
         async def failing_activity(name, arg=None, **kwargs):

@@ -413,9 +413,7 @@ class TrainWorkflow:
                 error_message=error_message,
             )
         except Exception:
-            workflow.logger.exception(
-                "Failed to record the failed scoring pass for job %s", job_id
-            )
+            workflow.logger.exception("Failed to record the failed scoring pass for job %s", job_id)
 
     async def _set_extraction_status(
         self,
