@@ -10,7 +10,12 @@ asked for.
 import re
 from pathlib import Path
 
-from src.constants import MODAL_DEFAULT_GPU, MODAL_GPU_MAP
+from src.constants import (
+    GPU_DEFAULT_DEVICE_COUNT,
+    GPU_DEVICE_COUNTS,
+    MODAL_DEFAULT_GPU,
+    MODAL_GPU_MAP,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENUMS_RS = REPO_ROOT / "crates/shared/src/enums.rs"
@@ -54,6 +59,23 @@ def test_multi_device_classes_request_more_than_one_device():
             )
         else:
             assert ":" not in modal_gpu, f"{name} unexpectedly requests multiple devices"
+
+
+def test_device_counts_agree_with_what_is_provisioned():
+    """Billing splits an on-policy container's cost by device count, so a count
+    that disagrees with the hardware actually requested misprices the teacher's
+    share — and the teacher-GPU spend cap is what reads that share."""
+    for name, modal_gpu in MODAL_GPU_MAP.items():
+        provisioned = int(modal_gpu.split(":")[1]) if ":" in modal_gpu else 1
+        declared = GPU_DEVICE_COUNTS.get(name, GPU_DEFAULT_DEVICE_COUNT)
+        assert declared == provisioned, (
+            f"{name} provisions {provisioned} device(s) but bills as {declared}"
+        )
+
+
+def test_no_device_count_without_a_gpu_class():
+    extra = sorted(set(GPU_DEVICE_COUNTS) - rust_gpu_class_names())
+    assert extra == [], f"device counts for classes that do not exist: {extra}"
 
 
 def test_declared_gpu_classes_are_lowercase_wire_names():

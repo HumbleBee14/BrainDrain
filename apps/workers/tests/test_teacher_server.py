@@ -15,6 +15,7 @@ from src.teacher.server import (
     TeacherServer,
     TeacherServerConfig,
     TeacherServerError,
+    container_gpu_ids,
     split_devices,
     teacher_server,
 )
@@ -61,18 +62,51 @@ def config(**overrides) -> TeacherServerConfig:
 
 
 def test_two_gpus_give_the_teacher_and_student_a_card_each():
-    assert split_devices(2) == ((0,), (1,))
+    assert split_devices((0, 1)) == ((0,), (1,))
 
 
 def test_extra_gpus_go_to_the_teacher():
-    assert split_devices(4) == ((0, 1, 2), (3,))
+    assert split_devices((0, 1, 2, 3)) == ((0, 1, 2), (3,))
 
 
 def test_a_single_gpu_container_is_refused_not_shared():
     """Sharing one card between a 30B teacher and a student's optimizer state is
     the out-of-memory kill this topology exists to prevent."""
     with pytest.raises(TeacherServerError, match="at least 2 GPUs"):
-        split_devices(1)
+        split_devices((0,))
+
+
+def test_the_split_uses_the_ids_it_was_given_not_a_range():
+    """A scheduler that allocates cards 4 and 5 means those cards. Splitting
+    `range(2)` there hands the teacher device 0, which belongs to another job."""
+    assert split_devices((4, 5)) == ((4,), (5,))
+
+
+def test_an_inherited_allocation_is_honoured_over_the_drivers_view():
+    ids = container_gpu_ids(
+        env={"CUDA_VISIBLE_DEVICES": "2,3"},
+        count_devices=lambda: 8,
+    )
+
+    assert ids == (2, 3)
+
+
+def test_an_unset_allocation_falls_back_to_every_visible_device():
+    assert container_gpu_ids(env={}, count_devices=lambda: 2) == (0, 1)
+
+
+def test_an_empty_allocation_is_not_read_as_device_zero():
+    assert container_gpu_ids(env={"CUDA_VISIBLE_DEVICES": ""}, count_devices=lambda: 2) == (0, 1)
+
+
+def test_devices_named_by_uuid_are_refused_rather_than_misparsed():
+    """The UUID and MIG forms are legal in this variable and carry no ordinals, so
+    there is no correct way to hand half of them to the teacher."""
+    with pytest.raises(TeacherServerError, match="identifier rather than index"):
+        container_gpu_ids(
+            env={"CUDA_VISIBLE_DEVICES": "GPU-8a1f2c3d,GPU-9b2e3d4f"},
+            count_devices=lambda: 2,
+        )
 
 
 def test_command_names_the_model_and_pinned_revision():

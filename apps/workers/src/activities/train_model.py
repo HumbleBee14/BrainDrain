@@ -52,7 +52,9 @@ from src.activities.training_engine import (
 )
 from src.backends.judge import get as get_judge
 from src.constants import (
+    GPU_DEFAULT_DEVICE_COUNT,
     GPU_DEFAULT_HOURLY_RATE,
+    GPU_DEVICE_COUNTS,
     GPU_HOURLY_RATES,
     LOGIT_DISTILL_METHOD,
     ON_POLICY_DISTILL_METHOD,
@@ -86,6 +88,7 @@ _DISTILL_STRATEGY_KEYS = {
 }
 
 _TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
+DISTILL_METHOD_HYPERPARAM = "distill_method"
 
 # vLLM's `--dtype` takes no quantized values: fp8 and int4 are separate
 # quantization flags with their own weight formats. Mapping them onto bfloat16
@@ -311,6 +314,7 @@ class StartTrainingActivity:
                         outcome="completed",
                         gpu_seconds=gpu_seconds,
                         cost_usd=actual_cost,
+                        teacher_share=teacher_serving_share(input.gpu_class, input.hyperparams),
                         metadata={
                             "status": "completed",
                             "mode": input.mode,
@@ -372,6 +376,7 @@ class StartTrainingActivity:
                         mode=input.mode,
                         method=input.method,
                         base_model=input.base_model,
+                        hyperparams=input.hyperparams,
                     )
 
                     await enqueue_notification(
@@ -628,8 +633,13 @@ async def run_training_core(
     # The strategy is resolved before the engine because a strategy can require
     # one: on-policy distillation cannot run under Unsloth, whose image is unable
     # to carry the vLLM its teacher needs.
-    strategy = get_strategy(resolve_strategy_key(input.mode, hp.get("distill_method")))
+    strategy = get_strategy(resolve_strategy_key(input.mode, hp.get(DISTILL_METHOD_HYPERPARAM)))
     engine = get_engine(settings, required=getattr(strategy, "required_engine", None))
+
+    # Before the engine loads a single weight: a strategy that runs a teacher in
+    # this container has to claim its cards while CUDA_VISIBLE_DEVICES still means
+    # something.
+    teacher_devices = _reserve_student_devices(strategy)
 
     _get_metrics_collector(settings)
 
@@ -674,6 +684,7 @@ async def run_training_core(
             bucket=s3_bucket,
             llm_config=llm_config,
             settings=settings,
+            teacher_devices=teacher_devices,
         )
 
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
@@ -989,10 +1000,15 @@ class DistillOnPolicyStrategy:
 
     Declares its engine because it cannot run under any other: the teacher is a
     vLLM process in this container, and Unsloth cannot be installed beside vLLM.
+
+    `runs_resident_teacher` is what makes the caller partition the container's GPUs
+    before loading the student, which has to happen outside any strategy — see
+    `_reserve_student_devices`.
     """
 
     name = "distill_on_policy"
     required_engine = "transformers"
+    runs_resident_teacher = True
 
     def execute(self, model, tokenizer, dataset, hp, job_id, max_seq_length, **kwargs):
         return _train_distill_on_policy(
@@ -1006,6 +1022,7 @@ class DistillOnPolicyStrategy:
             s3=kwargs.get("s3"),
             bucket=kwargs.get("bucket"),
             settings=kwargs.get("settings"),
+            teacher_devices=kwargs.get("teacher_devices"),
         )
 
 
@@ -1313,23 +1330,53 @@ def _build_teacher_liveness_callback_class(server):
     return TeacherLivenessCallback
 
 
-def _resolve_teacher_devices():
-    """Split the container's GPUs between teacher and student.
+def _reserve_student_devices(strategy):
+    """Confine this process to the student's card, before any CUDA state exists.
 
-    Reads the real device count rather than trusting the requested GPU class: if
-    a container came up with fewer cards than were asked for, the two models
-    would silently land on one and die out of memory mid-run.
+    `CUDA_VISIBLE_DEVICES` is consulted once, when a process first touches CUDA,
+    and is inert afterwards. So this cannot be done from inside the strategy: by
+    then the student's weights are loaded, and they went to device 0 — the card the
+    teacher is about to fill to 90% of its memory.
+
+    Reads the real device set rather than trusting the requested GPU class, because
+    a container that came up with fewer cards than were asked for must fail saying
+    so instead of putting both models on one.
+
+    Returns the teacher's device ids, or None for a strategy with no resident
+    teacher — which is every other strategy, and they keep the whole container.
     """
+    if not getattr(strategy, "runs_resident_teacher", False):
+        return None
+
+    from src.teacher.server import TeacherServerError, container_gpu_ids, split_devices
+
+    try:
+        teacher_devices, student_devices = split_devices(container_gpu_ids())
+    except TeacherServerError as exc:
+        raise ApplicationError(str(exc), non_retryable=True) from exc
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(device) for device in student_devices)
+
     import torch
 
-    from src.teacher.server import split_devices
-
-    if not torch.cuda.is_available():
+    visible = torch.cuda.device_count()
+    if visible != len(student_devices):
+        # Reaching CUDA before this point fixes the device set permanently, and no
+        # later assignment can move the student off the teacher's card. Refusing is
+        # the only outcome left that does not end in an out-of-memory kill.
         raise ApplicationError(
-            "On-policy distillation needs GPUs and none are visible",
+            f"Could not confine training to {len(student_devices)} GPU(s): this "
+            f"process already sees {visible}. On-policy distillation needs a worker "
+            f"that has not run other GPU work first.",
             non_retryable=True,
         )
-    return split_devices(torch.cuda.device_count())
+
+    logger.info(
+        "Reserved GPU(s) %s for the student, %s for the teacher",
+        student_devices,
+        teacher_devices,
+    )
+    return teacher_devices
 
 
 def _train_distill_on_policy(
@@ -1344,12 +1391,17 @@ def _train_distill_on_policy(
     s3=None,
     bucket=None,
     settings=None,
+    teacher_devices=None,
 ):
     """Train the student on the teacher's grading of the student's own output.
 
     The teacher runs as a subprocess on its own GPU in this container, and the
     trainer talks to it over loopback. See `src/teacher/server.py` for why that is
     a sidecar rather than a separately scheduled server.
+
+    `teacher_devices` is assigned by the caller, not here: the student's own card
+    has to be claimed before its weights are loaded, which is already past by the
+    time this runs.
     """
     from src.activities.on_policy import OnPolicyConfigError, plan_on_policy
     from src.teacher.server import TeacherServerConfig, TeacherServerError, teacher_server
@@ -1371,21 +1423,23 @@ def _train_distill_on_policy(
             non_retryable=True,
         )
 
-    teacher_devices, student_devices = _resolve_teacher_devices()
+    if not teacher_devices:
+        raise ApplicationError(
+            "On-policy distillation reached training without a GPU reserved for the "
+            "teacher, so the teacher would have shared the student's card.",
+            non_retryable=True,
+        )
+
     teacher_config = TeacherServerConfig(
         model=teacher_model,
         revision=hp.get("teacher_revision") or None,
-        devices=teacher_devices,
+        devices=tuple(teacher_devices),
         dtype=_TEACHER_DTYPE_BY_PRECISION[precision],
         max_model_len=hp.get("teacher_max_model_len") or max_seq_length,
         startup_timeout_secs=int(
             hp.get("teacher_startup_timeout_secs", _DEFAULT_TEACHER_STARTUP_TIMEOUT_SECS)
         ),
     )
-
-    # The student must not touch the teacher's cards. Set before the trainer moves
-    # any weights, and scoped to this process only.
-    os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(d) for d in student_devices)
 
     with tempfile.TemporaryDirectory(prefix=f"distill-onpolicy-{job_id[:8]}-") as tmpdir:
         try:
@@ -2312,6 +2366,48 @@ def _training_billing_event_id(job_id: str, outcome: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"training-billing:{job_id}:{outcome}")
 
 
+def _teacher_serving_billing_event_id(job_id: str, outcome: str) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"teacher-serving-billing:{job_id}:{outcome}")
+
+
+def teacher_serving_share(gpu_class: str | None, hyperparams: dict) -> float:
+    """Fraction of a container's GPU cost that the resident teacher accounts for.
+
+    Only an on-policy run has a teacher inside the training container; every other
+    mode reaches its teacher through the tenant's own API key, or not at all.
+
+    The split is by device count, which is exact only because every device in a
+    class is the same type — the teacher holds all but one card and the student
+    holds the last. A mixed-GPU class would need real per-device metering, and is
+    why no such class is offered.
+    """
+    if hyperparams.get(DISTILL_METHOD_HYPERPARAM) != ON_POLICY_DISTILL_METHOD:
+        return 0.0
+    devices = GPU_DEVICE_COUNTS.get((gpu_class or "").lower(), GPU_DEFAULT_DEVICE_COUNT)
+    if devices < 2:
+        return 0.0
+    return (devices - 1) / devices
+
+
+def split_teacher_serving_cost(
+    gpu_seconds: int, cost_usd: float, share: float
+) -> tuple[tuple[int, float], tuple[int, float]]:
+    """Divide one container's bill into (student, teacher) halves.
+
+    The teacher's share is computed and the student's is the remainder, so the two
+    rows always re-add to exactly what the container cost. Splitting both
+    independently would let rounding invent or lose a cent.
+    """
+    if share <= 0.0:
+        return (gpu_seconds, cost_usd), (0, 0.0)
+    teacher_seconds = int(round(gpu_seconds * share))
+    teacher_cost = round(cost_usd * share, 2)
+    return (
+        (gpu_seconds - teacher_seconds, round(cost_usd - teacher_cost, 2)),
+        (teacher_seconds, teacher_cost),
+    )
+
+
 async def _append_training_billing_outbox(
     conn,
     *,
@@ -2321,7 +2417,20 @@ async def _append_training_billing_outbox(
     gpu_seconds: int,
     cost_usd: float,
     metadata: dict,
+    teacher_share: float = 0.0,
 ) -> None:
+    """Append the outbox row(s) for one finished run.
+
+    An on-policy run produces two: the student's training time and the teacher's
+    serving time, because they answer to different budgets — the teacher's share
+    is what the teacher-GPU spend cap counts. Both are written on the caller's
+    connection, inside the caller's transaction with the job's terminal status, so
+    a crash can never commit one without the other.
+    """
+    (student_seconds, student_cost), (teacher_seconds, teacher_cost) = split_teacher_serving_cost(
+        gpu_seconds, cost_usd, teacher_share
+    )
+
     await conn.execute(
         """INSERT INTO billing_outbox
         (id, tenant_id, operation, resource_id, tokens_in, tokens_out,
@@ -2331,9 +2440,26 @@ async def _append_training_billing_outbox(
         _training_billing_event_id(job_id, outcome),
         tenant_id,
         uuid.UUID(job_id),
-        gpu_seconds,
-        cost_usd,
+        student_seconds,
+        student_cost,
         json.dumps(metadata),
+    )
+
+    if teacher_share <= 0.0:
+        return
+
+    await conn.execute(
+        """INSERT INTO billing_outbox
+        (id, tenant_id, operation, resource_id, tokens_in, tokens_out,
+         gpu_seconds, cost_usd, metadata)
+        VALUES ($1, $2, 'teacher_serving', $3, 0, 0, $4, $5, $6::jsonb)
+        ON CONFLICT (id) DO NOTHING""",
+        _teacher_serving_billing_event_id(job_id, outcome),
+        tenant_id,
+        uuid.UUID(job_id),
+        teacher_seconds,
+        teacher_cost,
+        json.dumps({**metadata, "teacher_device_share": teacher_share}),
     )
 
 
@@ -2345,11 +2471,16 @@ async def _finalize_failed_training_billing(
     mode: str,
     method: str,
     base_model: str,
+    hyperparams: dict | None = None,
 ) -> None:
     """Persist failed-job actual_cost and append the corresponding outbox row.
 
     This runs inside the same DB transaction as the FAILED status update so the
     job terminal state and billing ledger entry remain consistent.
+
+    A failed on-policy run is split the same way a successful one is. Billing only
+    successful runs against the teacher-GPU cap would leave a cheaper way to spend
+    unbounded teacher time: a teacher that boots, holds its card, and then fails.
     """
     row = await conn.fetchrow(
         "SELECT tenant_id, started_at, completed_at, gpu_class FROM training_jobs WHERE id = $1",
@@ -2396,6 +2527,7 @@ async def _finalize_failed_training_billing(
         outcome="failed",
         gpu_seconds=gpu_seconds,
         cost_usd=actual_cost,
+        teacher_share=teacher_serving_share(gpu_class, hyperparams or {}),
         metadata={
             "status": "failed",
             "mode": mode,

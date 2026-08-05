@@ -50,6 +50,18 @@ MODAL_GPU_MAP: dict[str, str] = {
 }
 MODAL_DEFAULT_GPU: str = "T4"
 
+# Devices per GPU class, mirroring `GpuClass::device_count()`. Billing needs this
+# separately from the Modal map because it applies to the local provider too: an
+# on-policy container's cost has to be split between the student's training time
+# and the teacher's serving time, and the device count is what that split is by.
+# Kept honest by tests/test_constants.py against both the Rust rate table and the
+# Modal map.
+GPU_DEVICE_COUNTS: dict[str, int] = {
+    "a10080gb_dual": 2,
+    "h100_dual": 2,
+}
+GPU_DEFAULT_DEVICE_COUNT: int = 1
+
 
 # ── AUTO-GENERATED FROM crates/shared/src/enums.rs ──
 # DO NOT EDIT MANUALLY — run: python scripts/sync_constants.py
