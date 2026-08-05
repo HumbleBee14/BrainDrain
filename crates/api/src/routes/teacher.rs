@@ -17,17 +17,138 @@ use crate::auth::AuthenticatedUser;
 use crate::error::{AppError, AppResult};
 use crate::services::teacher::cost::{ExtractionEstimate, estimate_extraction, scored_tokens_for};
 use crate::services::teacher::fidelity::{clamp_top_k, hosted_scorer_for};
+use crate::services::teacher::on_policy::plan_on_policy;
 use crate::services::teacher::policy::{
     ProviderPolicy, TeacherCatalogEntry, classify_provider, teacher_catalog,
 };
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::services::training_job_service::resolve_gpu_rate;
+use platform_shared::enums::TrainingMode;
+
+/// Shown where a model simply has no teacher behind it — the common case, and not
+/// a problem the user needs to solve.
+const NOT_DISTILLED_MESSAGE: &str =
+    "Only models distilled from a teacher can be sharpened against one.";
+
+/// The dataset carried the teacher's identity, so without it there is nothing to
+/// re-derive which teacher to boot.
+const DATASET_GONE_MESSAGE: &str = "The dataset this model was trained on is no longer available, so its teacher cannot be identified.";
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/teachers/catalog", get(get_teacher_catalog))
         .route("/teachers/classify", post(classify_teacher))
         .route("/teachers/cost-estimate", post(estimate_teacher_cost))
+        .route("/models/{id}/improve-offer", get(get_improve_offer))
+}
+
+/// Whether a model can be sharpened against its own teacher, and what that costs.
+#[derive(Debug, Serialize, TS, ToSchema)]
+#[ts(export)]
+pub struct ImproveOfferResponse {
+    pub eligible: bool,
+    /// Why not, in the user's terms. Absent when eligible.
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[ts(optional)]
+    pub teacher_model: Option<String>,
+    #[ts(optional)]
+    pub dataset_id: Option<String>,
+    #[ts(optional)]
+    pub estimate: Option<ExtractionEstimate>,
+}
+
+impl ImproveOfferResponse {
+    fn ineligible(reason: impl Into<String>) -> Self {
+        Self {
+            eligible: false,
+            reason: Some(reason.into()),
+            teacher_model: None,
+            dataset_id: None,
+            estimate: None,
+        }
+    }
+}
+
+/// Offer an on-policy improve pass for a trained model, or explain why not.
+///
+/// Ineligibility is a 200 with a reason, not an error: "this model cannot be
+/// sharpened" is a normal answer for most models, and the card that asks simply
+/// does not render. Only a missing model is a 404.
+#[utoipa::path(
+    get,
+    path = "/api/v1/models/{id}/improve-offer",
+    tag = "Training",
+    params(("id" = String, Path, description = "Model id")),
+    responses((status = 200, description = "Improve-pass offer", body = ImproveOfferResponse)),
+    security(("jwt" = []))
+)]
+pub async fn get_improve_offer(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> AppResult<Json<ImproveOfferResponse>> {
+    let model_id = id.parse::<Uuid>().map_err(|_| AppError::BadRequest {
+        message: "Invalid model id format".to_string(),
+    })?;
+    let model = state
+        .model_repo()
+        .get_by_id(user.tenant_id, model_id)
+        .await?
+        .ok_or(AppError::NotFound {
+            message: "Model not found".to_string(),
+        })?;
+
+    let Some(job) = state
+        .training_job_repo()
+        .get_by_id(user.tenant_id, model.training_job_id)
+        .await?
+    else {
+        return Ok(Json(ImproveOfferResponse::ineligible(
+            NOT_DISTILLED_MESSAGE,
+        )));
+    };
+
+    // Only a distilled model has a teacher to be sharpened against. Everything
+    // else — including a model whose training job predates distillation — is a
+    // plain "not applicable" rather than a failure.
+    if job.mode.parse::<TrainingMode>().ok() != Some(TrainingMode::Distill) {
+        return Ok(Json(ImproveOfferResponse::ineligible(
+            NOT_DISTILLED_MESSAGE,
+        )));
+    }
+
+    let Some(dataset) = state
+        .dataset_repo()
+        .get_by_id(user.tenant_id, job.dataset_id)
+        .await?
+    else {
+        return Ok(Json(ImproveOfferResponse::ineligible(DATASET_GONE_MESSAGE)));
+    };
+
+    let admin_config =
+        TenantSettingsService::get_admin_config(state.tenant_repo(), user.tenant_id).await?;
+    let epochs = job
+        .hyperparams
+        .get("num_train_epochs")
+        .and_then(|v| v.as_i64());
+
+    match plan_on_policy(
+        &dataset,
+        &model.base_model,
+        epochs,
+        state.config().on_policy_tokens_per_sec,
+        |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
+    ) {
+        Ok(plan) => Ok(Json(ImproveOfferResponse {
+            eligible: true,
+            reason: None,
+            teacher_model: Some(plan.teacher_model),
+            dataset_id: Some(job.dataset_id.to_string()),
+            estimate: Some(plan.estimate),
+        })),
+        Err(reason) => Ok(Json(ImproveOfferResponse::ineligible(reason))),
+    }
 }
 
 /// Request to classify a teacher choice. Deliberately excludes the API key —

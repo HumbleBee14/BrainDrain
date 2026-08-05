@@ -17,6 +17,10 @@ use crate::services::teacher::config::{
 use crate::services::teacher::extraction::{
     admit_extraction, attach_to_teacher_config, plan_extraction,
 };
+use crate::services::teacher::on_policy::{
+    admit_on_policy, attach_to_teacher_config as attach_on_policy_to_teacher_config,
+    plan_on_policy, wants_on_policy,
+};
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -43,6 +47,7 @@ impl TrainingJobService {
         max_models: Option<i64>,
         cost_approval_threshold: Option<f64>,
         teacher_gpu_spend_cap: Option<f64>,
+        on_policy_tokens_per_sec: f64,
         trace_ctx: TraceContext,
     ) -> AppResult<TrainingJobResponse> {
         let orchestrator = orchestrator.ok_or(AppError::BadRequest {
@@ -165,7 +170,34 @@ impl TrainingJobService {
             _ => None,
         };
 
+        // An improve pass keeps the teacher resident beside the trainer for the
+        // whole run, so it is admitted against the same budget and — unlike every
+        // other mode — decides its own hardware: the class must hold two models.
+        let improve = match &req.distill {
+            Some(options) if wants_on_policy(options) => {
+                let plan = plan_on_policy(
+                    &dataset,
+                    &req.base_model,
+                    Some(epochs as i64),
+                    on_policy_tokens_per_sec,
+                    |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
+                )
+                .map_err(|reason| AppError::BadRequest {
+                    message: reason.to_string(),
+                })?;
+                admit_on_policy(billing_repo, tenant_id, teacher_gpu_spend_cap, &plan).await?;
+                Some(plan)
+            }
+            _ => None,
+        };
+
+        let (gpu_class, cost_estimate) = match &improve {
+            Some(plan) => (Some(plan.gpu_class.clone()), plan.estimate.est_cost_usd),
+            None => (req.gpu_class.clone(), cost_estimate),
+        };
+
         let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref());
+        let teacher_config = attach_on_policy_to_teacher_config(teacher_config, improve.as_ref());
 
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
@@ -178,7 +210,7 @@ impl TrainingJobService {
                     &method_str,
                     &mode_str,
                     hyperparams.clone(),
-                    req.gpu_class.as_deref(),
+                    gpu_class.as_deref(),
                     Some(cost_estimate),
                     teacher_config.clone(),
                     max,
@@ -200,7 +232,7 @@ impl TrainingJobService {
                     &method_str,
                     &mode_str,
                     hyperparams.clone(),
-                    req.gpu_class.as_deref(),
+                    gpu_class.as_deref(),
                     Some(cost_estimate),
                     teacher_config,
                 )
@@ -244,7 +276,7 @@ impl TrainingJobService {
                 &method_str,
                 &mode_str,
                 hyperparams,
-                req.gpu_class.as_deref(),
+                gpu_class.as_deref(),
                 job.teacher_config.as_ref(),
                 trace_ctx,
             )

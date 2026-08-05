@@ -209,6 +209,18 @@ pub struct Config {
     #[serde(default)]
     pub teacher_gpu_spend_cap_pro: Option<f64>,
 
+    /// Completion tokens per second assumed when quoting an on-policy improve
+    /// pass, covering both the student writing an answer and the teacher scoring
+    /// it.
+    ///
+    /// Configurable because it is the one number in the quote that has not been
+    /// measured on real hardware: rollout throughput depends on the student size,
+    /// the rollout backend and the answer lengths a dataset provokes. The default
+    /// is deliberately pessimistic so the first runs come in under their quote,
+    /// and it should be replaced with a measured figure per deployment.
+    #[serde(default = "default_on_policy_tokens_per_sec")]
+    pub on_policy_tokens_per_sec: f64,
+
     /// Path to a JSON array of hosted teacher entries, replacing the built-in
     /// catalog. Open-weight families turn over in months, so which teachers we
     /// can run is deployment data — adding next year's model is a config change,
@@ -509,6 +521,13 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Pessimistic on purpose — see `on_policy_tokens_per_sec`. Roughly what an
+/// 8B student generates per second through `transformers.generate` on one
+/// 80GB card, before the teacher's scoring round trip is counted.
+fn default_on_policy_tokens_per_sec() -> f64 {
+    40.0
 }
 
 fn default_app_name() -> String {

@@ -110,6 +110,7 @@ export type { EstimateBasis } from "./EstimateBasis";
 export type { ExtractionEstimate } from "./ExtractionEstimate";
 export type { TeacherCostEstimateRequest } from "./TeacherCostEstimateRequest";
 export type { TeacherCostEstimateResponse } from "./TeacherCostEstimateResponse";
+export type { ImproveOfferResponse } from "./ImproveOfferResponse";
 export type { CatalogResponse } from "./CatalogResponse";
 
 // Feedback / data flywheel (from crates/api/src/dto/feedback.rs)
