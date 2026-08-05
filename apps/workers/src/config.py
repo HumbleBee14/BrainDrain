@@ -120,6 +120,10 @@ class WorkerSettings(BaseSettings):
     # one completion, which routinely exceeds the ~2 minutes a hosted-API
     # default would allow. The Temporal activity timeout still bounds the run.
     datagen_llm_timeout_seconds: float = 600.0
+    # Per-call HTTP timeout for judge LLM requests, sized like the datagen one:
+    # a reasoning judge thinks for tens of seconds per verdict, and a
+    # scale-to-zero judge endpoint can take minutes to cold-start.
+    judge_timeout_seconds: float = 600.0
 
     # Data Studio synthetic data-generation
     faithfulness_gate_enabled: bool = True

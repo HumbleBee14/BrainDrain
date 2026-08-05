@@ -158,3 +158,8 @@ def test_reasoning_block_is_stripped_from_verdict(monkeypatch):
     j = _judge()
     monkeypatch.setattr(j.client, "post", lambda *a, **k: _ok("<think>x</think>\nyes"))
     assert j.check_correctness("a", "e") is True
+
+
+def test_client_timeout_is_configurable():
+    j = OpenAICompatibleJudge("http://x", "k", "m", timeout_seconds=300.0)
+    assert j.client.timeout.read == 300.0

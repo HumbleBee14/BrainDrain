@@ -88,11 +88,14 @@ class OpenAICompatibleJudge:
         max_retries: int = 3,
         on_failure: str = "error",
         max_completion_tokens: int = 2000,
+        timeout_seconds: float = 600.0,
     ):
+        # Reasoning judges think for tens of seconds per verdict, and a
+        # scale-to-zero judge endpoint can take minutes to cold-start.
         self.client = httpx.Client(
             base_url=api_base,
             headers={"Authorization": f"Bearer {api_key}"},
-            timeout=60.0,
+            timeout=timeout_seconds,
         )
         self.api_base = api_base
         self.api_key = api_key
@@ -340,4 +343,5 @@ async def create_judge_for_tenant(
         max_retries=getattr(settings, "judge_max_retries", 3),
         on_failure=getattr(settings, "judge_on_failure", "error"),
         max_completion_tokens=llm_config.max_tokens,
+        timeout_seconds=getattr(settings, "judge_timeout_seconds", 600.0),
     )
