@@ -524,6 +524,7 @@ export default function EvaluationPage() {
 
   const [showRunForm, setShowRunForm] = useState(false);
   const [judgeModel, setJudgeModel] = useState("");
+  const [judgeThinking, setJudgeThinking] = useState(false);
 
   const evaluations = evalsData?.data ?? [];
   const latestEval = evaluations[0] ?? null;
@@ -533,9 +534,11 @@ export default function EvaluationPage() {
     try {
       await createEvaluation.mutateAsync({
         judge_model: judgeModel || undefined,
+        judge_thinking: judgeThinking || undefined,
       });
       setShowRunForm(false);
       setJudgeModel("");
+      setJudgeThinking(false);
     } catch {
       // Error is captured by React Query and surfaced via createEvaluation.isError
     }
@@ -601,6 +604,23 @@ export default function EvaluationPage() {
               The judge model scores responses for quality. Leave empty to use
               the worker&apos;s default.
             </p>
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-zinc-900 dark:text-white">
+              <input
+                type="checkbox"
+                checked={judgeThinking}
+                onChange={(e) => setJudgeThinking(e.target.checked)}
+                className="rounded border-zinc-300 dark:border-zinc-700"
+              />
+              Judge thinking mode
+            </label>
+            {judgeThinking && (
+              <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">
+                The judge will reason before each verdict. Evaluation will take
+                significantly longer and use many more tokens.
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
             <button

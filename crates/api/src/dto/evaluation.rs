@@ -14,6 +14,11 @@ pub struct CreateEvaluationRequest {
     pub judge_model: Option<String>,
     #[ts(optional)]
     pub judge_api_base: Option<String>,
+    /// Let a reasoning judge think before each verdict. Far more thorough
+    /// per-verdict deliberation, but multiplies evaluation time and token
+    /// spend many times over; off by default.
+    #[ts(optional)]
+    pub judge_thinking: Option<bool>,
 }
 
 /// Evaluation information returned by API.

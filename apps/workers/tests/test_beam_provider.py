@@ -181,9 +181,7 @@ async def test_on_policy_refused_with_actionable_error(monkeypatch):
     prov = _make_provider(_FakeDB())
 
     with pytest.raises(RuntimeError, match="gpu_provider='modal'"):
-        await prov.run_training(
-            **{**TRAIN_KWARGS, "hyperparams": {"distill_method": "on_policy"}}
-        )
+        await prov.run_training(**{**TRAIN_KWARGS, "hyperparams": {"distill_method": "on_policy"}})
 
 
 def test_base64_pickled_result_is_decoded():

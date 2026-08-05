@@ -101,6 +101,7 @@ impl EvaluationService {
                 &training_job.mode,
                 dataset.config,
                 job_config,
+                req.judge_thinking,
                 trace_ctx,
             )
             .await

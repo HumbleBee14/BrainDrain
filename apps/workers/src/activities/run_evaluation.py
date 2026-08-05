@@ -69,6 +69,7 @@ class EvaluationContext:
     dataset_config: dict = field(default_factory=dict)
     job_config: dict = field(default_factory=dict)
     max_items_per_suite: int = 0
+    judge_concurrency: int = 1
     teacher_artifacts: TeacherArtifacts | None = None
 
 
@@ -82,6 +83,21 @@ def _build_context(
         teacher_artifacts=teacher_artifacts,
         max_items_per_suite=input.max_items_per_suite,
     )
+
+
+def _judge_map(fn, items, context):
+    """Fan judge verdicts out over a thread pool, preserving input order.
+
+    Only the HTTP judge round-trips run concurrently — generation stays serial
+    on the GPU before this point. Exceptions propagate unchanged, so the
+    fail-loud judge policy is unaffected."""
+    concurrency = getattr(context, "judge_concurrency", 1) if context else 1
+    if concurrency <= 1 or len(items) <= 1:
+        return [fn(item) for item in items]
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(concurrency, len(items))) as pool:
+        return list(pool.map(fn, items))
 
 
 def _cap_items(items, context):
@@ -213,6 +229,7 @@ class RunEvaluationActivity:
                     job_config=input.job_config,
                     max_items_per_suite=input.max_items_per_suite
                     or self.infra.settings.eval_max_items_per_suite,
+                    judge_thinking=input.judge_thinking,
                 )
                 scores, report = result_dict["scores"], result_dict["report"]
             else:
@@ -361,6 +378,13 @@ async def run_evaluation_core(
             model=judge_model,
             max_retries=settings.judge_max_retries,
             on_failure=settings.judge_on_failure,
+            max_completion_tokens=llm_config.max_tokens,
+            timeout_seconds=getattr(settings, "judge_timeout_seconds", 600.0),
+            enable_thinking=(
+                input.judge_thinking
+                if input.judge_thinking is not None
+                else getattr(settings, "judge_enable_thinking", False)
+            ),
         )
 
         # Download validation set
@@ -403,6 +427,7 @@ async def run_evaluation_core(
                 settings=settings,
             ),
         )
+        context.judge_concurrency = getattr(settings, "eval_judge_concurrency", 1)
 
         for suite in suites:
             safe_heartbeat(f"suite_{suite.name}")
@@ -463,6 +488,7 @@ class DomainSuite:
         samples = []
         skipped = 0
 
+        pending = []
         for item in _cap_items(val_dataset[:50], context):
             split = _prompt_and_expected(item)
             if split is None:
@@ -472,8 +498,10 @@ class DomainSuite:
 
             prompt_text = _render_eval_prompt(tok_ft, prompt_msgs, tools)
             generated = _generate(model_ft, tok_ft, prompt_text)
+            pending.append((prompt_text, generated, expected))
 
-            rubric = judge.score_domain(prompt_text, generated, expected)
+        rubrics = _judge_map(lambda t: judge.score_domain(*t), pending, context)
+        for (prompt_text, generated, expected), rubric in zip(pending, rubrics):
             acc_val = rubric.get("accuracy")
             comp_val = rubric.get("completeness")
             faith_val = rubric.get("faithfulness")
@@ -546,12 +574,10 @@ class GeneralCapabilitySuite:
         category_total = {"reasoning": 0, "math": 0, "coding": 0, "general_knowledge": 0}
         details = []
 
+        generations = []
         for item in benchmark:
-            cat = item["category"]
+            category_total[item["category"]] = category_total.get(item["category"], 0) + 1
             question = item["question"]
-            expected = item["expected"]
-            qtype = item.get("type", "open_ended")
-            category_total[cat] = category_total.get(cat, 0) + 1
 
             ft_answer = _generate(
                 model_ft, tok_ft, _as_user_prompt(tok_ft, question), max_new_tokens=200
@@ -559,24 +585,33 @@ class GeneralCapabilitySuite:
             base_answer = _generate(
                 model_base, tok_base, _as_user_prompt(tok_base, question), max_new_tokens=200
             )
+            generations.append((item, ft_answer, base_answer))
 
-            ft_ok = _check_answer(ft_answer, expected, qtype, judge)
-            base_ok = _check_answer(base_answer, expected, qtype, judge)
+            if len(generations) % 20 == 0:
+                safe_heartbeat(f"general_gen_{len(generations)}/{len(benchmark)}")
 
+        verdicts = _judge_map(
+            lambda t: _check_answer(t[0], t[1]["expected"], t[1].get("type", "open_ended"), judge),
+            [(ft, item) for item, ft, _ in generations]
+            + [(base, item) for item, _, base in generations],
+            context,
+        )
+        ft_verdicts = verdicts[: len(generations)]
+        base_verdicts = verdicts[len(generations) :]
+
+        for (item, _ft, _base), ft_ok, base_ok in zip(generations, ft_verdicts, base_verdicts):
+            cat = item["category"]
             ft_correct[cat] = ft_correct.get(cat, 0) + (1 if ft_ok else 0)
             base_correct[cat] = base_correct.get(cat, 0) + (1 if base_ok else 0)
 
             details.append(
                 {
                     "category": cat,
-                    "question": question[:100],
+                    "question": item["question"][:100],
                     "ft_correct": ft_ok,
                     "base_correct": base_ok,
                 }
             )
-
-            if len(details) % 20 == 0:
-                safe_heartbeat(f"general_{len(details)}/{len(benchmark)}")
 
         ft_total = sum(ft_correct.values())
         base_total = sum(base_correct.values())
@@ -651,6 +686,7 @@ class ABComparisonSuite:
         # instead of drifting with the global RNG.
         rng = random.Random(_AB_POSITION_SEED)
 
+        pending = []
         for item in samples:
             split = _prompt_and_expected(item)
             if split is None:
@@ -668,8 +704,10 @@ class ABComparisonSuite:
             else:
                 resp_a, resp_b = base_response, ft_response
                 ft_is_a = False
+            pending.append((prompt_text, resp_a, resp_b, ft_is_a))
 
-            winner = judge.compare_ab(prompt_text, resp_a, resp_b)
+        winners = _judge_map(lambda t: judge.compare_ab(t[0], t[1], t[2]), pending, context)
+        for (prompt_text, _a, _b, ft_is_a), winner in zip(pending, winners):
             if winner == "tie":
                 ties += 1
                 outcome = "tie"
@@ -687,9 +725,6 @@ class ABComparisonSuite:
                     "winner": outcome,
                 }
             )
-
-            if total % 10 == 0:
-                safe_heartbeat(f"ab_{total}/{len(samples)}")
 
         if skipped:
             logger.warning(
@@ -833,6 +868,7 @@ class DocumentKnowledgeSuite:
         base_means = []
         samples = []
         skipped = 0
+        pending = []
 
         for item in _cap_items(golden_dataset[: self.MAX_SAMPLES], context):
             split = _prompt_and_expected(item)
@@ -845,10 +881,22 @@ class DocumentKnowledgeSuite:
             ft_answer = _generate(model_ft, tok_ft, ft_prompt)
             base_prompt = _render_eval_prompt(tok_base, prompt_msgs, tools)
             base_answer = _generate(model_base, tok_base, base_prompt)
+            pending.append((ft_prompt, ft_answer, base_prompt, base_answer, expected))
 
-            ft_rubric = judge.score_domain(ft_prompt, ft_answer, expected)
-            base_rubric = judge.score_domain(base_prompt, base_answer, expected)
-
+        rubrics = _judge_map(
+            lambda t: judge.score_domain(*t),
+            [(f_p, f_a, exp) for f_p, f_a, _, _, exp in pending]
+            + [(b_p, b_a, exp) for _, _, b_p, b_a, exp in pending],
+            context,
+        )
+        rubric_pairs = zip(pending, rubrics[: len(pending)], rubrics[len(pending) :])
+        for (
+            ft_prompt,
+            ft_answer,
+            base_prompt,
+            base_answer,
+            expected,
+        ), ft_rubric, base_rubric in rubric_pairs:
             ft_vals = [ft_rubric.get(k) for k in ("accuracy", "completeness", "faithfulness")]
             base_vals = [base_rubric.get(k) for k in ("accuracy", "completeness", "faithfulness")]
             # Lift is only meaningful when BOTH sides scored on the same sample;
@@ -988,6 +1036,7 @@ class TeacherParitySuite:
         samples = []
         skipped = 0
 
+        pending = []
         for i, item in enumerate(_cap_items(golden_dataset[: self.MAX_SAMPLES], context)):
             if i % 10 == 0:
                 safe_heartbeat(f"teacher_parity_{i}")
@@ -1003,11 +1052,21 @@ class TeacherParitySuite:
             # Blind comparison: the judge never knows which side is the
             # student; positions randomized (seeded for reproducibility).
             student_is_a = position_rng.random() < 0.5
-            if student_is_a:
-                verdict = judge.compare_ab(prompt_text, student_answer, teacher_answer)
-            else:
-                verdict = judge.compare_ab(prompt_text, teacher_answer, student_answer)
+            pending.append((prompt_text, student_answer, teacher_answer, student_is_a))
 
+        def _blind_compare(t):
+            prompt, student, teacher, student_is_a = t
+            if student_is_a:
+                return judge.compare_ab(prompt, student, teacher)
+            return judge.compare_ab(prompt, teacher, student)
+
+        verdicts = _judge_map(_blind_compare, pending, context)
+        agreement_flags = _judge_map(
+            lambda t: judge.check_correctness(t[1], t[2]), pending, context
+        )
+        for (prompt_text, student_answer, teacher_answer, student_is_a), verdict, agrees in zip(
+            pending, verdicts, agreement_flags
+        ):
             if verdict == "tie":
                 ties += 1
             elif (verdict == "A") == student_is_a:
@@ -1015,7 +1074,6 @@ class TeacherParitySuite:
             else:
                 losses += 1
 
-            agrees = judge.check_correctness(student_answer, teacher_answer)
             if agrees:
                 agreements += 1
 

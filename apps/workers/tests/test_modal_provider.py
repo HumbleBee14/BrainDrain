@@ -182,9 +182,7 @@ async def test_function_app_override_routes_to_other_app(monkeypatch):
         spawn_result={"adapter_path": "s3://a", "adapter_size_bytes": 1, "metrics": {}},
     )
     monkeypatch.setattr("temporalio.activity.heartbeat", lambda *a, **k: None)
-    prov = _make_provider(
-        _FakeDB(existing_call_id=None), function_apps={"train": "side-app"}
-    )
+    prov = _make_provider(_FakeDB(existing_call_id=None), function_apps={"train": "side-app"})
 
     await prov.run_training(
         tenant_id="t",

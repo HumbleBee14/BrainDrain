@@ -163,3 +163,29 @@ def test_reasoning_block_is_stripped_from_verdict(monkeypatch):
 def test_client_timeout_is_configurable():
     j = OpenAICompatibleJudge("http://x", "k", "m", timeout_seconds=300.0)
     assert j.client.timeout.read == 300.0
+
+
+def test_thinking_disabled_appends_soft_switch(monkeypatch):
+    j = OpenAICompatibleJudge("http://x", "k", "m")
+    seen = {}
+
+    def _post(_path, json):
+        seen["prompt"] = json["messages"][0]["content"]
+        return _ok("8")
+
+    monkeypatch.setattr(j.client, "post", _post)
+    j.score_response("p", "r")
+    assert seen["prompt"].endswith("/no_think")
+
+
+def test_thinking_enabled_leaves_prompt_untouched(monkeypatch):
+    j = OpenAICompatibleJudge("http://x", "k", "m", enable_thinking=True)
+    seen = {}
+
+    def _post(_path, json):
+        seen["prompt"] = json["messages"][0]["content"]
+        return _ok("8")
+
+    monkeypatch.setattr(j.client, "post", _post)
+    j.score_response("p", "r")
+    assert "/no_think" not in seen["prompt"]

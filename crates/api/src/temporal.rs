@@ -153,6 +153,7 @@ pub trait WorkflowOrchestrator: Send + Sync {
         mode: &str,
         dataset_config: serde_json::Value,
         job_config: serde_json::Value,
+        judge_thinking: Option<bool>,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>>;
 
@@ -626,6 +627,7 @@ impl WorkflowOrchestrator for TemporalClient {
         mode: &str,
         dataset_config: serde_json::Value,
         job_config: serde_json::Value,
+        judge_thinking: Option<bool>,
         trace_ctx: TraceContext,
     ) -> BoxFuture<'_, Result<StartWorkflowResponse, OrchestratorError>> {
         let adapter_path = adapter_path.to_string();
@@ -660,6 +662,7 @@ impl WorkflowOrchestrator for TemporalClient {
                     mode,
                     dataset_config,
                     job_config,
+                    judge_thinking,
                 ]),
                 None, // default queue — GPU activities pin their own
                 &trace_ctx,
