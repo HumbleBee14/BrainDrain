@@ -89,7 +89,7 @@ async def test_sft_round_core_runs_without_db(monkeypatch):
     """Drive run_sft_round_core with every heavy piece stubbed; assert it needs no DB."""
     import src.activities.train_model as tm
 
-    monkeypatch.setattr(tm, "get_engine", lambda s: _FakeEngine())
+    monkeypatch.setattr(tm, "get_engine", lambda s, **_: _FakeEngine())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
     monkeypatch.setattr(tm, "_get_metrics_collector", lambda s: None)
@@ -129,7 +129,7 @@ async def test_holdout_core_runs_without_db(monkeypatch):
         def load_model(self, **k):
             return ("base_model", "tok")
 
-    monkeypatch.setattr(tm, "get_engine", lambda s: _Engine())
+    monkeypatch.setattr(tm, "get_engine", lambda s, **_: _Engine())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
     monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: None)
@@ -178,7 +178,7 @@ async def test_sft_round_resume_uses_peftmodel_from_pretrained(monkeypatch):
         def attach_adapter(self, model, **k):  # pragma: no cover - must not run
             raise AssertionError("attach_adapter must not be called when resuming")
 
-    monkeypatch.setattr(tm, "get_engine", lambda s: _NoAttachEngine())
+    monkeypatch.setattr(tm, "get_engine", lambda s, **_: _NoAttachEngine())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
     monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: None)
@@ -252,7 +252,7 @@ async def test_sft_round_core_resume_uses_peft_from_pretrained(monkeypatch):
         trained_with["model"] = model
         return {"iter_1_train_loss": 0.2, "iter_1_train_runtime": 1.0}
 
-    monkeypatch.setattr(tm, "get_engine", lambda s: _Engine())
+    monkeypatch.setattr(tm, "get_engine", lambda s, **_: _Engine())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"messages": []}])
     monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: None)

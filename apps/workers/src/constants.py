@@ -25,6 +25,14 @@ GPU_DEFAULT_HOURLY_RATE: float = 0.8
 # (Modal 1.0+ uses string specifiers; the old modal.gpu.* object API is deprecated).
 # Keyed by the canonical GpuClass value (lowercase) the API bills against, so
 # the provisioned Modal hardware matches the charged rate.
+# Distillation methods, mirroring the Rust `DistillMethod` enum. Defined once here
+# because four layers key off them — the workflow that admits a plan, the strategy
+# registry, the trainer config, and the provider that picks which image runs the
+# job — and a typo in any one of them would route a run to the wrong path.
+TEXT_DISTILL_METHOD = "text"
+LOGIT_DISTILL_METHOD = "logit"
+ON_POLICY_DISTILL_METHOD = "on_policy"
+
 MODAL_GPU_MAP: dict[str, str] = {
     "t4": "T4",
     "a10g": "A10G",

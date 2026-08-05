@@ -50,7 +50,7 @@ async def test_core_never_resolves_tenant_config_from_db(monkeypatch):
         def execute(self, **k):
             return {"train_runtime": 1.0}
 
-    monkeypatch.setattr(tm, "get_engine", lambda s: _FakeEngine())
+    monkeypatch.setattr(tm, "get_engine", lambda s, **_: _FakeEngine())
     monkeypatch.setattr(tm, "get_strategy", lambda m: _FakeStrategy())
     monkeypatch.setattr(tm, "_download_dataset", lambda *a, **k: None)
     monkeypatch.setattr(tm, "_load_chatml_dataset", lambda p: [{"a": 1}])

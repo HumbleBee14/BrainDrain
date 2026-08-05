@@ -132,10 +132,100 @@ class UnslothEngine:
         return model
 
 
+class TransformersEngine:
+    """Plain `transformers` + `peft` implementation, with no Unsloth.
+
+    Exists because Unsloth cannot share an environment with vLLM — it pins its own
+    torch build — and on-policy distillation needs vLLM in-process to reach its
+    teacher. So the image that can host a teacher cannot host Unsloth, and this is
+    the engine that runs there.
+
+    Slower than `UnslothEngine` and deliberately not a replacement for it: every
+    mode that does not need a live teacher keeps the faster path.
+    """
+
+    def load_model(
+        self,
+        model_name: str,
+        max_seq_length: int,
+        load_in_4bit: bool,
+    ) -> tuple[Any, Any]:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        from src.activities.chat_template import ensure_chat_template
+
+        kwargs: dict[str, Any] = {"dtype": torch.bfloat16}
+        if load_in_4bit:
+            from transformers import BitsAndBytesConfig
+
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+
+        model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=max_seq_length)
+
+        # A right-padding tokenizer silently corrupts generation: rollouts would be
+        # scored with pad tokens interleaved into the teacher's view of them.
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        ensure_chat_template(tokenizer)
+        return model, tokenizer
+
+    def attach_adapter(
+        self,
+        model: Any,
+        r: int = 16,
+        lora_alpha: int = 16,
+        lora_dropout: int = 0,
+        target_modules: list[str] | None = None,
+    ) -> Any:
+        from peft import LoraConfig, get_peft_model
+
+        if target_modules is None:
+            target_modules = [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ]
+
+        model.enable_input_require_grads()
+        return get_peft_model(
+            model,
+            LoraConfig(
+                r=r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
+                target_modules=target_modules,
+                task_type="CAUSAL_LM",
+                bias="none",
+            ),
+        )
+
+    def save_adapter(self, model: Any, tokenizer: Any, output_dir: Path) -> None:
+        model.save_pretrained(str(output_dir))
+        tokenizer.save_pretrained(str(output_dir))
+
+    def prepare_for_inference(self, model: Any) -> Any:
+        model.eval()
+        return model
+
+
 # -- Engine Registry --
 
 _ENGINE_REGISTRY: dict[str, type] = {
     "unsloth": UnslothEngine,
+    "transformers": TransformersEngine,
 }
 
 
@@ -150,13 +240,20 @@ def register_engine(name: str, cls: type) -> None:
     _ENGINE_REGISTRY[name] = cls
 
 
-def get_engine(settings: "WorkerSettings | None" = None) -> TrainingEngine:
+def get_engine(
+    settings: "WorkerSettings | None" = None, *, required: str | None = None
+) -> TrainingEngine:
     """Instantiate the configured TrainingEngine.
 
     The engine is selected by settings.training_engine (default: 'unsloth').
     Set APP_TRAINING_ENGINE env var to select a different registered engine.
+
+    `required` overrides configuration for strategies that only work on one
+    engine — on-policy distillation cannot run under Unsloth, because its image
+    cannot contain Unsloth at all. A strategy declaring its engine is preferable
+    to relying on an env var being right in the image it happens to run in.
     """
-    name = settings.training_engine if settings else "unsloth"
+    name = required or (settings.training_engine if settings else "unsloth")
     cls = _ENGINE_REGISTRY.get(name)
     if cls is None:
         available = list(_ENGINE_REGISTRY)

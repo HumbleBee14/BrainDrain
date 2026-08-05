@@ -65,6 +65,10 @@ class WorkerSettings(BaseSettings):
     # One deployed function per GPU-bound activity (see apps/workers/modal_app.py).
     modal_app_name: str = "platform-training"
     modal_function_name: str = "train"
+    # On-policy distillation cannot run on the training image: it needs vLLM
+    # in-process to reach its teacher sidecar, and unsloth cannot resolve beside
+    # vLLM. Same core, different image, therefore a different deployed function.
+    modal_on_policy_function_name: str = "train_on_policy"
     modal_sft_round_function_name: str = "train_sft_round"
     modal_evaluate_holdout_function_name: str = "evaluate_holdout"
     modal_evaluation_function_name: str = "run_evaluation"

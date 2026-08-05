@@ -723,7 +723,7 @@ class ModalGpuProvider:
             "llm_config": llm_config,
         }
         return await self._run_remote(
-            function_name=self.infra.settings.modal_function_name,
+            function_name=self._training_function_name(hyperparams),
             payload=payload,
             gpu=self._resolve_gpu(gpu_class),
             table="training_jobs",
@@ -732,6 +732,20 @@ class ModalGpuProvider:
             label="training",
             clear_after=False,
         )
+
+    def _training_function_name(self, hyperparams: dict) -> str:
+        """Which deployed function runs this job.
+
+        On-policy distillation runs the same training core on a different image —
+        one carrying vLLM so the teacher can be served beside the student — so the
+        method it was admitted with decides the function, not the caller.
+        """
+        from src.constants import ON_POLICY_DISTILL_METHOD
+
+        settings = self.infra.settings
+        if hyperparams.get("distill_method") == ON_POLICY_DISTILL_METHOD:
+            return settings.modal_on_policy_function_name
+        return settings.modal_function_name
 
     async def run_sft_round(
         self,
