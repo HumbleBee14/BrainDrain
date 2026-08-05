@@ -57,6 +57,13 @@ TEACHER_REVISION_HYPERPARAM = "teacher_revision"
 TEACHER_PRECISION_HYPERPARAM = "teacher_precision"
 PARENT_ADAPTER_HYPERPARAM = "parent_adapter_path"
 
+# Reachable only for a job admitted before the platform recorded which model an
+# improve pass continues from, and still unstarted when this worker deployed.
+NO_PARENT_IN_PLAN_MESSAGE = (
+    "This improve pass does not record which model it continues from. "
+    "Start a new one from the model's page."
+)
+
 # The trainer's own name for the epoch count. Not on the platform-owned list: a
 # caller may set it freely, and the API prices the value it ends up with.
 EPOCHS_HYPERPARAM = "num_train_epochs"
@@ -156,6 +163,11 @@ def unsupported_plan_reason(plan: dict, mode: str) -> str | None:
         return f"Unsupported distillation method: {plan.get('distill_method')!r}"
     if not plan.get("teacher_model"):
         return "The fidelity plan names no teacher model"
+    # Refused rather than defaulted: an improve pass with no parent to continue
+    # would train from the bare base model and grade an untrained student, which
+    # is the failure this key exists to prevent.
+    if plan.get("distill_method") == ON_POLICY_METHOD and not plan.get(PARENT_ADAPTER_HYPERPARAM):
+        return NO_PARENT_IN_PLAN_MESSAGE
     return None
 
 
@@ -163,10 +175,15 @@ def hyperparams_with_live_teacher(hyperparams: dict, plan: dict) -> dict:
     """Hyperparams that make the training activity pick the on-policy strategy.
 
     Unlike the logit path there is no scoring pass to run first: the teacher is
-    started by the training container itself, so all that has to cross the seam is
-    which teacher, pinned to which revision. The keys travel together for the same
-    reason as the artifact prefix — the strategy refuses to run without a teacher,
-    and the method is what selects the strategy.
+    started by the training container itself, so what crosses the seam is which
+    teacher (pinned to which revision) and which adapter the run continues from.
+    The keys travel together for the same reason as the artifact prefix — the
+    strategy refuses to run without a teacher, and the method is what selects the
+    strategy.
+
+    The parent adapter is indexed rather than fetched: `unsupported_plan_reason`
+    has already refused a plan without one, and defaulting here would train from
+    the base model in silence.
     """
     resolved = {
         **hyperparams,

@@ -134,13 +134,13 @@ pub async fn get_improve_offer(
     let admin_config =
         TenantSettingsService::get_admin_config(state.tenant_repo(), user.tenant_id).await?;
 
-    // Quoted at the platform default rather than at whatever the parent trained
-    // for: the improve pass is a new job with its own hyperparams, and its real
-    // price is computed again at launch from those.
     let Some(parent_adapter_path) = model.adapter_path.as_deref() else {
         return Ok(Json(ImproveOfferResponse::ineligible(NO_ADAPTER_MESSAGE)));
     };
 
+    // Quoted at the platform default rather than at whatever the parent trained
+    // for: the improve pass is a new job with its own hyperparams, and its real
+    // price is computed again at launch from those.
     match plan_on_policy(
         &dataset,
         &model.base_model,
