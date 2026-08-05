@@ -13,7 +13,7 @@ use platform_shared::enums::{DistillMethod, GpuClass, TeacherPrecision};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::repositories::traits::BillingEventRepository;
 use crate::services::teacher::billing::check_teacher_gpu_spend_cap;
 use crate::services::teacher::cost::{EstimateBasis, ExtractionEstimate, estimate_extraction};
@@ -76,16 +76,24 @@ impl OnPolicyPlan {
 /// Shares the `extraction` key with Stage 2 rather than adding a second one: the
 /// workflow reads one block and dispatches on the `distill_method` inside it, so a
 /// job can never carry two conflicting fidelity plans at once.
+///
+/// An admitted plan with no block to live on is an error rather than a plan
+/// dropped: by this point the tenant has been quoted a two-card price and admitted
+/// against their teacher budget, so a run that proceeded without the plan would be
+/// charged for a teacher it never started.
 pub fn attach_to_teacher_config(
     teacher_config: Option<serde_json::Value>,
     plan: Option<&OnPolicyPlan>,
-) -> Option<serde_json::Value> {
+) -> AppResult<Option<serde_json::Value>> {
     match (teacher_config, plan) {
         (Some(mut block), Some(plan)) => {
             block["extraction"] = plan.workflow_value();
-            Some(block)
+            Ok(Some(block))
         }
-        (block, _) => block,
+        (None, Some(_)) => Err(AppError::Internal(anyhow::anyhow!(
+            "an on-policy plan was admitted for a job with no teacher provenance"
+        ))),
+        (block, None) => Ok(block),
     }
 }
 
@@ -399,7 +407,9 @@ mod tests {
         .unwrap();
         let teacher = json!({"host": "inference.example.com", "model": "Qwen/Qwen3-32B"});
 
-        let merged = attach_to_teacher_config(Some(teacher), Some(&plan)).unwrap();
+        let merged = attach_to_teacher_config(Some(teacher), Some(&plan))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(merged["host"], "inference.example.com");
         assert_eq!(merged["extraction"]["distill_method"], "on_policy");
@@ -410,13 +420,34 @@ mod tests {
         let teacher = json!({"model": "Qwen/Qwen3-32B"});
 
         assert_eq!(
-            attach_to_teacher_config(Some(teacher.clone()), None).unwrap(),
+            attach_to_teacher_config(Some(teacher.clone()), None)
+                .unwrap()
+                .unwrap(),
             teacher
         );
     }
 
     #[test]
     fn a_job_without_a_teacher_stays_without_one() {
-        assert!(attach_to_teacher_config(None, None).is_none());
+        assert!(attach_to_teacher_config(None, None).unwrap().is_none());
+    }
+
+    /// By this point the tenant has been quoted a two-card rate and admitted against
+    /// their teacher budget. A job that continued without the plan would train plain
+    /// SFT on hardware it is being charged a teacher's price for, and nothing would
+    /// say so — the whole point of the guard upstream, kept here as well because the
+    /// cost of being wrong is a wrong bill.
+    #[test]
+    fn an_admitted_plan_with_nowhere_to_live_is_an_error_not_a_dropped_plan() {
+        let plan = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(10)),
+            "Qwen/Qwen3-8B",
+            None,
+            50.0,
+            rate,
+        )
+        .unwrap();
+
+        assert!(attach_to_teacher_config(None, Some(&plan)).is_err());
     }
 }
