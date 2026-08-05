@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
 use platform_db::models::TrainingJob;
-use platform_shared::enums::{TrainingJobStatus, TrainingMethod, TrainingMode};
+use platform_shared::enums::{
+    TeacherExtractionStatus, TrainingJobStatus, TrainingMethod, TrainingMode,
+};
 use platform_shared::types::{Hyperparams, TrainingMetrics};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::services::teacher::config::{
     TeacherConfigDto, TeacherProvenance, provenance_from_config,
@@ -59,6 +62,11 @@ pub struct TrainingJobResponse {
     pub error_message: Option<String>,
     /// Distill mode: teacher provenance (host + model only — never the key).
     pub teacher: Option<TeacherProvenance>,
+    /// How the teacher scoring pass is going, for the jobs that run one. A job
+    /// can fail here while it is still `pending`, so this is the only thing that
+    /// distinguishes a queued job from one whose teacher is already at work.
+    #[ts(optional)]
+    pub teacher_extraction_status: Option<TeacherExtractionStatus>,
     /// The model this run improved on, when it was an improve pass.
     #[ts(optional)]
     pub parent_model_id: Option<String>,
@@ -74,6 +82,24 @@ pub struct CostEstimateResponse {
     pub estimated_hours: f64,
     pub gpu_class: String,
     pub gpu_rate_per_hour: f64,
+}
+
+/// A stored value that will not parse is reported as absent, but never
+/// silently: the column is written by exactly one activity, so an unknown value
+/// means that writer and this enum have diverged.
+fn parse_extraction_status(job_id: Uuid, stored: Option<&str>) -> Option<TeacherExtractionStatus> {
+    let stored = stored?;
+    match stored.parse() {
+        Ok(status) => Some(status),
+        Err(_) => {
+            tracing::error!(
+                training_job_id = %job_id,
+                stored,
+                "Unknown teacher_extraction_status; reporting it as absent"
+            );
+            None
+        }
+    }
 }
 
 impl From<TrainingJob> for TrainingJobResponse {
@@ -95,6 +121,10 @@ impl From<TrainingJob> for TrainingJobResponse {
             completed_at: j.completed_at,
             error_message: j.error_message,
             teacher: j.teacher_config.as_ref().and_then(provenance_from_config),
+            teacher_extraction_status: parse_extraction_status(
+                j.id,
+                j.teacher_extraction_status.as_deref(),
+            ),
             parent_model_id: j.parent_model_id.map(|id| id.to_string()),
             created_at: j.created_at,
             updated_at: j.updated_at,

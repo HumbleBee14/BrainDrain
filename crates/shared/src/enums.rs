@@ -49,6 +49,20 @@ pub enum TrainingJobStatus {
     Cancelled,
 }
 
+/// Where a job's teacher scoring pass got to. NULL on every job that never
+/// asked for one, which is why the DTO carries it as an `Option`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+#[ts(export)]
+pub enum TeacherExtractionStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
 /// Training method used for fine-tuning.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString, TS, ToSchema,

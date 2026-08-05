@@ -2,7 +2,8 @@
 //!
 //! A worker crash/OOM (or a terminated workflow whose cleanup never ran) can
 //! leave a training job pinned in `training`/`provisioning` forever — GPU time
-//! accrues but is never billed — or a document pinned in `parsing`. A deploy
+//! accrues but is never billed — or pinned in `pending` if it died while a
+//! teacher was still scoring for it, or a document pinned in `parsing`. A deploy
 //! request that dies mid-flight likewise leaves a model pinned in `deploying`,
 //! holding an inference-instance slot and blocking redeploys. Idle serving
 //! instances similarly keep an external GPU box running with no traffic. These
@@ -43,6 +44,37 @@ struct StuckJob {
     mode: String,
     method: String,
     base_model: String,
+    teacher_extraction_status: Option<String>,
+}
+
+/// Jobs abandoned by a dead worker, in either of the two states one can be
+/// abandoned in: mid-training, or mid-scoring before training ever claimed it.
+/// A scoring pass runs while the job is still `pending`, so without the second
+/// arm an extraction that dies with its worker leaves the row untouched forever
+/// and its teacher's GPU call unswept.
+const STUCK_JOB_PREDICATE: &str = "(status IN ('training', 'provisioning') \
+     OR (status = 'pending' AND teacher_extraction_status = 'running'))";
+
+fn stuck_job_select_sql() -> String {
+    format!(
+        "SELECT id, tenant_id, started_at, gpu_class, temporal_workflow_id, \
+                mode, method, base_model, teacher_extraction_status \
+         FROM training_jobs \
+         WHERE {STUCK_JOB_PREDICATE} \
+           AND updated_at < NOW() - make_interval(secs => $1)"
+    )
+}
+
+/// Shares `STUCK_JOB_PREDICATE` with the select so the two cannot disagree about
+/// what is stuck: a row the select claims and the update declines would be
+/// re-read and skipped on every pass, forever.
+fn reap_update_sql() -> String {
+    format!(
+        "UPDATE training_jobs \
+         SET status = 'failed', error_message = $3, \
+             actual_cost = $2, completed_at = NOW() \
+         WHERE id = $1 AND {STUCK_JOB_PREDICATE}"
+    )
 }
 
 /// Reap training jobs abandoned by a dead worker. Returns the number reaped.
@@ -55,16 +87,10 @@ pub async fn reap_stuck_training_jobs(
     orchestrator: Option<&dyn WorkflowOrchestrator>,
     stuck_after_secs: i64,
 ) -> Result<usize, sqlx::Error> {
-    let candidates = sqlx::query_as::<_, StuckJob>(
-        "SELECT id, tenant_id, started_at, gpu_class, temporal_workflow_id, \
-                mode, method, base_model \
-         FROM training_jobs \
-         WHERE status IN ('training', 'provisioning') \
-           AND updated_at < NOW() - make_interval(secs => $1)",
-    )
-    .bind(stuck_after_secs as f64)
-    .fetch_all(db)
-    .await?;
+    let candidates = sqlx::query_as::<_, StuckJob>(&stuck_job_select_sql())
+        .bind(stuck_after_secs as f64)
+        .fetch_all(db)
+        .await?;
 
     let mut reaped = 0;
     for job in candidates {
@@ -102,6 +128,17 @@ fn status_indicates_running(status: &str) -> bool {
     status.to_uppercase().contains("RUNNING")
 }
 
+/// What the tenant is told about a job the reaper closed. A job abandoned before
+/// training claimed it never ran a step, so blaming the trainer would send them
+/// looking in the wrong place.
+fn reaped_message(job: &StuckJob) -> &'static str {
+    if job.teacher_extraction_status.as_deref() == Some("running") {
+        "The teacher scoring pass stopped responding; job reaped before training started"
+    } else {
+        "Training worker stopped responding; job reaped"
+    }
+}
+
 /// Mark one job failed and bill the GPU time used, transactionally. Returns
 /// whether a row was reaped (false if it already left the running state).
 async fn reap_one_training_job(db: &PgPool, job: &StuckJob) -> Result<bool, sqlx::Error> {
@@ -114,17 +151,12 @@ async fn reap_one_training_job(db: &PgPool, job: &StuckJob) -> Result<bool, sqlx
 
     let mut tx = db.begin().await?;
 
-    let updated = sqlx::query(
-        "UPDATE training_jobs \
-         SET status = 'failed', \
-             error_message = 'Training worker stopped responding; job reaped', \
-             actual_cost = $2, completed_at = NOW() \
-         WHERE id = $1 AND status IN ('training', 'provisioning')",
-    )
-    .bind(job.id)
-    .bind(cost)
-    .execute(&mut *tx)
-    .await?;
+    let updated = sqlx::query(&reap_update_sql())
+        .bind(job.id)
+        .bind(cost)
+        .bind(reaped_message(job))
+        .execute(&mut *tx)
+        .await?;
 
     if updated.rows_affected() == 0 {
         tx.rollback().await?;
@@ -438,9 +470,43 @@ async fn reap_one_deployment(
 #[cfg(test)]
 mod tests {
     use super::{
-        deploy_reaping_enabled, idle_reaping_enabled, orphan_sweep_enabled,
-        status_indicates_running,
+        STUCK_JOB_PREDICATE, StuckJob, deploy_reaping_enabled, idle_reaping_enabled,
+        orphan_sweep_enabled, reap_update_sql, reaped_message, status_indicates_running,
+        stuck_job_select_sql,
     };
+
+    fn job(status: Option<&str>) -> StuckJob {
+        StuckJob {
+            id: uuid::Uuid::nil(),
+            tenant_id: uuid::Uuid::nil(),
+            started_at: None,
+            gpu_class: None,
+            temporal_workflow_id: None,
+            mode: "distill".into(),
+            method: "lora".into(),
+            base_model: "m".into(),
+            teacher_extraction_status: status.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_select_and_the_update_agree_on_what_is_stuck() {
+        assert!(stuck_job_select_sql().contains(STUCK_JOB_PREDICATE));
+        assert!(reap_update_sql().contains(STUCK_JOB_PREDICATE));
+    }
+
+    #[test]
+    fn a_job_abandoned_while_its_teacher_scored_is_reapable() {
+        assert!(STUCK_JOB_PREDICATE.contains("status = 'pending'"));
+        assert!(STUCK_JOB_PREDICATE.contains("teacher_extraction_status = 'running'"));
+    }
+
+    #[test]
+    fn a_job_reaped_before_training_started_does_not_blame_the_trainer() {
+        assert!(reaped_message(&job(Some("running"))).contains("teacher scoring pass"));
+        assert!(reaped_message(&job(None)).contains("Training worker"));
+        assert!(reaped_message(&job(Some("completed"))).contains("Training worker"));
+    }
 
     #[test]
     fn idle_reaping_disabled_by_default() {

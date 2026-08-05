@@ -6,7 +6,12 @@ strategy can require a training engine: on-policy cannot run under Unsloth,
 because the image that hosts its teacher cannot contain Unsloth at all.
 """
 
+import os
+import sys
+from types import SimpleNamespace
+
 import pytest
+from temporalio.exceptions import ApplicationError
 
 from src.activities.train_model import DistillOnPolicyStrategy, resolve_strategy_key
 from src.activities.training_engine import (
@@ -138,3 +143,48 @@ class _TeacherStrategy:
     def execute(self, **kwargs):
         self.seen = kwargs
         return {"train_runtime": 1.0}
+
+
+class _FakeTorch:
+    """Stands in for a process whose CUDA device set is already fixed."""
+
+    def __init__(self, device_count):
+        self.cuda = SimpleNamespace(device_count=lambda: device_count)
+
+
+def _reserve(monkeypatch, *, device_count):
+    import src.activities.train_model as tm
+
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch(device_count))
+    return tm._reserve_student_devices(_TeacherStrategy())
+
+
+def test_a_confined_process_keeps_the_narrowed_device_set(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,5")
+
+    assert _reserve(monkeypatch, device_count=1) == (4,)
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
+
+
+def test_a_refusal_hands_back_the_allocation_it_was_given(monkeypatch):
+    """Otherwise the next attempt in this worker reads our narrowed set and
+    refuses with 'needs at least 2 GPUs' — the wrong reason entirely."""
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "4,5")
+
+    with pytest.raises(ApplicationError, match="already sees 2"):
+        _reserve(monkeypatch, device_count=2)
+
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "4,5"
+
+
+def test_a_refusal_leaves_no_allocation_where_there_was_none(monkeypatch):
+    """A container given every card names none of them in the environment."""
+    from src.teacher import server as server_module
+
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setattr(server_module, "container_gpu_ids", lambda: (0, 1))
+
+    with pytest.raises(ApplicationError, match="already sees 4"):
+        _reserve(monkeypatch, device_count=4)
+
+    assert "CUDA_VISIBLE_DEVICES" not in os.environ
