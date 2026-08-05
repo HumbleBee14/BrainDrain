@@ -154,22 +154,35 @@ async def test_the_two_rows_have_distinct_ids_so_neither_upserts_the_other():
     assert all(isinstance(row_id, uuid.UUID) for row_id in seen)
 
 
-SERVING_COST_RS = (
-    Path(__file__).resolve().parents[3] / "crates/api/src/services/teacher/serving_cost.rs"
-)
+ENUMS_RS = Path(__file__).resolve().parents[3] / "crates/shared/src/enums.rs"
 
 
 def test_the_control_plane_splits_the_same_classes_this_worker_does():
     """The reaper and the cancel path close out runs the worker never finished, and
     bill them by device count too. A class either side does not know about is a
-    dual-GPU run billed as one card — invisible to the teacher-GPU cap."""
-    rust = SERVING_COST_RS.read_text(encoding="utf-8")
-    listed = re.search(r"GPU_DEVICE_COUNTS: &\[\(&str, u32\)\] = &\[(.*?)\];", rust, re.DOTALL)
-    assert listed, "could not find GPU_DEVICE_COUNTS in the control plane"
+    dual-GPU run billed as one card — invisible to the teacher-GPU cap.
 
-    assert dict(re.findall(r'\("([\w]+)", (\d+)\)', listed.group(1))) == {
-        name: str(count) for name, count in GPU_DEVICE_COUNTS.items()
-    }
+    Read from `GpuClass::device_count`, which the control plane calls directly, so
+    a new multi-device variant there fails here until this worker knows it too.
+    """
+    body = ENUMS_RS.read_text(encoding="utf-8")
+    arms = re.search(r"fn device_count\(self\) -> u32 \{\s*match self \{(.*?)\n        \}", body, re.DOTALL)
+    assert arms, "could not find GpuClass::device_count in the shared enums"
+
+    multi_device = {}
+    for variants, count in re.findall(r"((?:GpuClass::\w+\s*\|?\s*)+)=> (\d+),", arms.group(1)):
+        if int(count) < 2:
+            continue
+        for variant in re.findall(r"GpuClass::(\w+)", variants):
+            multi_device[_snake_case(variant)] = int(count)
+
+    assert multi_device == GPU_DEVICE_COUNTS
+
+
+def _snake_case(variant: str) -> str:
+    """Rust variant to its serde `snake_case` rename, as `GpuClass` declares."""
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", variant)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", spaced).lower()
 
 
 def test_the_control_plane_writes_the_ledger_ids_this_worker_writes():

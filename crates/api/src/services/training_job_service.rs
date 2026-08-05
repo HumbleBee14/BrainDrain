@@ -672,7 +672,10 @@ impl TrainingJobService {
                         actual_cost,
                         gpu_seconds,
                         metadata,
-                        teacher_serving_share(job.gpu_class.as_deref(), &job.hyperparams),
+                        teacher_serving_share(
+                            job.gpu_class.as_deref(),
+                            job.teacher_config.as_ref(),
+                        ),
                     )
                     .await?
                     .ok_or(AppError::BadRequest {
@@ -945,6 +948,18 @@ mod tests {
         assert_eq!(secs, MIN_BILLABLE_SECONDS as i32);
         // 300s at $3.60/hr = $0.30
         assert_eq!(cost, 0.30);
+    }
+
+    /// The `hyperparams` column is written once, from this, and never updated. So
+    /// nothing downstream may read a job's distillation method from it — the
+    /// admitted plan on the `teacher` block is the only place it is persisted.
+    #[test]
+    fn a_created_jobs_hyperparams_never_name_the_distillation_method() {
+        for is_improve_pass in [true, false] {
+            let created = merge_hyperparams(None, is_improve_pass);
+
+            assert!(created.get("distill_method").is_none());
+        }
     }
 
     /// 2e-4 on an adapter that is already trained overwrites what it starts from

@@ -12,42 +12,40 @@
 //! in the worker's `train_model.py`, including the ledger ids, so that whichever
 //! side writes second is a no-op rather than a second charge.
 
+use platform_shared::enums::{DistillMethod, GpuClass};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::services::billing_outbox::enqueue_in_tx_with_id;
 
-/// Hyperparam naming the distillation method, written by the platform.
-const DISTILL_METHOD_HYPERPARAM: &str = "distill_method";
-
-/// The method whose teacher lives inside the training container.
-const ON_POLICY_METHOD: &str = "on_policy";
-
-/// Devices in each multi-device class. Mirrors `GPU_DEVICE_COUNTS` in the
-/// worker's constants; a class absent here holds one card.
-const GPU_DEVICE_COUNTS: &[(&str, u32)] = &[("a10080gb_dual", 2), ("h100_dual", 2)];
-
+/// Devices a class of container is given, or one for a class we cannot name.
+///
+/// Taken from `GpuClass` rather than a table here: a new multi-device variant
+/// added there without a matching entry here would price a two-card run as one.
 fn device_count(gpu_class: Option<&str>) -> u32 {
-    let class = gpu_class.unwrap_or_default().to_lowercase();
-    GPU_DEVICE_COUNTS
-        .iter()
-        .find(|(name, _)| *name == class)
-        .map(|(_, count)| *count)
+    gpu_class
+        .and_then(|class| class.to_lowercase().parse::<GpuClass>().ok())
+        .map(GpuClass::device_count)
         .unwrap_or(1)
 }
 
 /// Fraction of a container's GPU cost the resident teacher accounts for.
 ///
-/// Only an on-policy run has one: every other mode reaches its teacher through
-/// the tenant's own API key, or not at all. The teacher holds all but one card
-/// and the student holds the last, which is exact only because every device in a
-/// class is the same type.
-pub fn teacher_serving_share(gpu_class: Option<&str>, hyperparams: &Value) -> f64 {
-    if hyperparams
-        .get(DISTILL_METHOD_HYPERPARAM)
-        .and_then(Value::as_str)
-        != Some(ON_POLICY_METHOD)
-    {
+/// Read from the job's persisted `teacher` block, which is where an admitted plan
+/// lives — *not* from its hyperparams. `distill_method` reaches the trainer's
+/// hyperparams only as a runtime dict the workflow assembles in memory; the
+/// `hyperparams` column is written once at creation and never carries it, so a
+/// share computed from that column is always zero.
+///
+/// Only an on-policy run has a teacher inside the container: every other mode
+/// reaches its teacher through the tenant's own API key, or not at all. The
+/// teacher holds all but one card and the student holds the last, which is exact
+/// only because every device in a class is the same type.
+pub fn teacher_serving_share(gpu_class: Option<&str>, teacher_config: Option<&Value>) -> f64 {
+    let method = teacher_config
+        .and_then(|block| block.pointer("/extraction/distill_method"))
+        .and_then(Value::as_str);
+    if method != Some(DistillMethod::OnPolicy.to_string().as_str()) {
         return 0.0;
     }
     let devices = device_count(gpu_class);
@@ -172,44 +170,104 @@ mod tests {
 
     const JOB: &str = "11111111-1111-1111-1111-111111111111";
 
+    /// The block an admitted improve pass actually persists, produced by the code
+    /// that persists it rather than written out here — a hand-built map is how a
+    /// share that is always zero in production passed its tests.
     fn on_policy() -> Value {
-        serde_json::json!({"distill_method": "on_policy"})
+        use crate::services::teacher::on_policy::{attach_to_teacher_config, plan_on_policy};
+        use chrono::Utc;
+        use platform_db::models::Dataset;
+
+        let dataset = Dataset {
+            id: uuid::Uuid::new_v4(),
+            tenant_id: uuid::Uuid::new_v4(),
+            project_id: uuid::Uuid::new_v4(),
+            name: "d".to_string(),
+            storage_path: None,
+            format: "chatml".to_string(),
+            status: "approved".to_string(),
+            pair_count: Some(100),
+            stats: serde_json::json!({}),
+            config: serde_json::json!({"teacher": {
+                "host": "inference.example.com",
+                "model": "Qwen/Qwen3-32B",
+                "policy": "allowed",
+            }}),
+            error: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            scored_completion_tokens: None,
+            token_count_tokenizer_hash: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let plan = plan_on_policy(
+            &dataset,
+            "Qwen/Qwen3-8B",
+            &serde_json::json!({}),
+            "tenants/t/models/parent/",
+            40.0,
+            |_class| 6.00,
+        )
+        .expect("a hosted teacher is plannable");
+
+        attach_to_teacher_config(Some(serde_json::json!({"model": "t"})), Some(&plan))
+            .expect("a block to live on")
+            .expect("a block")
     }
 
     #[test]
     fn a_paired_class_gives_the_teacher_one_of_its_two_cards() {
+        let block = on_policy();
+
         assert_eq!(
-            teacher_serving_share(Some("a10080gb_dual"), &on_policy()),
+            teacher_serving_share(Some("a10080gb_dual"), Some(&block)),
             0.5
         );
-        assert_eq!(teacher_serving_share(Some("h100_dual"), &on_policy()), 0.5);
+        assert_eq!(teacher_serving_share(Some("h100_dual"), Some(&block)), 0.5);
     }
 
     #[test]
     fn a_class_name_is_matched_however_it_was_stored() {
         assert_eq!(
-            teacher_serving_share(Some("A10080GB_DUAL"), &on_policy()),
+            teacher_serving_share(Some("A10080GB_DUAL"), Some(&on_policy())),
             0.5
         );
     }
 
     #[test]
     fn a_single_card_run_has_no_teacher_beside_the_student() {
-        assert_eq!(teacher_serving_share(Some("a10080gb"), &on_policy()), 0.0);
-        assert_eq!(teacher_serving_share(None, &on_policy()), 0.0);
+        let block = on_policy();
+
+        assert_eq!(teacher_serving_share(Some("a10080gb"), Some(&block)), 0.0);
+        assert_eq!(teacher_serving_share(None, Some(&block)), 0.0);
+    }
+
+    /// Every run that predates fidelity upgrades, and every plain distill run.
+    #[test]
+    fn a_run_with_no_admitted_plan_is_billed_whole() {
+        assert_eq!(teacher_serving_share(Some("a10080gb_dual"), None), 0.0);
+        assert_eq!(
+            teacher_serving_share(
+                Some("a10080gb_dual"),
+                Some(&serde_json::json!({"model": "t"}))
+            ),
+            0.0
+        );
     }
 
     /// Every other mode reaches its teacher through the tenant's own key, so none
     /// of its GPU time is ours to count against the teacher budget.
     #[test]
     fn only_an_on_policy_run_splits_its_bill() {
-        for hyperparams in [
+        for block in [
             serde_json::json!({}),
-            serde_json::json!({"distill_method": "logit"}),
-            serde_json::json!({"distill_method": null}),
+            serde_json::json!({"extraction": {"distill_method": "logit"}}),
+            serde_json::json!({"extraction": {"distill_method": null}}),
+            serde_json::json!({"extraction": "logit"}),
         ] {
             assert_eq!(
-                teacher_serving_share(Some("a10080gb_dual"), &hyperparams),
+                teacher_serving_share(Some("a10080gb_dual"), Some(&block)),
                 0.0
             );
         }

@@ -52,7 +52,8 @@ struct StuckJob {
     method: String,
     base_model: String,
     teacher_extraction_status: Option<String>,
-    hyperparams: serde_json::Value,
+    /// The admitted plan, which is where `distill_method` is persisted.
+    teacher_config: Option<serde_json::Value>,
 }
 
 /// Jobs abandoned by a dead worker, in any of the states one can be abandoned
@@ -68,7 +69,7 @@ const STUCK_JOB_PREDICATE: &str = "(status IN ('training', 'provisioning') \
 fn stuck_job_select_sql() -> String {
     format!(
         "SELECT id, tenant_id, status, started_at, gpu_class, temporal_workflow_id, \
-                mode, method, base_model, teacher_extraction_status, hyperparams \
+                mode, method, base_model, teacher_extraction_status, teacher_config \
          FROM training_jobs \
          WHERE {STUCK_JOB_PREDICATE} \
            AND updated_at < NOW() - make_interval(secs => $1)"
@@ -198,7 +199,10 @@ async fn reap_one_training_job(db: &PgPool, job: &StuckJob) -> Result<bool, sqlx
                 "base_model": job.base_model,
                 "gpu_class": job.gpu_class,
             }),
-            teacher_share: teacher_serving_share(job.gpu_class.as_deref(), &job.hyperparams),
+            teacher_share: teacher_serving_share(
+                job.gpu_class.as_deref(),
+                job.teacher_config.as_ref(),
+            ),
         },
     )
     .await?;
@@ -507,7 +511,7 @@ mod tests {
             method: "lora".into(),
             base_model: "m".into(),
             teacher_extraction_status: extraction.map(str::to_string),
-            hyperparams: serde_json::json!({}),
+            teacher_config: None,
         }
     }
 
@@ -518,9 +522,13 @@ mod tests {
     fn a_reaped_improve_pass_is_split_so_the_teacher_budget_sees_it() {
         let mut improve = job("training", None);
         improve.gpu_class = Some("a10080gb_dual".to_string());
-        improve.hyperparams = serde_json::json!({"distill_method": "on_policy"});
+        improve.teacher_config =
+            Some(serde_json::json!({"extraction": {"distill_method": "on_policy"}}));
 
-        let share = teacher_serving_share(improve.gpu_class.as_deref(), &improve.hyperparams);
+        let share = teacher_serving_share(
+            improve.gpu_class.as_deref(),
+            improve.teacher_config.as_ref(),
+        );
 
         assert_eq!(share, 0.5);
     }
@@ -531,7 +539,7 @@ mod tests {
         plain.gpu_class = Some("a10080gb".to_string());
 
         assert_eq!(
-            teacher_serving_share(plain.gpu_class.as_deref(), &plain.hyperparams),
+            teacher_serving_share(plain.gpu_class.as_deref(), plain.teacher_config.as_ref()),
             0.0
         );
     }
@@ -547,6 +555,14 @@ mod tests {
     fn the_select_and_the_update_agree_on_what_is_stuck() {
         assert!(stuck_job_select_sql().contains(STUCK_JOB_PREDICATE));
         assert!(reap_update_sql().contains(STUCK_JOB_PREDICATE));
+    }
+
+    /// The share is read from the persisted plan, so the select has to fetch it.
+    /// Reading the hyperparams column instead made the split a no-op on every real
+    /// row while its unit tests passed on hand-built maps.
+    #[test]
+    fn the_select_fetches_the_block_the_share_is_read_from() {
+        assert!(stuck_job_select_sql().contains("teacher_config"));
     }
 
     #[test]
