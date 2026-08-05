@@ -7,6 +7,10 @@ use uuid::Uuid;
 use crate::error::AppResult;
 use crate::repositories::traits::{BoxFuture, TrainingJobRepository};
 
+/// The outcome a user-cancelled run is billed under. Distinct from the worker's
+/// own outcomes because only one side ever wins the terminal status transition.
+const CANCELLED_OUTCOME: &str = "cancelled";
+
 /// PostgreSQL implementation of the training job repository.
 ///
 /// All queries require `tenant_id` — multi-tenancy enforced at this layer.
@@ -266,6 +270,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         actual_cost: f64,
         gpu_seconds: i32,
         metadata: serde_json::Value,
+        teacher_share: f64,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
@@ -287,16 +292,17 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             // Only bill when the state transition actually happened (idempotent
             // against repeated cancels).
             if job.is_some() {
-                crate::services::billing_outbox::enqueue_in_tx(
+                crate::services::teacher::serving_cost::enqueue_run_billing(
                     &mut tx,
                     tenant_id,
-                    "training",
-                    Some(job_id),
-                    0,
-                    0,
-                    gpu_seconds,
-                    actual_cost,
-                    metadata,
+                    job_id,
+                    CANCELLED_OUTCOME,
+                    crate::services::teacher::serving_cost::RunCharge {
+                        gpu_seconds,
+                        cost_usd: actual_cost,
+                        metadata,
+                        teacher_share,
+                    },
                 )
                 .await?;
             }

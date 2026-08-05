@@ -22,6 +22,7 @@ use crate::services::teacher::on_policy::{
     admit_on_policy, attach_to_teacher_config as attach_on_policy_to_teacher_config,
     plan_on_policy, wants_on_policy,
 };
+use crate::services::teacher::serving_cost::teacher_serving_share;
 use crate::services::tenant_settings_service::TenantSettingsService;
 use crate::temporal::{TraceContext, WorkflowOrchestrator};
 use platform_shared::enums::{DatasetStatus, TrainingJobStatus, TrainingMethod, TrainingMode};
@@ -302,7 +303,7 @@ impl TrainingJobService {
                 let plan = plan_on_policy(
                     &dataset,
                     &req.base_model,
-                    Some(epochs as i64),
+                    &hyperparams,
                     &parent.adapter_path,
                     on_policy_tokens_per_sec,
                     |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
@@ -665,7 +666,14 @@ impl TrainingJobService {
                 });
 
                 let cancelled = repo
-                    .finalize_cancelled(tenant_id, job_id, actual_cost, gpu_seconds, metadata)
+                    .finalize_cancelled(
+                        tenant_id,
+                        job_id,
+                        actual_cost,
+                        gpu_seconds,
+                        metadata,
+                        teacher_serving_share(job.gpu_class.as_deref(), &job.hyperparams),
+                    )
                     .await?
                     .ok_or(AppError::BadRequest {
                         message: "Job is no longer running".to_string(),

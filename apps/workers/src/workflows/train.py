@@ -68,6 +68,10 @@ NO_PARENT_IN_PLAN_MESSAGE = (
 # caller may set it freely, and the API prices the value it ends up with.
 EPOCHS_HYPERPARAM = "num_train_epochs"
 
+# The rollout budget the quote was computed from. Like the epoch count, a caller
+# may set it and the API prices what they set, so it is not platform-owned.
+MAX_COMPLETION_LENGTH_HYPERPARAM = "max_completion_length"
+
 # Hyperparams the platform writes from an admitted plan, and nothing else may
 # supply. Hyperparams are otherwise free-form and caller-controlled, so any key
 # that names a model we will execute, or a storage prefix we will read, has to be
@@ -199,6 +203,8 @@ def hyperparams_with_live_teacher(hyperparams: dict, plan: dict) -> dict:
     # than from hyperparams is what makes the run cost what the tenant was told.
     if plan.get("epochs"):
         resolved[EPOCHS_HYPERPARAM] = int(plan["epochs"])
+    if plan.get(MAX_COMPLETION_LENGTH_HYPERPARAM):
+        resolved[MAX_COMPLETION_LENGTH_HYPERPARAM] = int(plan[MAX_COMPLETION_LENGTH_HYPERPARAM])
     resolved[PARENT_ADAPTER_HYPERPARAM] = plan["parent_adapter_path"]
     return resolved
 

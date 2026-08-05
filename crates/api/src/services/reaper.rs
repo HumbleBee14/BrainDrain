@@ -29,9 +29,15 @@ use platform_storage::{ObjectStorage, StorageError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::services::billing_outbox::enqueue_in_tx;
+use crate::services::teacher::serving_cost::{
+    RunCharge, enqueue_run_billing, teacher_serving_share,
+};
 use crate::services::training_job_service::{billable_gpu_cost, resolve_gpu_rate};
 use crate::temporal::WorkflowOrchestrator;
+
+/// The outcome a reaped run is billed under. Matches the worker's own name for a
+/// failed run so the two writes address one ledger row, not two.
+const REAPED_OUTCOME: &str = "failed";
 
 /// A candidate stuck training job.
 #[derive(sqlx::FromRow)]
@@ -46,6 +52,7 @@ struct StuckJob {
     method: String,
     base_model: String,
     teacher_extraction_status: Option<String>,
+    hyperparams: serde_json::Value,
 }
 
 /// Jobs abandoned by a dead worker, in any of the states one can be abandoned
@@ -61,7 +68,7 @@ const STUCK_JOB_PREDICATE: &str = "(status IN ('training', 'provisioning') \
 fn stuck_job_select_sql() -> String {
     format!(
         "SELECT id, tenant_id, status, started_at, gpu_class, temporal_workflow_id, \
-                mode, method, base_model, teacher_extraction_status \
+                mode, method, base_model, teacher_extraction_status, hyperparams \
          FROM training_jobs \
          WHERE {STUCK_JOB_PREDICATE} \
            AND updated_at < NOW() - make_interval(secs => $1)"
@@ -172,23 +179,27 @@ async fn reap_one_training_job(db: &PgPool, job: &StuckJob) -> Result<bool, sqlx
         return Ok(false);
     }
 
-    enqueue_in_tx(
+    // Split so the teacher-GPU cap can see an improve pass the worker never got
+    // to close out. Billed under the same ledger ids the worker would have used,
+    // so a late write from a worker that outlived its reaping is a no-op.
+    enqueue_run_billing(
         &mut tx,
         job.tenant_id,
-        "training",
-        Some(job.id),
-        0,
-        0,
-        gpu_seconds,
-        cost,
-        serde_json::json!({
-            "status": "failed",
-            "reaped": true,
-            "mode": job.mode,
-            "method": job.method,
-            "base_model": job.base_model,
-            "gpu_class": job.gpu_class,
-        }),
+        job.id,
+        REAPED_OUTCOME,
+        RunCharge {
+            gpu_seconds,
+            cost_usd: cost,
+            metadata: serde_json::json!({
+                "status": "failed",
+                "reaped": true,
+                "mode": job.mode,
+                "method": job.method,
+                "base_model": job.base_model,
+                "gpu_class": job.gpu_class,
+            }),
+            teacher_share: teacher_serving_share(job.gpu_class.as_deref(), &job.hyperparams),
+        },
     )
     .await?;
 
@@ -479,9 +490,9 @@ async fn reap_one_deployment(
 #[cfg(test)]
 mod tests {
     use super::{
-        STUCK_JOB_PREDICATE, StuckJob, deploy_reaping_enabled, idle_reaping_enabled,
-        orphan_sweep_enabled, reap_update_sql, reaped_message, status_indicates_running,
-        stuck_job_select_sql,
+        REAPED_OUTCOME, STUCK_JOB_PREDICATE, StuckJob, deploy_reaping_enabled,
+        idle_reaping_enabled, orphan_sweep_enabled, reap_update_sql, reaped_message,
+        status_indicates_running, stuck_job_select_sql, teacher_serving_share,
     };
 
     fn job(status: &str, extraction: Option<&str>) -> StuckJob {
@@ -496,7 +507,40 @@ mod tests {
             method: "lora".into(),
             base_model: "m".into(),
             teacher_extraction_status: extraction.map(str::to_string),
+            hyperparams: serde_json::json!({}),
         }
+    }
+
+    /// The cap sums `extraction` and `teacher_serving`. A reaped improve pass
+    /// billed wholly as `training` is teacher GPU time nobody counts — no revenue
+    /// lost, but a tenant could cancel near completion, forever.
+    #[test]
+    fn a_reaped_improve_pass_is_split_so_the_teacher_budget_sees_it() {
+        let mut improve = job("training", None);
+        improve.gpu_class = Some("a10080gb_dual".to_string());
+        improve.hyperparams = serde_json::json!({"distill_method": "on_policy"});
+
+        let share = teacher_serving_share(improve.gpu_class.as_deref(), &improve.hyperparams);
+
+        assert_eq!(share, 0.5);
+    }
+
+    #[test]
+    fn a_reaped_ordinary_run_is_billed_whole() {
+        let mut plain = job("training", None);
+        plain.gpu_class = Some("a10080gb".to_string());
+
+        assert_eq!(
+            teacher_serving_share(plain.gpu_class.as_deref(), &plain.hyperparams),
+            0.0
+        );
+    }
+
+    /// The worker uses this word for a run that failed. Reaping is a failure the
+    /// worker never got to report, so both writes address one ledger row.
+    #[test]
+    fn a_reaped_run_is_billed_under_the_outcome_a_worker_would_have_used() {
+        assert_eq!(REAPED_OUTCOME, "failed");
     }
 
     #[test]

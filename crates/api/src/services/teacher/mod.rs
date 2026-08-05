@@ -20,3 +20,4 @@ pub mod fidelity;
 pub mod hosted;
 pub mod on_policy;
 pub mod policy;
+pub mod serving_cost;

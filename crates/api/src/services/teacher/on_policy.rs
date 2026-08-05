@@ -26,7 +26,14 @@ use crate::services::teacher::fidelity::hosted_scorer_for;
 /// rollout budget rather than a property of the dataset. Matches the trainer's own
 /// `max_completion_length` default; a run that generates shorter answers costs
 /// less than quoted, which is the direction an estimate should err in.
-const APPROX_ROLLOUT_TOKENS_PER_EXAMPLE: i64 = 512;
+/// Matches `DEFAULT_MAX_COMPLETION_LENGTH` in the worker's on-policy trainer.
+const DEFAULT_MAX_COMPLETION_LENGTH: i64 = 512;
+
+/// The trainer's own name for the rollout budget, which a caller may set.
+const MAX_COMPLETION_LENGTH_HYPERPARAM: &str = "max_completion_length";
+
+/// The trainer's name for the epoch count, which a caller may also set.
+const EPOCHS_HYPERPARAM: &str = "num_train_epochs";
 
 /// Epochs assumed when a request does not say, matching `merge_hyperparams` — the
 /// number a job actually gets when the caller supplies none. Quoting anything
@@ -51,6 +58,11 @@ pub struct OnPolicyPlan {
     /// run trains the number of passes the tenant was charged for — every rollout
     /// is generated token by token, so an extra epoch is an extra teacher-hour.
     pub epochs: i64,
+    /// Tokens the student is allowed to write per answer. Caller-controlled and
+    /// honoured by the trainer, so the quote has to be computed from it rather
+    /// than from the default — eight times the budget is eight times the teacher
+    /// time, and a cap that assumed the default would admit runs it should refuse.
+    pub max_completion_length: i64,
     /// The adapter this run continues training. An improve pass that started from
     /// the bare base model would discard everything the parent learned and grade
     /// rollouts written by an untrained student.
@@ -69,6 +81,7 @@ impl OnPolicyPlan {
             "precision": self.precision.to_string(),
             "gpu_class": self.gpu_class,
             "epochs": self.epochs,
+            "max_completion_length": self.max_completion_length,
             "parent_adapter_path": self.parent_adapter_path,
             "est_cost_usd": self.estimate.est_cost_usd,
             "est_gpu_hours": self.estimate.est_gpu_hours,
@@ -125,13 +138,29 @@ pub fn paired_gpu_class(teacher_class: GpuClass) -> GpuClass {
 /// Always approximate: the count depends on how long the student's own answers
 /// turn out to be, which is unknowable before it writes them. Reported as such so
 /// the UI can say so rather than implying a measured figure.
-pub fn rollout_tokens_for(pair_count: Option<i32>, epochs: i64) -> (i64, EstimateBasis) {
+pub fn rollout_tokens_for(
+    pair_count: Option<i32>,
+    epochs: i64,
+    max_completion_length: i64,
+) -> (i64, EstimateBasis) {
     let pairs = pair_count.unwrap_or(0).max(0) as i64;
-    let epochs = epochs.max(1);
     (
-        pairs * APPROX_ROLLOUT_TOKENS_PER_EXAMPLE * epochs,
+        pairs * max_completion_length.max(1) * epochs.max(1),
         EstimateBasis::Approximate,
     )
+}
+
+/// A positive integer the caller may have set, or the platform's own default.
+///
+/// Read here rather than by each caller so that every knob the trainer honours is
+/// priced from the same place: the quote missing one is how a run generates eight
+/// times the tokens it was admitted for.
+fn caller_int(hyperparams: &serde_json::Value, key: &str, default: i64) -> i64 {
+    hyperparams
+        .get(key)
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(default)
+        .max(1)
 }
 
 /// Price an improve pass for `dataset` and `student_model`.
@@ -141,7 +170,7 @@ pub fn rollout_tokens_for(pair_count: Option<i32>, epochs: i64) -> (i64, Estimat
 pub fn plan_on_policy(
     dataset: &Dataset,
     student_model: &str,
-    epochs: Option<i64>,
+    hyperparams: &serde_json::Value,
     parent_adapter_path: &str,
     tokens_per_sec: f64,
     gpu_hourly_rate_for: impl Fn(&str) -> f64,
@@ -153,14 +182,20 @@ pub fn plan_on_policy(
     })?;
 
     let gpu_class = paired_gpu_class(entry.gpu_class).to_string();
-    let epochs = epochs.unwrap_or(DEFAULT_EPOCHS).max(1);
-    let (tokens, basis) = rollout_tokens_for(dataset.pair_count, epochs);
+    let epochs = caller_int(hyperparams, EPOCHS_HYPERPARAM, DEFAULT_EPOCHS);
+    let max_completion_length = caller_int(
+        hyperparams,
+        MAX_COMPLETION_LENGTH_HYPERPARAM,
+        DEFAULT_MAX_COMPLETION_LENGTH,
+    );
+    let (tokens, basis) = rollout_tokens_for(dataset.pair_count, epochs, max_completion_length);
 
     Ok(OnPolicyPlan {
         teacher_model: entry.model_id.to_string(),
         teacher_revision: entry.revision.to_string(),
         precision: TeacherPrecision::default(),
         epochs,
+        max_completion_length,
         parent_adapter_path: parent_adapter_path.to_string(),
         estimate: estimate_extraction(
             tokens,
@@ -279,8 +314,8 @@ mod tests {
 
     #[test]
     fn rollout_tokens_scale_with_examples_and_epochs() {
-        let (one_epoch, _) = rollout_tokens_for(Some(100), 1);
-        let (three_epochs, _) = rollout_tokens_for(Some(100), 3);
+        let (one_epoch, _) = rollout_tokens_for(Some(100), 1, 512);
+        let (three_epochs, _) = rollout_tokens_for(Some(100), 3, 512);
 
         assert_eq!(three_epochs, one_epoch * 3);
     }
@@ -289,22 +324,22 @@ mod tests {
     /// honest — and the UI says so rather than showing a measured-looking number.
     #[test]
     fn rollout_tokens_are_never_reported_as_measured() {
-        let (_, basis) = rollout_tokens_for(Some(1000), 1);
+        let (_, basis) = rollout_tokens_for(Some(1000), 1, 512);
 
         assert_eq!(basis, EstimateBasis::Approximate);
     }
 
     #[test]
     fn a_missing_pair_count_does_not_panic_or_go_negative() {
-        assert_eq!(rollout_tokens_for(None, 1).0, 0);
-        assert_eq!(rollout_tokens_for(Some(-5), 1).0, 0);
+        assert_eq!(rollout_tokens_for(None, 1, 512).0, 0);
+        assert_eq!(rollout_tokens_for(Some(-5), 1, 512).0, 0);
     }
 
     #[test]
     fn zero_epochs_still_prices_one_pass() {
         assert_eq!(
-            rollout_tokens_for(Some(10), 0),
-            rollout_tokens_for(Some(10), 1)
+            rollout_tokens_for(Some(10), 0, 512),
+            rollout_tokens_for(Some(10), 1, 512)
         );
     }
 
@@ -326,7 +361,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             40.0,
             rate,
@@ -348,7 +383,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             "",
             40.0,
             rate,
@@ -364,7 +399,7 @@ mod tests {
         let quoted = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
-            Some(2),
+            &json!({"num_train_epochs": 2}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -373,7 +408,7 @@ mod tests {
         let defaulted = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -389,12 +424,68 @@ mod tests {
         );
     }
 
+    /// The trainer honours this knob, so a quote computed from the default admits
+    /// a run generating eight times the tokens it was priced for — and the spend
+    /// cap, which is checked against that quote, lets it through.
+    #[test]
+    fn a_longer_rollout_budget_is_priced_for_what_it_will_generate() {
+        let default_budget = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            &json!({}),
+            PARENT_ADAPTER,
+            40.0,
+            rate,
+        )
+        .unwrap();
+        let long_budget = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            &json!({"max_completion_length": 4096}),
+            PARENT_ADAPTER,
+            40.0,
+            rate,
+        )
+        .unwrap();
+
+        assert_eq!(default_budget.max_completion_length, 512);
+        assert_eq!(long_budget.max_completion_length, 4096);
+        // Eight times the budget is eight times the tokens. The cost is not
+        // eight times, because the estimate also carries a fixed startup
+        // allowance — but it must move, and upwards.
+        assert_eq!(
+            long_budget.estimate.scored_tokens,
+            default_budget.estimate.scored_tokens * 8
+        );
+        assert!(long_budget.estimate.est_cost_usd > default_budget.estimate.est_cost_usd);
+    }
+
+    /// Priced from it, so the run has to train with it or the two diverge again.
+    #[test]
+    fn the_plan_carries_the_rollout_budget_it_was_priced_from() {
+        let plan = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            &json!({"max_completion_length": 2048}),
+            PARENT_ADAPTER,
+            40.0,
+            rate,
+        )
+        .unwrap();
+
+        let block = attach_to_teacher_config(Some(json!({"model": "t"})), Some(&plan))
+            .expect("a block to live on")
+            .expect("a block");
+
+        assert_eq!(block["extraction"]["max_completion_length"], 2048);
+    }
+
     #[test]
     fn a_nonsensical_epoch_count_is_priced_and_recorded_as_one_pass() {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
-            Some(0),
+            &json!({"num_train_epochs": 0}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -409,7 +500,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(500)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -427,7 +518,7 @@ mod tests {
         let refusal = plan_on_policy(
             &dataset("some-closed-model", Some(500)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -442,7 +533,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -460,7 +551,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
@@ -503,7 +594,7 @@ mod tests {
         let plan = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
-            None,
+            &json!({}),
             PARENT_ADAPTER,
             50.0,
             rate,
