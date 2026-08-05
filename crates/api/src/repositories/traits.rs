@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::error::AppResult;
 use crate::repositories::billing_event_repo::{InferenceUsageDay, UsageSummary};
+use crate::services::teacher::billing::TeacherSpendReservation;
 
 /// Convenience type alias for boxed futures (used by repository trait methods).
 ///
@@ -297,6 +298,12 @@ pub trait DataGuideRepository: Send + Sync {
 }
 
 /// Contract for training job database operations.
+///
+/// `reservation` on the create methods is the teacher-GPU spend reservation an
+/// on-policy run writes with its own row: the cap re-check, the job insert and
+/// the reservation insert commit together under a per-tenant lock, so two
+/// concurrent admissions cannot both read the budget before either joins it.
+/// `Err(Forbidden)` when the re-check refuses — nothing is created then.
 #[allow(clippy::too_many_arguments)]
 pub trait TrainingJobRepository: Send + Sync {
     fn create(
@@ -312,6 +319,7 @@ pub trait TrainingJobRepository: Send + Sync {
         cost_estimate: Option<f64>,
         teacher_config: Option<serde_json::Value>,
         parent_model_id: Option<Uuid>,
+        reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
     /// Atomic create with plan limit enforcement.
@@ -331,6 +339,7 @@ pub trait TrainingJobRepository: Send + Sync {
         teacher_config: Option<serde_json::Value>,
         parent_model_id: Option<Uuid>,
         max_models: i64,
+        reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 
     fn get_by_id(
@@ -746,6 +755,17 @@ pub trait BillingEventRepository: Send + Sync {
     /// billing operation. Teacher-GPU spend-cap accounting is its own budget
     /// line, separate from total tenant spend.
     fn sum_cost_since_for_operation(
+        &self,
+        tenant_id: Uuid,
+        operation: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'_, AppResult<f64>>;
+
+    /// Cost sitting in `billing_outbox` awaiting delivery to the ledger,
+    /// restricted to one operation: reservations for runs still on a GPU and
+    /// terminal charges the relay has not moved yet. A spend cap that reads
+    /// only the ledger admits every run in this window against a stale total.
+    fn sum_undelivered_cost_since_for_operation(
         &self,
         tenant_id: Uuid,
         operation: &str,

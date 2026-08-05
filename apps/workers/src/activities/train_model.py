@@ -2412,6 +2412,46 @@ def _teacher_serving_billing_event_id(job_id: str, outcome: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, f"teacher-serving-billing:{job_id}:{outcome}")
 
 
+def _teacher_reservation_billing_event_id(job_id: str) -> uuid.UUID:
+    """The reservation the control plane wrote when this run was admitted.
+
+    Outcome-free — at admission there is no outcome — and distinct from every
+    terminal id, so deleting it can never delete a real charge.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"teacher-serving-reservation:{job_id}")
+
+
+async def _void_teacher_reservation(conn, *, tenant_id: str, job_id: str) -> float | None:
+    """Retire the run's admission reservation; return what it already billed.
+
+    Deleting the undelivered row is the normal case: the terminal charge written
+    in this same transaction replaces the estimate. A reservation the relay
+    already reaped and delivered has billed the teacher's time at the estimate —
+    that charge is returned so the caller can skip the terminal teacher row
+    instead of billing the same time twice. Delivered at zero means it was
+    voided for a run that had not started, which settles nothing.
+    """
+    reservation_id = _teacher_reservation_billing_event_id(job_id)
+    deleted = await conn.fetchval(
+        """DELETE FROM billing_outbox
+        WHERE id = $1 AND tenant_id = $2::uuid AND delivered_at IS NULL
+        RETURNING id""",
+        reservation_id,
+        tenant_id,
+    )
+    if deleted is not None:
+        return None
+    delivered = await conn.fetchval(
+        """SELECT cost_usd::FLOAT8 FROM billing_outbox
+        WHERE id = $1 AND tenant_id = $2::uuid AND delivered_at IS NOT NULL""",
+        reservation_id,
+        tenant_id,
+    )
+    if delivered is None or float(delivered) <= 0.0:
+        return None
+    return float(delivered)
+
+
 def teacher_serving_share(gpu_class: str | None, hyperparams: dict) -> float:
     """Fraction of a container's GPU cost that the resident teacher accounts for.
 
@@ -2468,7 +2508,14 @@ async def _append_training_billing_outbox(
     is what the teacher-GPU spend cap counts. Both are written on the caller's
     connection, inside the caller's transaction with the job's terminal status, so
     a crash can never commit one without the other.
+
+    The run's admission reservation is retired in the same transaction: the real
+    charge replaces the estimate atomically. If the relay already reaped and
+    delivered the reservation, the teacher's time is billed at the estimate and
+    the terminal teacher row is skipped — writing it would charge that time twice.
     """
+    already_billed = await _void_teacher_reservation(conn, tenant_id=tenant_id, job_id=job_id)
+
     (student_seconds, student_cost), (teacher_seconds, teacher_cost) = split_teacher_serving_cost(
         gpu_seconds, cost_usd, teacher_share
     )
@@ -2488,6 +2535,15 @@ async def _append_training_billing_outbox(
     )
 
     if teacher_share <= 0.0:
+        return
+
+    if already_billed is not None:
+        logger.warning(
+            "Teacher reservation for job %s was already reaped and delivered at $%.2f; "
+            "skipping the terminal teacher row",
+            job_id,
+            already_billed,
+        )
         return
 
     await conn.execute(
