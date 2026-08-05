@@ -9,6 +9,7 @@ import pytest
 
 from src.activities.on_policy import (
     DEFAULT_BETA,
+    DEFAULT_EPOCHS,
     DEFAULT_LMBDA,
     SERVER_REVERSE_KL_TOP_K,
     OnPolicyConfigError,
@@ -154,6 +155,21 @@ def test_config_kwargs_omit_the_revision_when_unpinned():
     assert "teacher_model_revision" not in trainer_config_kwargs(
         plan(), output_dir="/tmp/out", hp={}
     )
+
+
+def test_the_trainer_reads_the_epoch_count_the_rest_of_the_platform_writes():
+    """`epochs` is nobody's key. Reading it meant the API priced three epochs of
+    rollouts and the trainer ran one, and setting num_train_epochs did nothing."""
+    kwargs = trainer_config_kwargs(plan(), output_dir="/tmp/out", hp={"num_train_epochs": 2})
+
+    assert kwargs["num_train_epochs"] == 2.0
+
+
+def test_the_epoch_default_matches_what_the_api_quotes():
+    """Both sides default to the same number or the estimate is wrong by an epoch of
+    generated tokens. The Rust constant is asserted against this in on_policy.rs."""
+    assert DEFAULT_EPOCHS == 3
+    assert trainer_config_kwargs(plan(), output_dir="/tmp/out", hp={})["num_train_epochs"] == 3.0
 
 
 def test_rollouts_use_hf_generate_by_default():

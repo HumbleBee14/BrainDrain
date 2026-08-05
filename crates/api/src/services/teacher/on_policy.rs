@@ -28,9 +28,11 @@ use crate::services::teacher::fidelity::hosted_scorer_for;
 /// less than quoted, which is the direction an estimate should err in.
 const APPROX_ROLLOUT_TOKENS_PER_EXAMPLE: i64 = 512;
 
-/// Epochs assumed when a request does not say. One pass is the point of an
-/// improve pass — it sharpens a model that is already trained.
-const DEFAULT_EPOCHS: i64 = 1;
+/// Epochs assumed when a request does not say, matching `merge_hyperparams` — the
+/// number a job actually gets when the caller supplies none. Quoting anything
+/// lower here would under-price every default run, which is the one direction an
+/// estimate must never err in.
+pub const DEFAULT_EPOCHS: i64 = crate::services::training_job_service::DEFAULT_NUM_TRAIN_EPOCHS;
 
 /// Whether these options ask for an improve pass.
 pub fn wants_on_policy(options: &DistillOptionsDto) -> bool {
@@ -45,6 +47,10 @@ pub struct OnPolicyPlan {
     pub teacher_revision: String,
     pub precision: TeacherPrecision,
     pub gpu_class: String,
+    /// The epoch count this quote was computed from. Travels to the worker so the
+    /// run trains the number of passes the tenant was charged for — every rollout
+    /// is generated token by token, so an extra epoch is an extra teacher-hour.
+    pub epochs: i64,
     pub estimate: ExtractionEstimate,
 }
 
@@ -58,6 +64,7 @@ impl OnPolicyPlan {
             "teacher_revision": self.teacher_revision,
             "precision": self.precision.to_string(),
             "gpu_class": self.gpu_class,
+            "epochs": self.epochs,
             "est_cost_usd": self.estimate.est_cost_usd,
             "est_gpu_hours": self.estimate.est_gpu_hours,
         })
@@ -127,12 +134,14 @@ pub fn plan_on_policy(
     })?;
 
     let gpu_class = paired_gpu_class(entry.gpu_class).to_string();
-    let (tokens, basis) = rollout_tokens_for(dataset.pair_count, epochs.unwrap_or(DEFAULT_EPOCHS));
+    let epochs = epochs.unwrap_or(DEFAULT_EPOCHS).max(1);
+    let (tokens, basis) = rollout_tokens_for(dataset.pair_count, epochs);
 
     Ok(OnPolicyPlan {
         teacher_model: entry.model_id.to_string(),
         teacher_revision: entry.revision.to_string(),
         precision: TeacherPrecision::default(),
+        epochs,
         estimate: estimate_extraction(
             tokens,
             basis,
@@ -275,6 +284,59 @@ mod tests {
             rollout_tokens_for(Some(10), 0),
             rollout_tokens_for(Some(10), 1)
         );
+    }
+
+    /// The quote is per epoch of rollouts, so quoting a different number from the
+    /// one the job will train is a wrong bill in whichever direction they differ.
+    /// The worker's own default is asserted against this figure in
+    /// `tests/test_on_policy.py::test_the_epoch_default_matches_what_the_api_quotes`.
+    #[test]
+    fn an_unspecified_epoch_count_is_priced_at_what_the_job_will_get() {
+        assert_eq!(DEFAULT_EPOCHS, 3);
+    }
+
+    /// The plan is what the worker trains from, so the number it carries has to be
+    /// the number the estimate was computed from — not a default resolved twice.
+    #[test]
+    fn the_plan_carries_the_epoch_count_its_estimate_was_priced_from() {
+        let quoted = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            Some(2),
+            50.0,
+            rate,
+        )
+        .unwrap();
+        let defaulted = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            None,
+            50.0,
+            rate,
+        )
+        .unwrap();
+
+        assert_eq!(quoted.epochs, 2);
+        assert_eq!(quoted.workflow_value()["epochs"], 2);
+        assert_eq!(defaulted.epochs, DEFAULT_EPOCHS);
+        assert_eq!(
+            defaulted.estimate.scored_tokens,
+            quoted.estimate.scored_tokens / 2 * DEFAULT_EPOCHS
+        );
+    }
+
+    #[test]
+    fn a_nonsensical_epoch_count_is_priced_and_recorded_as_one_pass() {
+        let plan = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(10)),
+            "Qwen/Qwen3-8B",
+            Some(0),
+            50.0,
+            rate,
+        )
+        .unwrap();
+
+        assert_eq!(plan.epochs, 1);
     }
 
     #[test]

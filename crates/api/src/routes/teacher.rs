@@ -128,15 +128,14 @@ pub async fn get_improve_offer(
 
     let admin_config =
         TenantSettingsService::get_admin_config(state.tenant_repo(), user.tenant_id).await?;
-    let epochs = job
-        .hyperparams
-        .get("num_train_epochs")
-        .and_then(|v| v.as_i64());
 
+    // Quoted at the platform default rather than at whatever the parent trained
+    // for: the improve pass is a new job with its own hyperparams, and its real
+    // price is computed again at launch from those.
     match plan_on_policy(
         &dataset,
         &model.base_model,
-        epochs,
+        None,
         state.config().on_policy_tokens_per_sec,
         |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
     ) {

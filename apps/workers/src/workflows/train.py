@@ -54,6 +54,10 @@ TEACHER_MODEL_HYPERPARAM = "teacher_model"
 TEACHER_REVISION_HYPERPARAM = "teacher_revision"
 TEACHER_PRECISION_HYPERPARAM = "teacher_precision"
 
+# The trainer's own name for the epoch count. Not on the platform-owned list: a
+# caller may set it freely, and the API prices the value it ends up with.
+EPOCHS_HYPERPARAM = "num_train_epochs"
+
 # Hyperparams the platform writes from an admitted plan, and nothing else may
 # supply. Hyperparams are otherwise free-form and caller-controlled, so any key
 # that names a model we will execute, or a storage prefix we will read, has to be
@@ -169,6 +173,11 @@ def hyperparams_with_live_teacher(hyperparams: dict, plan: dict) -> dict:
         resolved[TEACHER_REVISION_HYPERPARAM] = plan["teacher_revision"]
     if plan.get("precision"):
         resolved[TEACHER_PRECISION_HYPERPARAM] = plan["precision"]
+    # The quote was computed from an epoch count, and every epoch is a full pass of
+    # student rollouts graded token by token. Taking the number from the plan rather
+    # than from hyperparams is what makes the run cost what the tenant was told.
+    if plan.get("epochs"):
+        resolved[EPOCHS_HYPERPARAM] = int(plan["epochs"])
     return resolved
 
 

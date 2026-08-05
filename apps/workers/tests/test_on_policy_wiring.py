@@ -10,6 +10,7 @@ import pytest
 
 from src.workflows.train import (
     DISTILL_METHOD_HYPERPARAM,
+    EPOCHS_HYPERPARAM,
     ON_POLICY_METHOD,
     TEACHER_MODEL_HYPERPARAM,
     TEACHER_PRECISION_HYPERPARAM,
@@ -26,6 +27,7 @@ PLAN = {
     "teacher_revision": "9216db57",
     "precision": "bf16",
     "gpu_class": "a10080gb_dual",
+    "epochs": 3,
 }
 
 
@@ -60,13 +62,31 @@ def test_a_plan_with_no_teacher_is_refused():
 
 
 def test_the_teacher_reaches_training_pinned_to_its_revision():
-    resolved = hyperparams_with_live_teacher({"epochs": 1}, PLAN)
+    resolved = hyperparams_with_live_teacher({}, PLAN)
 
     assert resolved[DISTILL_METHOD_HYPERPARAM] == ON_POLICY_METHOD
     assert resolved[TEACHER_MODEL_HYPERPARAM] == "Qwen/Qwen3-32B"
     assert resolved[TEACHER_REVISION_HYPERPARAM] == "9216db57"
     assert resolved[TEACHER_PRECISION_HYPERPARAM] == "bf16"
-    assert resolved["epochs"] == 1
+
+
+def test_the_run_trains_the_epochs_the_quote_was_priced_from():
+    """Rollouts are generated per epoch, so an epoch count the API did not price is
+    teacher time nobody was charged for. The plan's number wins over a stale one
+    sitting in hyperparams."""
+    resolved = hyperparams_with_live_teacher({EPOCHS_HYPERPARAM: 9}, PLAN)
+
+    assert resolved[EPOCHS_HYPERPARAM] == 3
+
+
+def test_a_plan_without_an_epoch_count_leaves_hyperparams_alone():
+    """Jobs admitted before the plan carried epochs still train what they were
+    given, rather than silently switching to a default."""
+    resolved = hyperparams_with_live_teacher(
+        {EPOCHS_HYPERPARAM: 2}, {k: v for k, v in PLAN.items() if k != "epochs"}
+    )
+
+    assert resolved[EPOCHS_HYPERPARAM] == 2
 
 
 def test_an_unpinned_teacher_carries_no_revision_key():
@@ -100,12 +120,17 @@ def test_a_caller_cannot_supply_a_platform_owned_key(key):
 
 
 def test_ordinary_hyperparams_are_not_mistaken_for_platform_keys():
-    assert borrowed_fidelity_keys({"epochs": 3, "learning_rate": 1e-5}) == []
+    assert borrowed_fidelity_keys({EPOCHS_HYPERPARAM: 3, "learning_rate": 1e-5}) == []
 
 
 def test_every_key_the_platform_writes_is_also_a_key_it_refuses_to_accept():
     """The invariant behind both functions: anything written from an admitted plan
-    must be rejected when it arrives from a caller, or the guard has a hole."""
-    written = set(hyperparams_with_live_teacher({}, PLAN)) - {"epochs"}
+    must be rejected when it arrives from a caller, or the guard has a hole.
+
+    Epochs are exempt, and only epochs: the count is priced rather than privileged,
+    so a caller may name it and the quote is computed from what they named. Nothing
+    else the plan writes is safe to accept from outside.
+    """
+    written = set(hyperparams_with_live_teacher({}, PLAN)) - {EPOCHS_HYPERPARAM}
 
     assert written <= set(borrowed_fidelity_keys(dict.fromkeys(written, "x")))
