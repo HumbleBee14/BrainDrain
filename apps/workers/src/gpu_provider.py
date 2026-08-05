@@ -1133,7 +1133,14 @@ class BeamGpuProvider:
             )
 
         logger.info("Beam %s complete (row=%s)", label, row_id[:8])
-        return self._decode_result(record.get("result"))
+        result = self._decode_result(record.get("result"))
+        if isinstance(result, dict) and "ok" in result:
+            if not result["ok"]:
+                raise RuntimeError(
+                    f"Beam {label} task {task_id} failed remotely:\n{result.get('error')}"
+                )
+            return result["result"]
+        return result
 
     async def run_training(
         self,

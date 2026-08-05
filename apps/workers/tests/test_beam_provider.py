@@ -199,6 +199,35 @@ def test_json_string_result_is_decoded():
     assert gp.BeamGpuProvider._decode_result(json.dumps(RESULT)) == RESULT
 
 
+@pytest.mark.asyncio
+async def test_remote_error_envelope_raises_with_traceback(monkeypatch):
+    _install_fake_http(
+        monkeypatch,
+        submit_task_id="task-1",
+        statuses=["COMPLETE"],
+        results={"COMPLETE": {"ok": False, "error": "Traceback ...\nValueError: boom"}},
+    )
+    prov = _make_provider(_FakeDB(existing=None))
+
+    with pytest.raises(RuntimeError, match="ValueError: boom"):
+        await prov.run_training(**TRAIN_KWARGS)
+
+
+@pytest.mark.asyncio
+async def test_success_envelope_is_unwrapped(monkeypatch):
+    _install_fake_http(
+        monkeypatch,
+        submit_task_id="task-1",
+        statuses=["COMPLETE"],
+        results={"COMPLETE": {"ok": True, "result": RESULT}},
+    )
+    prov = _make_provider(_FakeDB(existing=None))
+
+    out = await prov.run_training(**TRAIN_KWARGS)
+
+    assert out == RESULT
+
+
 def test_gpu_class_specific_queue_wins_over_generic():
     prov = _make_provider(
         _FakeDB(),

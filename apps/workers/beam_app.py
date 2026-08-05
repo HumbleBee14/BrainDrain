@@ -93,8 +93,24 @@ _queue_config = dict(
 )
 
 
+# Beam surfaces no traceback for a failed task (result is null; logs are
+# reachable only over a websocket the platform cannot depend on), so every
+# handler ships its outcome home in an envelope BeamGpuProvider unwraps.
+def _enveloped(fn, payload: dict) -> dict:
+    import traceback
+
+    try:
+        return {"ok": True, "result": fn(payload)}
+    except Exception:
+        return {"ok": False, "error": traceback.format_exc()}
+
+
 @task_queue(name="train", **_queue_config)
 def train(payload: dict) -> dict:
+    return _enveloped(_train, payload)
+
+
+def _train(payload: dict) -> dict:
     import asyncio
 
     from src.activities.stubs import StartTrainingInput
@@ -123,6 +139,10 @@ def train(payload: dict) -> dict:
 
 @task_queue(name="train_sft_round", **_queue_config)
 def train_sft_round(payload: dict) -> dict:
+    return _enveloped(_train_sft_round, payload)
+
+
+def _train_sft_round(payload: dict) -> dict:
     import asyncio
 
     from src.activities.stubs import TrainSftRoundInput
@@ -149,6 +169,10 @@ def train_sft_round(payload: dict) -> dict:
 
 @task_queue(name="evaluate_holdout", **_queue_config)
 def evaluate_holdout(payload: dict) -> dict:
+    return _enveloped(_evaluate_holdout, payload)
+
+
+def _evaluate_holdout(payload: dict) -> dict:
     import asyncio
 
     from src.activities.stubs import EvaluateHoldoutInput
@@ -171,6 +195,10 @@ def evaluate_holdout(payload: dict) -> dict:
 
 @task_queue(name="run_evaluation", **_queue_config)
 def run_evaluation(payload: dict) -> dict:
+    return _enveloped(_run_evaluation, payload)
+
+
+def _run_evaluation(payload: dict) -> dict:
     import asyncio
 
     from src.activities.run_evaluation import run_evaluation_core
