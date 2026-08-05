@@ -157,6 +157,11 @@ services:
       APP_MODAL_APP_NAME: ${APP_MODAL_APP_NAME:-platform-training}
       # This host has no GPU, so GPU work must go to Modal; the code default is local.
       APP_GPU_PROVIDER: ${APP_GPU_PROVIDER:-modal}
+      # Second provider (switch with APP_GPU_PROVIDER=beam). Queue URLs are a
+      # JSON map keyed "<function>@<gpu_class>" with a "<function>" fallback.
+      APP_BEAM_TOKEN: ${APP_BEAM_TOKEN:-}
+      APP_BEAM_WORKSPACE_ID: ${APP_BEAM_WORKSPACE_ID:-}
+      APP_BEAM_QUEUE_URLS: ${APP_BEAM_QUEUE_URLS:-{}}
       APP_WORKER_MODE: all
     depends_on:
       migrate:
