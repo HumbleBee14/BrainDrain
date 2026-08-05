@@ -111,6 +111,21 @@ pub enum DistillMethod {
     #[default]
     Text,
     Logit,
+    /// The student writes the answers and the teacher grades its tokens, which
+    /// is the only method whose training data does not exist before the run
+    /// starts — so it needs the teacher live beside the trainer, not a dataset.
+    OnPolicy,
+}
+
+impl DistillMethod {
+    /// Whether this method needs a teacher the platform can run on its own GPUs,
+    /// as opposed to one reachable only as somebody else's API.
+    pub fn needs_hosted_teacher(self) -> bool {
+        match self {
+            DistillMethod::Text => false,
+            DistillMethod::Logit | DistillMethod::OnPolicy => true,
+        }
+    }
 }
 
 /// Weight precision a hosted teacher is loaded at, trading accuracy for GPU
@@ -287,6 +302,23 @@ pub enum BillingOperation {
     /// Distinct from `Train` so a cancelled extraction is never conflated with
     /// a cancelled training run in billing.
     Extraction,
+    /// Stage 3 distillation: the share of an on-policy container spent running
+    /// the teacher beside the trainer. Split out from `Train` so that "what did
+    /// teachers cost me?" is one query, and so the teacher-GPU spend cap counts
+    /// on-policy runs instead of only extraction.
+    TeacherServing,
+}
+
+impl BillingOperation {
+    /// Operations whose spend the teacher-GPU budget line governs. Both burn our
+    /// own metered GPU to run somebody's teacher; neither is the student's own
+    /// training time.
+    pub fn teacher_gpu_operations() -> [BillingOperation; 2] {
+        [
+            BillingOperation::Extraction,
+            BillingOperation::TeacherServing,
+        ]
+    }
 }
 
 /// GPU class for training provisioning.
@@ -303,6 +335,27 @@ pub enum GpuClass {
     A10040gb,
     A10080gb,
     H100,
+    /// Multi-device classes exist for on-policy distillation, where a teacher
+    /// runs beside the trainer and needs a card of its own — the two models are
+    /// too large to share one. Every device in a class is the same type, so cost
+    /// and the teacher's share of it scale by device count alone.
+    A10080gbDual,
+    H100Dual,
+}
+
+impl GpuClass {
+    /// Physical GPUs a container of this class is given.
+    pub fn device_count(self) -> u32 {
+        match self {
+            GpuClass::T4
+            | GpuClass::A10g
+            | GpuClass::L40s
+            | GpuClass::A10040gb
+            | GpuClass::A10080gb
+            | GpuClass::H100 => 1,
+            GpuClass::A10080gbDual | GpuClass::H100Dual => 2,
+        }
+    }
 }
 
 /// Project status.

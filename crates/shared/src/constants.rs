@@ -61,6 +61,8 @@ pub const GPU_HOURLY_RATES: &[(&str, f64)] = &[
     ("a10040gb", 2.00),
     ("a10080gb", 3.00),
     ("h100", 4.50),
+    ("a10080gb_dual", 6.00),
+    ("h100_dual", 9.00),
 ];
 
 /// Default GPU hourly rate when class is unknown.
@@ -73,6 +75,46 @@ mod tests {
     #[test]
     fn upload_limit_is_500mb() {
         assert_eq!(MAX_UPLOAD_SIZE_BYTES, 500 * 1024 * 1024);
+    }
+
+    /// Every GPU class the enum offers must be priced, or a job admitted on it
+    /// silently falls back to the T4 rate and undercharges by up to 11x.
+    #[test]
+    fn every_gpu_class_has_a_rate() {
+        for class in [
+            crate::enums::GpuClass::T4,
+            crate::enums::GpuClass::A10g,
+            crate::enums::GpuClass::L40s,
+            crate::enums::GpuClass::A10040gb,
+            crate::enums::GpuClass::A10080gb,
+            crate::enums::GpuClass::H100,
+            crate::enums::GpuClass::A10080gbDual,
+            crate::enums::GpuClass::H100Dual,
+        ] {
+            let name = class.to_string();
+            assert!(
+                GPU_HOURLY_RATES.iter().any(|(known, _)| *known == name),
+                "GPU class '{name}' has no hourly rate"
+            );
+        }
+    }
+
+    /// A multi-device container costs what its devices cost. Drift here would
+    /// quote an on-policy run at half price and bill the tenant the rest.
+    #[test]
+    fn multi_device_rates_scale_with_device_count() {
+        let rate = |name: &str| {
+            GPU_HOURLY_RATES
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map(|(_, rate)| *rate)
+                .expect("priced class")
+        };
+
+        assert_eq!(rate("a10080gb_dual"), rate("a10080gb") * 2.0);
+        assert_eq!(rate("h100_dual"), rate("h100") * 2.0);
+        assert_eq!(crate::enums::GpuClass::A10080gbDual.device_count(), 2);
+        assert_eq!(crate::enums::GpuClass::H100Dual.device_count(), 2);
     }
 
     #[test]

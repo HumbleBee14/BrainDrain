@@ -14,6 +14,8 @@ GPU_HOURLY_RATES: dict[str, float] = {
     "a10040gb": 2.0,
     "a10080gb": 3.0,
     "h100": 4.5,
+    "a10080gb_dual": 6.0,
+    "h100_dual": 9.0,
 }
 GPU_DEFAULT_HOURLY_RATE: float = 0.8
 
@@ -30,6 +32,13 @@ MODAL_GPU_MAP: dict[str, str] = {
     "a10040gb": "A100",
     "a10080gb": "A100-80GB",
     "h100": "H100",
+    # Multi-device classes serve on-policy distillation: the teacher needs a card
+    # of its own beside the trainer. Kept in sync with GpuClass by
+    # tests/test_constants.py::test_every_rust_gpu_class_maps_to_a_modal_gpu — an
+    # unmapped class falls back to a single MODAL_DEFAULT_GPU, which would put
+    # teacher and student on one small card instead of failing.
+    "a10080gb_dual": "A100-80GB:2",
+    "h100_dual": "H100:2",
 }
 MODAL_DEFAULT_GPU: str = "T4"
 
