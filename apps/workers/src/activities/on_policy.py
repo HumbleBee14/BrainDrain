@@ -61,6 +61,10 @@ DEFAULT_NUM_GENERATIONS = 1
 EPOCHS_HYPERPARAM = "num_train_epochs"
 DEFAULT_EPOCHS = 3
 
+# Matches ON_POLICY_LEARNING_RATE in the API. An improve pass refines an adapter
+# that is already trained, so the from-scratch rate would overwrite it.
+DEFAULT_LEARNING_RATE = 1e-5
+
 # HF `generate` for rollouts rather than colocated vLLM. Slower per token, but it
 # cannot compete with the student for GPU memory mid-run, and an out-of-memory kill
 # costs the whole container. Flipping this on is the first optimization to measure
@@ -256,7 +260,7 @@ def trainer_config_kwargs(plan: OnPolicyPlan, *, output_dir: str, hp: dict) -> d
         "per_device_train_batch_size": plan.per_device_train_batch_size,
         "gradient_accumulation_steps": plan.gradient_accumulation_steps,
         "use_vllm": plan.use_vllm_rollouts,
-        "learning_rate": float(hp.get("learning_rate", 1e-5)),
+        "learning_rate": float(hp.get("learning_rate", DEFAULT_LEARNING_RATE)),
         "num_train_epochs": float(hp.get(EPOCHS_HYPERPARAM, DEFAULT_EPOCHS)),
         "logging_steps": int(hp.get("logging_steps", 1)),
         "bf16": True,

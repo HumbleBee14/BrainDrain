@@ -34,6 +34,11 @@ const NOT_DISTILLED_MESSAGE: &str =
 /// re-derive which teacher to boot.
 const DATASET_GONE_MESSAGE: &str = "The dataset this model was trained on is no longer available, so its teacher cannot be identified.";
 
+/// An improve pass continues training this model's own weights, so a model whose
+/// adapter was never saved has nothing to continue from.
+const NO_ADAPTER_MESSAGE: &str =
+    "This model has no saved adapter, so there is nothing for an improve pass to continue from.";
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/teachers/catalog", get(get_teacher_catalog))
@@ -132,10 +137,15 @@ pub async fn get_improve_offer(
     // Quoted at the platform default rather than at whatever the parent trained
     // for: the improve pass is a new job with its own hyperparams, and its real
     // price is computed again at launch from those.
+    let Some(parent_adapter_path) = model.adapter_path.as_deref() else {
+        return Ok(Json(ImproveOfferResponse::ineligible(NO_ADAPTER_MESSAGE)));
+    };
+
     match plan_on_policy(
         &dataset,
         &model.base_model,
         None,
+        parent_adapter_path,
         state.config().on_policy_tokens_per_sec,
         |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
     ) {

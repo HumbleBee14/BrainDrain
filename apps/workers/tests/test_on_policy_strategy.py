@@ -188,3 +188,73 @@ def test_a_refusal_leaves_no_allocation_where_there_was_none(monkeypatch):
         _reserve(monkeypatch, device_count=4)
 
     assert "CUDA_VISIBLE_DEVICES" not in os.environ
+
+
+class _PlainStrategy:
+    name = "quick"
+
+    def execute(self, **kwargs):
+        return {"train_runtime": 1.0}
+
+
+@pytest.mark.asyncio
+async def test_a_run_with_no_parent_attaches_a_fresh_adapter(monkeypatch):
+    import src.activities.train_model as tm
+
+    from .helpers_training_core import fake_core_dependencies, run_core
+
+    order = fake_core_dependencies(monkeypatch, strategy=_PlainStrategy())
+    monkeypatch.setattr(tm, "_download_adapter", lambda *a, **k: order.append("download_parent"))
+
+    await run_core(mode="quick", hyperparams={})
+
+    assert "attach_adapter" in order
+    assert "download_parent" not in order
+
+
+@pytest.mark.asyncio
+async def test_an_improve_pass_continues_from_its_parents_adapter(monkeypatch):
+    """A fresh adapter would discard the parent's training and grade rollouts
+    written by an untrained student — the measurement would answer nothing."""
+    import src.activities.train_model as tm
+
+    from .helpers_training_core import fake_core_dependencies, run_core
+
+    class _RecordingStrategy(_TeacherStrategy):
+        log: list = []
+
+        def execute(self, **kwargs):
+            self.log.append("execute")
+            return super().execute(**kwargs)
+
+    strategy = _RecordingStrategy()
+    order = fake_core_dependencies(monkeypatch, strategy=strategy)
+    strategy.log = order
+    monkeypatch.setattr(tm, "_reserve_student_devices", lambda _: (0,))
+    downloaded = {}
+
+    def fake_download(prefix, local_dir, s3, bucket):
+        order.append("download_parent")
+        downloaded["prefix"] = prefix
+
+    monkeypatch.setattr(tm, "_download_adapter", fake_download)
+    monkeypatch.setitem(
+        sys.modules, "peft", SimpleNamespace(PeftModel=SimpleNamespace(from_pretrained=_loaded))
+    )
+
+    await run_core(
+        mode="distill",
+        hyperparams={
+            "distill_method": "on_policy",
+            "parent_adapter_path": "tenants/t/models/parent/",
+        },
+    )
+
+    assert downloaded["prefix"] == "tenants/t/models/parent/"
+    assert "attach_adapter" not in order, "a fresh adapter would overwrite the parent"
+    assert order.index("download_parent") < order.index("execute")
+
+
+def _loaded(model, path, is_trainable):
+    assert is_trainable, "the parent adapter has to stay trainable or nothing learns"
+    return "parent-model"

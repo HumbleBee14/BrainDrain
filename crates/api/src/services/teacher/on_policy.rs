@@ -51,6 +51,10 @@ pub struct OnPolicyPlan {
     /// run trains the number of passes the tenant was charged for — every rollout
     /// is generated token by token, so an extra epoch is an extra teacher-hour.
     pub epochs: i64,
+    /// The adapter this run continues training. An improve pass that started from
+    /// the bare base model would discard everything the parent learned and grade
+    /// rollouts written by an untrained student.
+    pub parent_adapter_path: String,
     pub estimate: ExtractionEstimate,
 }
 
@@ -65,6 +69,7 @@ impl OnPolicyPlan {
             "precision": self.precision.to_string(),
             "gpu_class": self.gpu_class,
             "epochs": self.epochs,
+            "parent_adapter_path": self.parent_adapter_path,
             "est_cost_usd": self.estimate.est_cost_usd,
             "est_gpu_hours": self.estimate.est_gpu_hours,
         })
@@ -87,6 +92,11 @@ pub fn attach_to_teacher_config(
 ) -> AppResult<Option<serde_json::Value>> {
     match (teacher_config, plan) {
         (Some(mut block), Some(plan)) => {
+            if plan.parent_adapter_path.is_empty() {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "an on-policy plan was admitted with no parent adapter to continue from"
+                )));
+            }
             block["extraction"] = plan.workflow_value();
             Ok(Some(block))
         }
@@ -132,6 +142,7 @@ pub fn plan_on_policy(
     dataset: &Dataset,
     student_model: &str,
     epochs: Option<i64>,
+    parent_adapter_path: &str,
     tokens_per_sec: f64,
     gpu_hourly_rate_for: impl Fn(&str) -> f64,
 ) -> Result<OnPolicyPlan, &'static str> {
@@ -150,6 +161,7 @@ pub fn plan_on_policy(
         teacher_revision: entry.revision.to_string(),
         precision: TeacherPrecision::default(),
         epochs,
+        parent_adapter_path: parent_adapter_path.to_string(),
         estimate: estimate_extraction(
             tokens,
             basis,
@@ -178,6 +190,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+
+    const PARENT_ADAPTER: &str = "tenants/t/models/parent/";
 
     fn rate(_class: &str) -> f64 {
         6.00
@@ -305,12 +319,53 @@ mod tests {
 
     /// The plan is what the worker trains from, so the number it carries has to be
     /// the number the estimate was computed from — not a default resolved twice.
+    /// The worker reads this to decide whether to continue the parent's adapter or
+    /// attach a fresh one, so a plan that loses it trains from scratch in silence.
+    #[test]
+    fn the_plan_carries_the_adapter_the_run_continues_from() {
+        let plan = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            None,
+            PARENT_ADAPTER,
+            40.0,
+            rate,
+        )
+        .expect("a hosted teacher is plannable");
+
+        let block = attach_to_teacher_config(Some(json!({"model": "t"})), Some(&plan))
+            .expect("a block to live on")
+            .expect("a block");
+
+        assert_eq!(block["extraction"]["parent_adapter_path"], PARENT_ADAPTER);
+    }
+
+    /// Fail closed: by this point the tenant has been quoted and admitted for a
+    /// two-card improve pass, so a run that trained from scratch would charge them
+    /// for continuing a model it never loaded.
+    #[test]
+    fn a_plan_with_no_parent_to_continue_is_an_error_not_a_fresh_run() {
+        let plan = plan_on_policy(
+            &dataset("Qwen/Qwen3-32B", Some(100)),
+            "Qwen/Qwen3-8B",
+            None,
+            "",
+            40.0,
+            rate,
+        )
+        .expect("a hosted teacher is plannable");
+
+        attach_to_teacher_config(Some(json!({"model": "t"})), Some(&plan))
+            .expect_err("an improve pass with nothing to improve must not be persisted");
+    }
+
     #[test]
     fn the_plan_carries_the_epoch_count_its_estimate_was_priced_from() {
         let quoted = plan_on_policy(
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
             Some(2),
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -319,6 +374,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(100)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -339,6 +395,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
             Some(0),
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -353,6 +410,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(500)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -370,6 +428,7 @@ mod tests {
             &dataset("some-closed-model", Some(500)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -384,6 +443,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -401,6 +461,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )
@@ -443,6 +504,7 @@ mod tests {
             &dataset("Qwen/Qwen3-32B", Some(10)),
             "Qwen/Qwen3-8B",
             None,
+            PARENT_ADAPTER,
             50.0,
             rate,
         )

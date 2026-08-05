@@ -5,11 +5,15 @@ running and a 30B teacher has finished loading its weights. Catching them from a
 plain dict is the difference between a validation error and a wasted container.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 
 from src.activities.on_policy import (
     DEFAULT_BETA,
     DEFAULT_EPOCHS,
+    DEFAULT_LEARNING_RATE,
     DEFAULT_LMBDA,
     SERVER_REVERSE_KL_TOP_K,
     OnPolicyConfigError,
@@ -214,3 +218,27 @@ def test_batch_identity_holds_in_the_config_it_hands_trl():
         kwargs["generation_batch_size"] * kwargs["num_generations"]
         == kwargs["per_device_train_batch_size"] * kwargs["gradient_accumulation_steps"]
     )
+
+
+def test_the_learning_rate_default_matches_what_the_api_injects():
+    """The API always writes a learning_rate, so this default is only reachable if
+    the two ever disagree — and 2e-4 on an already-trained adapter overwrites it.
+    Read from the Rust source rather than restated, so a change there fails here.
+    """
+    service = (
+        Path(__file__).resolve().parents[3] / "crates/api/src/services/training_job_service.rs"
+    ).read_text(encoding="utf-8")
+    declared = re.search(r"ON_POLICY_LEARNING_RATE: f64 = ([\d.e-]+);", service)
+    assert declared, "ON_POLICY_LEARNING_RATE is not declared in the training job service"
+
+    assert float(declared.group(1)) == DEFAULT_LEARNING_RATE
+
+
+def test_an_improve_pass_is_not_priced_at_the_from_scratch_rate():
+    service = (
+        Path(__file__).resolve().parents[3] / "crates/api/src/services/training_job_service.rs"
+    ).read_text(encoding="utf-8")
+    from_scratch = re.search(r"DEFAULT_LEARNING_RATE: f64 = ([\d.e-]+);", service)
+    assert from_scratch, "DEFAULT_LEARNING_RATE is not declared in the training job service"
+
+    assert float(from_scratch.group(1)) != DEFAULT_LEARNING_RATE

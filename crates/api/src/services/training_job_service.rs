@@ -34,6 +34,24 @@ const PARENT_NOT_APPLICABLE_MESSAGE: &str =
 /// refused rather than silently dropped — a run with no parent shows no comparison.
 const PARENT_MODEL_NOT_FOUND_MESSAGE: &str = "The model this run would improve on was not found.";
 
+/// An improve pass continues training the model it names. Without one there is
+/// nothing to improve, and the run would silently be an ordinary distill.
+const PARENT_REQUIRED_MESSAGE: &str =
+    "An improve pass needs parent_model_id — the model it continues training.";
+
+const PARENT_HAS_NO_ADAPTER_MESSAGE: &str =
+    "The model this run would improve on has no saved adapter to continue from.";
+
+const PARENT_BASE_MISMATCH_MESSAGE: &str =
+    "The model this run would improve on was trained on a different base model.";
+
+/// The parent an improve pass continues from, once it is known to be readable.
+#[derive(Debug)]
+struct ParentModel {
+    id: Uuid,
+    adapter_path: String,
+}
+
 /// Both fidelity methods copy more of a teacher than its text, so both need a
 /// teacher to copy from — which is what makes a run a distill run.
 const DISTILL_NOT_APPLICABLE_MESSAGE: &str =
@@ -53,13 +71,23 @@ pub struct TrainingJobService;
 
 impl TrainingJobService {
     /// Validate and resolve the model an improve pass is sharpening.
+    ///
+    /// Returns the adapter as well as the id: an improve pass continues training
+    /// the parent's weights, so a parent whose adapter cannot be read is refused
+    /// here rather than discovered by a GPU an hour later.
     async fn resolve_parent_model(
         model_repo: &dyn ModelRepository,
         tenant_id: Uuid,
         requested: &Option<String>,
         is_improve_pass: bool,
-    ) -> AppResult<Option<Uuid>> {
+        base_model: &str,
+    ) -> AppResult<Option<ParentModel>> {
         let Some(raw) = requested.as_deref() else {
+            if is_improve_pass {
+                return Err(AppError::BadRequest {
+                    message: PARENT_REQUIRED_MESSAGE.to_string(),
+                });
+            }
             return Ok(None);
         };
         if !is_improve_pass {
@@ -72,12 +100,33 @@ impl TrainingJobService {
         })?;
         // Tenant-scoped read: the id came from a request, so this is what stops an
         // improve pass from pointing at another tenant's model.
-        if model_repo.get_by_id(tenant_id, parent_id).await?.is_none() {
+        let parent =
+            model_repo
+                .get_by_id(tenant_id, parent_id)
+                .await?
+                .ok_or(AppError::BadRequest {
+                    message: PARENT_MODEL_NOT_FOUND_MESSAGE.to_string(),
+                })?;
+
+        let adapter_path = parent.adapter_path.ok_or(AppError::BadRequest {
+            message: PARENT_HAS_NO_ADAPTER_MESSAGE.to_string(),
+        })?;
+
+        // A LoRA's shapes belong to the model it was trained on; loading it onto a
+        // different base either fails outright or silently trains nonsense.
+        if parent.base_model != base_model {
             return Err(AppError::BadRequest {
-                message: PARENT_MODEL_NOT_FOUND_MESSAGE.to_string(),
+                message: format!(
+                    "{PARENT_BASE_MISMATCH_MESSAGE} It was trained on {}, and this run asks for {}.",
+                    parent.base_model, base_model
+                ),
             });
         }
-        Ok(Some(parent_id))
+
+        Ok(Some(ParentModel {
+            id: parent_id,
+            adapter_path,
+        }))
     }
 
     /// Create a new training job and auto-trigger the TrainWorkflow.
@@ -196,16 +245,18 @@ impl TrainingJobService {
         };
 
         // Merge user hyperparams with defaults
+        let is_improve_pass = req.distill.as_ref().is_some_and(wants_on_policy);
         let hyperparams = merge_hyperparams(
             req.hyperparams
                 .map(|hp| serde_json::to_value(hp).unwrap_or_default()),
+            is_improve_pass,
         );
 
         // Compute cost estimate heuristic
         let epochs = hyperparams
             .get("num_train_epochs")
             .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u32;
+            .unwrap_or(DEFAULT_NUM_TRAIN_EPOCHS as u64) as u32;
         let admin_config = TenantSettingsService::get_admin_config(tenant_repo, tenant_id).await?;
         let gpu_rate = resolve_gpu_rate(
             &admin_config.gpu_rates,
@@ -234,12 +285,25 @@ impl TrainingJobService {
         // An improve pass keeps the teacher resident beside the trainer for the
         // whole run, so it is admitted against the same budget and — unlike every
         // other mode — decides its own hardware: the class must hold two models.
-        let improve = match &req.distill {
-            Some(options) if wants_on_policy(options) => {
+        // Resolved before the plan is priced, because the plan carries the parent's
+        // adapter to the worker: an improve pass that could not read its parent
+        // would otherwise be admitted, charged and trained from scratch.
+        let parent = Self::resolve_parent_model(
+            model_repo,
+            tenant_id,
+            &req.parent_model_id,
+            is_improve_pass,
+            &req.base_model,
+        )
+        .await?;
+
+        let improve = match &parent {
+            Some(parent) => {
                 let plan = plan_on_policy(
                     &dataset,
                     &req.base_model,
                     Some(epochs as i64),
+                    &parent.adapter_path,
                     on_policy_tokens_per_sec,
                     |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),
                 )
@@ -249,7 +313,7 @@ impl TrainingJobService {
                 admit_on_policy(billing_repo, tenant_id, teacher_gpu_spend_cap, &plan).await?;
                 Some(plan)
             }
-            _ => None,
+            None => None,
         };
 
         let (gpu_class, cost_estimate) = match &improve {
@@ -260,16 +324,7 @@ impl TrainingJobService {
         let teacher_config = attach_to_teacher_config(teacher_config, extraction.as_ref())?;
         let teacher_config = attach_on_policy_to_teacher_config(teacher_config, improve.as_ref())?;
 
-        // Recorded only for an improve pass, and only after checking the parent is
-        // this tenant's: it is the anchor for the before/after parity comparison,
-        // so a parent from elsewhere would compare two unrelated models.
-        let parent_model_id = Self::resolve_parent_model(
-            model_repo,
-            tenant_id,
-            &req.parent_model_id,
-            improve.is_some(),
-        )
-        .await?;
+        let parent_model_id = parent.as_ref().map(|parent| parent.id);
 
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
@@ -441,11 +496,12 @@ impl TrainingJobService {
             req.hyperparams
                 .clone()
                 .map(|hp| serde_json::to_value(hp).unwrap_or_default()),
+            req.distill.as_ref().is_some_and(wants_on_policy),
         );
         let epochs = hyperparams
             .get("num_train_epochs")
             .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u32;
+            .unwrap_or(DEFAULT_NUM_TRAIN_EPOCHS as u64) as u32;
 
         let gpu_class_str = req.gpu_class.as_deref().unwrap_or("t4");
         let gpu_rates = TenantSettingsService::get_admin_config(tenant_repo, tenant_id)
@@ -677,8 +733,26 @@ pub(crate) fn billable_gpu_cost(elapsed_seconds: i64, rate: f64) -> (i32, f64) {
 /// `teacher::on_policy::DEFAULT_EPOCHS`.
 pub const DEFAULT_NUM_TRAIN_EPOCHS: i64 = 3;
 
+/// Learning rate for a run that trains an adapter from scratch.
+pub const DEFAULT_LEARNING_RATE: f64 = 2e-4;
+
+/// Learning rate for an improve pass. An order of magnitude lower because the
+/// run starts from an already-trained adapter and refines it against the
+/// teacher's grading — the from-scratch rate would overwrite what it inherited
+/// before the teacher's signal could shape it. Pinned against the trainer's own
+/// default by a test on the Python side.
+pub const ON_POLICY_LEARNING_RATE: f64 = 1e-5;
+
 /// Merge user-provided hyperparams with smart defaults.
-fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Value {
+fn merge_hyperparams(
+    user_params: Option<serde_json::Value>,
+    is_improve_pass: bool,
+) -> serde_json::Value {
+    let learning_rate = if is_improve_pass {
+        ON_POLICY_LEARNING_RATE
+    } else {
+        DEFAULT_LEARNING_RATE
+    };
     let mut defaults = serde_json::json!({
         "r": 16,
         "lora_alpha": 16,
@@ -687,7 +761,7 @@ fn merge_hyperparams(user_params: Option<serde_json::Value>) -> serde_json::Valu
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj"
         ],
-        "learning_rate": 2e-4,
+        "learning_rate": learning_rate,
         "per_device_train_batch_size": 2,
         "gradient_accumulation_steps": 4,
         "num_train_epochs": DEFAULT_NUM_TRAIN_EPOCHS,
@@ -865,11 +939,30 @@ mod tests {
         assert_eq!(cost, 0.30);
     }
 
+    /// 2e-4 on an adapter that is already trained overwrites what it starts from
+    /// before the teacher's grading can shape it.
+    #[test]
+    fn an_improve_pass_trains_at_the_refining_rate() {
+        let improve = merge_hyperparams(None, true);
+        let from_scratch = merge_hyperparams(None, false);
+
+        assert_eq!(improve["learning_rate"], ON_POLICY_LEARNING_RATE);
+        assert_eq!(from_scratch["learning_rate"], DEFAULT_LEARNING_RATE);
+        assert_ne!(improve["learning_rate"], from_scratch["learning_rate"]);
+    }
+
+    #[test]
+    fn a_caller_can_still_choose_the_rate_on_an_improve_pass() {
+        let merged = merge_hyperparams(Some(serde_json::json!({"learning_rate": 3e-5})), true);
+
+        assert_eq!(merged["learning_rate"], 3e-5);
+    }
+
     // ── merge_hyperparams ──
 
     #[test]
     fn default_hyperparams_when_none_provided() {
-        let merged = merge_hyperparams(None);
+        let merged = merge_hyperparams(None, false);
         let obj = merged.as_object().expect("should be a JSON object");
 
         assert_eq!(obj["r"], 16);
@@ -887,7 +980,7 @@ mod tests {
             "num_train_epochs": 5,
             "custom_field": "custom_value",
         });
-        let merged = merge_hyperparams(Some(user));
+        let merged = merge_hyperparams(Some(user), false);
         let obj = merged.as_object().unwrap();
 
         // Overridden values
@@ -903,16 +996,16 @@ mod tests {
     #[test]
     fn empty_object_overrides_change_nothing() {
         let user = serde_json::json!({});
-        let merged = merge_hyperparams(Some(user));
-        let defaults = merge_hyperparams(None);
+        let merged = merge_hyperparams(Some(user), false);
+        let defaults = merge_hyperparams(None, false);
         assert_eq!(merged, defaults);
     }
 
     #[test]
     fn non_object_override_is_ignored() {
         let user = serde_json::json!("not an object");
-        let merged = merge_hyperparams(Some(user));
-        let defaults = merge_hyperparams(None);
+        let merged = merge_hyperparams(Some(user), false);
+        let defaults = merge_hyperparams(None, false);
         assert_eq!(merged, defaults);
     }
 
@@ -1232,8 +1325,13 @@ mod parent_model_tests {
 
     /// Answers only the lookup a parent check makes, recording the tenant it was
     /// asked about. Everything else would be a bug to call from here.
+    const PARENT_BASE_MODEL: &str = "Qwen/Qwen3-8B";
+    const PARENT_ADAPTER_PATH: &str = "tenants/t/models/parent/";
+
     struct ModelLookupStub {
         exists: bool,
+        adapter_path: Option<String>,
+        base_model: String,
         asked: Mutex<Vec<(Uuid, Uuid)>>,
     }
 
@@ -1241,7 +1339,23 @@ mod parent_model_tests {
         fn new(exists: bool) -> Self {
             Self {
                 exists,
+                adapter_path: Some(PARENT_ADAPTER_PATH.to_string()),
+                base_model: PARENT_BASE_MODEL.to_string(),
                 asked: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn without_adapter() -> Self {
+            Self {
+                adapter_path: None,
+                ..Self::new(true)
+            }
+        }
+
+        fn trained_on(base_model: &str) -> Self {
+            Self {
+                base_model: base_model.to_string(),
+                ..Self::new(true)
             }
         }
 
@@ -1261,6 +1375,8 @@ mod parent_model_tests {
                 .expect("stub lock")
                 .push((tenant_id, model_id));
             let exists = self.exists;
+            let adapter_path = self.adapter_path.clone();
+            let base_model = self.base_model.clone();
             Box::pin(async move {
                 Ok(exists.then(|| Model {
                     id: model_id,
@@ -1268,9 +1384,9 @@ mod parent_model_tests {
                     project_id: Uuid::new_v4(),
                     training_job_id: Uuid::new_v4(),
                     name: "parent".to_string(),
-                    base_model: "Qwen/Qwen3-8B".to_string(),
+                    base_model,
                     version: 1,
-                    adapter_path: None,
+                    adapter_path,
                     adapter_size_bytes: None,
                     eval_scores: serde_json::json!({}),
                     deployment_status: DeploymentStatus::Undeployed.to_string(),
@@ -1390,10 +1506,16 @@ mod parent_model_tests {
     async fn no_parent_requested_reads_nothing() {
         let repo = ModelLookupStub::new(true);
 
-        let resolved =
-            TrainingJobService::resolve_parent_model(&repo, Uuid::new_v4(), &None, true).await;
+        let resolved = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &None,
+            false,
+            PARENT_BASE_MODEL,
+        )
+        .await;
 
-        assert_eq!(resolved.expect("no parent is fine"), None);
+        assert!(resolved.expect("no parent is fine").is_none());
         assert!(repo.lookups().is_empty());
     }
 
@@ -1410,11 +1532,14 @@ mod parent_model_tests {
             tenant_id,
             &Some(parent_id.to_string()),
             true,
+            PARENT_BASE_MODEL,
         )
         .await
         .expect("parent exists");
 
-        assert_eq!(resolved, Some(parent_id));
+        let parent = resolved.expect("the parent resolves");
+        assert_eq!(parent.id, parent_id);
+        assert_eq!(parent.adapter_path, PARENT_ADAPTER_PATH);
         assert_eq!(repo.lookups(), vec![(tenant_id, parent_id)]);
     }
 
@@ -1427,6 +1552,7 @@ mod parent_model_tests {
             Uuid::new_v4(),
             &Some(Uuid::new_v4().to_string()),
             true,
+            PARENT_BASE_MODEL,
         )
         .await
         .expect_err("a parent that does not resolve must not be silently dropped");
@@ -1446,12 +1572,69 @@ mod parent_model_tests {
             Uuid::new_v4(),
             &Some(Uuid::new_v4().to_string()),
             false,
+            PARENT_BASE_MODEL,
         )
         .await
         .expect_err("parent_model_id has no meaning without an improve pass");
 
         assert_eq!(refusal.to_string(), PARENT_NOT_APPLICABLE_MESSAGE);
         assert!(repo.lookups().is_empty());
+    }
+
+    /// The whole point of an improve pass is that it continues something. Without
+    /// a parent it would be an ordinary distill run wearing an improve pass's price.
+    #[tokio::test]
+    async fn an_improve_pass_without_a_parent_is_refused() {
+        let repo = ModelLookupStub::new(true);
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &None,
+            true,
+            PARENT_BASE_MODEL,
+        )
+        .await
+        .expect_err("an improve pass has nothing to improve without a parent");
+
+        assert_eq!(refusal.to_string(), PARENT_REQUIRED_MESSAGE);
+    }
+
+    /// Discovered here or discovered by a GPU an hour into a two-card run.
+    #[tokio::test]
+    async fn a_parent_with_no_saved_adapter_is_refused() {
+        let repo = ModelLookupStub::without_adapter();
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &Some(Uuid::new_v4().to_string()),
+            true,
+            PARENT_BASE_MODEL,
+        )
+        .await
+        .expect_err("there is nothing to continue training");
+
+        assert_eq!(refusal.to_string(), PARENT_HAS_NO_ADAPTER_MESSAGE);
+    }
+
+    /// A LoRA's shapes belong to the model it was trained on.
+    #[tokio::test]
+    async fn a_parent_trained_on_another_base_model_is_refused() {
+        let repo = ModelLookupStub::trained_on("meta-llama/Llama-3-8B");
+
+        let refusal = TrainingJobService::resolve_parent_model(
+            &repo,
+            Uuid::new_v4(),
+            &Some(Uuid::new_v4().to_string()),
+            true,
+            PARENT_BASE_MODEL,
+        )
+        .await
+        .expect_err("an adapter cannot move between base models");
+
+        assert!(refusal.to_string().contains(PARENT_BASE_MISMATCH_MESSAGE));
+        assert!(refusal.to_string().contains("meta-llama/Llama-3-8B"));
     }
 
     #[tokio::test]
@@ -1463,6 +1646,7 @@ mod parent_model_tests {
             Uuid::new_v4(),
             &Some("not-a-uuid".to_string()),
             true,
+            PARENT_BASE_MODEL,
         )
         .await
         .expect_err("malformed ids are rejected");

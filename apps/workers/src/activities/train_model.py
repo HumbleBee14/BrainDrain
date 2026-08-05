@@ -89,6 +89,7 @@ _DISTILL_STRATEGY_KEYS = {
 
 _TEACHER_ARTIFACTS_HYPERPARAM = "teacher_artifacts_prefix"
 DISTILL_METHOD_HYPERPARAM = "distill_method"
+PARENT_ADAPTER_HYPERPARAM = "parent_adapter_path"
 
 # vLLM's `--dtype` takes no quantized values: fp8 and int4 are separate
 # quantization flags with their own weight formats. Mapping them onto bfloat16
@@ -658,16 +659,13 @@ async def run_training_core(
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit,
         )
-        target_modules = hp.get(
-            "target_modules",
-            ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        )
-        model = engine.attach_adapter(
+        model = _attach_or_continue_adapter(
             model,
-            r=hp.get("r", 16),
-            lora_alpha=hp.get("lora_alpha", 16),
-            lora_dropout=hp.get("lora_dropout", 0),
-            target_modules=target_modules,
+            engine=engine,
+            hp=hp,
+            parent_dir=tmpdir_path / "parent_adapter",
+            s3=s3,
+            s3_bucket=s3_bucket,
         )
 
         metrics = strategy.execute(
@@ -1328,6 +1326,39 @@ def _build_teacher_liveness_callback_class(server):
             return control
 
     return TeacherLivenessCallback
+
+
+def _attach_or_continue_adapter(model, *, engine, hp: dict, parent_dir: Path, s3, s3_bucket: str):
+    """A fresh LoRA, or the parent's adapter when this run improves on one.
+
+    An improve pass grades the student's own answers, so it has to start from the
+    weights that write them — a fresh adapter would grade an untrained model and
+    throw away everything the parent learned.
+
+    `PeftModel.from_pretrained(is_trainable=True)` rather than attach-then-load:
+    the latter creates a fresh random adapter and then fails to load the saved
+    weights into it, which `run_sft_round_core` documents at length.
+    """
+    parent_adapter_path = hp.get(PARENT_ADAPTER_HYPERPARAM)
+    if not parent_adapter_path:
+        return engine.attach_adapter(
+            model,
+            r=hp.get("r", 16),
+            lora_alpha=hp.get("lora_alpha", 16),
+            lora_dropout=hp.get("lora_dropout", 0),
+            target_modules=hp.get(
+                "target_modules",
+                ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            ),
+        )
+
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    _download_adapter(parent_adapter_path, parent_dir, s3, s3_bucket)
+
+    from peft import PeftModel
+
+    logger.info("Continuing from the parent adapter at %s", parent_adapter_path)
+    return PeftModel.from_pretrained(model, str(parent_dir), is_trainable=True)
 
 
 def _restore_visible_devices(allocation: str | None) -> None:
