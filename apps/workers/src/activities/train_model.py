@@ -1330,6 +1330,13 @@ def _build_teacher_liveness_callback_class(server):
     return TeacherLivenessCallback
 
 
+def _restore_visible_devices(allocation: str | None) -> None:
+    if allocation is None:
+        os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = allocation
+
+
 def _reserve_student_devices(strategy):
     """Confine this process to the student's card, before any CUDA state exists.
 
@@ -1355,6 +1362,7 @@ def _reserve_student_devices(strategy):
     except TeacherServerError as exc:
         raise ApplicationError(str(exc), non_retryable=True) from exc
 
+    allocation = os.environ.get("CUDA_VISIBLE_DEVICES")
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(device) for device in student_devices)
 
     import torch
@@ -1363,7 +1371,10 @@ def _reserve_student_devices(strategy):
     if visible != len(student_devices):
         # Reaching CUDA before this point fixes the device set permanently, and no
         # later assignment can move the student off the teacher's card. Refusing is
-        # the only outcome left that does not end in an out-of-memory kill.
+        # the only outcome left that does not end in an out-of-memory kill. The
+        # container's real allocation goes back first, or the next attempt in this
+        # process would read our narrowed one and misreport how many cards it has.
+        _restore_visible_devices(allocation)
         raise ApplicationError(
             f"Could not confine training to {len(student_devices)} GPU(s): this "
             f"process already sees {visible}. On-policy distillation needs a worker "

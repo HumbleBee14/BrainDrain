@@ -359,7 +359,10 @@ pub async fn stream_training_status(
                         yield Ok(Event::default().comment("heartbeat"));
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    // Kept alive rather than closed: a transient read failure must
+                    // not look to the client like the job stopped changing.
+                    tracing::warn!(training_job_id = %id, error = ?e, "Status poll failed");
                     yield Ok(Event::default().comment("heartbeat"));
                 }
             }
