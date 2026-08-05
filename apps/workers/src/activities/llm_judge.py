@@ -23,6 +23,7 @@ from typing import Protocol
 import httpx
 
 from src.failure_message import NO_LLM_KEY
+from src.llm_output import strip_reasoning
 
 logger = logging.getLogger("platform.judge")
 
@@ -131,7 +132,8 @@ class OpenAICompatibleJudge:
                     raise JudgeUnavailableError(f"judge HTTP {resp.status_code}: {resp.text[:200]}")
                 else:
                     try:
-                        return resp.json()["choices"][0]["message"]["content"].strip()
+                        content = resp.json()["choices"][0]["message"]["content"]
+                        return strip_reasoning(content).strip()
                     except (KeyError, IndexError, ValueError, TypeError) as e:
                         last_err = f"malformed response: {e}"
 
