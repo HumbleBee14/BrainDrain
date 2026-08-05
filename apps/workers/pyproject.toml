@@ -50,7 +50,10 @@ dev = [
 
 [project.optional-dependencies]
 ml = [
-    "unsloth>=2025.12",
+    # linux-only: unsloth's zoo pulls mlx-lm on Apple silicon, whose
+    # transformers>=5 floor cannot coexist with the <5 bound below. The GPU
+    # containers this extra exists for are all linux.
+    "unsloth==2026.8.4; sys_platform == 'linux'",
     "transformers>=4.51.0,<5.0.0",
     "datasets>=3.2.0",
     # Pinned exactly, not floated, so a rebuild cannot change training behaviour
@@ -107,6 +110,15 @@ pdf-ml = [
 [tool.uv]
 conflicts = [
     [{ extra = "ml" }, { extra = "extraction" }, { extra = "on-policy" }],
+]
+# unsloth-zoo's Apple-silicon mlx stack floats to releases whose
+# transformers>=5 floor cannot coexist with the <5 bound in `ml`. Training
+# never runs on macOS, so drop the mlx packages from resolution entirely by
+# narrowing them to a platform where they are never requested.
+override-dependencies = [
+    "mlx; sys_platform == 'linux'",
+    "mlx-lm; sys_platform == 'linux'",
+    "mlx-vlm; sys_platform == 'linux'",
 ]
 
 [build-system]

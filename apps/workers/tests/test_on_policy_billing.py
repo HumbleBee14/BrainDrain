@@ -221,7 +221,9 @@ def test_the_control_plane_splits_the_same_classes_this_worker_does():
     a new multi-device variant there fails here until this worker knows it too.
     """
     body = ENUMS_RS.read_text(encoding="utf-8")
-    arms = re.search(r"fn device_count\(self\) -> u32 \{\s*match self \{(.*?)\n        \}", body, re.DOTALL)
+    arms = re.search(
+        r"fn device_count\(self\) -> u32 \{\s*match self \{(.*?)\n        \}", body, re.DOTALL
+    )
     assert arms, "could not find GpuClass::device_count in the shared enums"
 
     multi_device = {}

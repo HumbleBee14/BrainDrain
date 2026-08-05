@@ -68,7 +68,7 @@ _base_image = (
     modal.Image.debian_slim(python_version="3.11")
     # GPU/ML stack — remote-only, absent from pyproject's runtime deps.
     .pip_install(
-        "unsloth>=2025.12",
+        "unsloth==2026.8.4",
         "transformers>=4.51.0,<5.0.0",
         "datasets>=3.2.0",
         f"trl=={TRL_UNSLOTH_VERSION}",
