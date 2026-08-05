@@ -138,13 +138,13 @@ pub async fn get_improve_offer(
         return Ok(Json(ImproveOfferResponse::ineligible(NO_ADAPTER_MESSAGE)));
     };
 
-    // Quoted at the platform default rather than at whatever the parent trained
+    // Quoted at the platform defaults rather than at whatever the parent trained
     // for: the improve pass is a new job with its own hyperparams, and its real
     // price is computed again at launch from those.
     match plan_on_policy(
         &dataset,
         &model.base_model,
-        None,
+        &serde_json::json!({}),
         parent_adapter_path,
         state.config().on_policy_tokens_per_sec,
         |gpu_class| resolve_gpu_rate(&admin_config.gpu_rates, gpu_class),

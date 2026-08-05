@@ -178,6 +178,40 @@ pub async fn enqueue_in_tx(
     Ok(())
 }
 
+/// Append an outbox row under a caller-chosen id, ignoring one already there.
+///
+/// For charges two writers can both reach — a run the reaper closes out and the
+/// worker later reports on — where the id is derived from the run so that
+/// whichever arrives second is a no-op rather than a second charge.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_in_tx_with_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
+    tenant_id: Uuid,
+    operation: &str,
+    resource_id: Option<Uuid>,
+    gpu_seconds: i32,
+    cost_usd: f64,
+    metadata: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO billing_outbox \
+         (id, tenant_id, operation, resource_id, tokens_in, tokens_out, gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, $3, $4, 0, 0, $5, $6, $7) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(operation)
+    .bind(resource_id)
+    .bind(gpu_seconds)
+    .bind(cost_usd)
+    .bind(metadata)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 fn metadata_with_stream_state(
     metadata: serde_json::Value,
     stream_pending: bool,

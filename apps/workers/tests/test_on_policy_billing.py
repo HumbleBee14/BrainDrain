@@ -12,18 +12,22 @@ is not a free teacher.
 """
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
 from src.activities.train_model import (
     DISTILL_METHOD_HYPERPARAM,
     _append_training_billing_outbox,
+    _teacher_serving_billing_event_id,
+    _training_billing_event_id,
     split_teacher_serving_cost,
     teacher_serving_share,
 )
-from src.constants import ON_POLICY_DISTILL_METHOD
+from src.constants import GPU_DEVICE_COUNTS, ON_POLICY_DISTILL_METHOD
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 JOB = "22222222-2222-2222-2222-222222222222"
@@ -148,3 +152,47 @@ async def test_the_two_rows_have_distinct_ids_so_neither_upserts_the_other():
     assert len(seen) == 2
     assert seen[0] != seen[1]
     assert all(isinstance(row_id, uuid.UUID) for row_id in seen)
+
+
+SERVING_COST_RS = (
+    Path(__file__).resolve().parents[3] / "crates/api/src/services/teacher/serving_cost.rs"
+)
+
+
+def test_the_control_plane_splits_the_same_classes_this_worker_does():
+    """The reaper and the cancel path close out runs the worker never finished, and
+    bill them by device count too. A class either side does not know about is a
+    dual-GPU run billed as one card — invisible to the teacher-GPU cap."""
+    rust = SERVING_COST_RS.read_text(encoding="utf-8")
+    listed = re.search(r"GPU_DEVICE_COUNTS: &\[\(&str, u32\)\] = &\[(.*?)\];", rust, re.DOTALL)
+    assert listed, "could not find GPU_DEVICE_COUNTS in the control plane"
+
+    assert dict(re.findall(r'\("([\w]+)", (\d+)\)', listed.group(1))) == {
+        name: str(count) for name, count in GPU_DEVICE_COUNTS.items()
+    }
+
+
+def test_the_control_plane_writes_the_ledger_ids_this_worker_writes():
+    """Both sides can close out the same run — the reaper when a worker dies, the
+    worker if it outlives its own reaping. Matching ids make the second write a
+    no-op; diverging ones bill the tenant twice.
+
+    Pinned to literal ids rather than read from the Rust source: the same four
+    values are asserted by `serving_cost.rs`'s own test, so each side fails on its
+    own drift. Grepping the other language's file would pass on the ids sitting in
+    its test fixtures while its production format string had already changed.
+    """
+    job = "11111111-1111-1111-1111-111111111111"
+
+    assert str(_training_billing_event_id(job, "failed")) == (
+        "370e6ec6-c631-542b-921c-1a3e9e462fbc"
+    )
+    assert str(_teacher_serving_billing_event_id(job, "failed")) == (
+        "1f8b1c51-493f-55ec-b240-d742d5ae9a13"
+    )
+    assert str(_training_billing_event_id(job, "cancelled")) == (
+        "e79ce3d1-9ac2-50df-9c9f-ffe652223541"
+    )
+    assert str(_teacher_serving_billing_event_id(job, "cancelled")) == (
+        "fefbc12a-0217-5bb1-987d-dee962b2a406"
+    )

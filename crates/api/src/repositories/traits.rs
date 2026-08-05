@@ -370,9 +370,12 @@ pub trait TrainingJobRepository: Send + Sync {
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 
     /// Cancel a RUNNING job: transition `training` → `cancelled`, record the
-    /// actual GPU cost, and enqueue the billing row in the same transaction.
+    /// actual GPU cost, and enqueue the billing row(s) in the same transaction.
     /// Returns None if the job is not currently running (so the caller does not
     /// double-bill on repeated cancels). The workflow must already be terminated.
+    ///
+    /// `teacher_share` splits the bill when a teacher shared the container — see
+    /// `teacher::serving_cost`. Zero for every run that had none.
     fn finalize_cancelled(
         &self,
         tenant_id: Uuid,
@@ -380,6 +383,7 @@ pub trait TrainingJobRepository: Send + Sync {
         actual_cost: f64,
         gpu_seconds: i32,
         metadata: serde_json::Value,
+        teacher_share: f64,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>>;
 
     /// Set a job's status to cost_approval (only from pending).
