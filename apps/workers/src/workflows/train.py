@@ -55,6 +55,7 @@ DISTILL_METHOD_HYPERPARAM = "distill_method"
 TEACHER_MODEL_HYPERPARAM = "teacher_model"
 TEACHER_REVISION_HYPERPARAM = "teacher_revision"
 TEACHER_PRECISION_HYPERPARAM = "teacher_precision"
+PARENT_ADAPTER_HYPERPARAM = "parent_adapter_path"
 
 # The trainer's own name for the epoch count. Not on the platform-owned list: a
 # caller may set it freely, and the API prices the value it ends up with.
@@ -70,6 +71,7 @@ _PLATFORM_OWNED_HYPERPARAMS = (
     TEACHER_MODEL_HYPERPARAM,
     TEACHER_REVISION_HYPERPARAM,
     TEACHER_PRECISION_HYPERPARAM,
+    PARENT_ADAPTER_HYPERPARAM,
 )
 
 
@@ -180,6 +182,7 @@ def hyperparams_with_live_teacher(hyperparams: dict, plan: dict) -> dict:
     # than from hyperparams is what makes the run cost what the tenant was told.
     if plan.get("epochs"):
         resolved[EPOCHS_HYPERPARAM] = int(plan["epochs"])
+    resolved[PARENT_ADAPTER_HYPERPARAM] = plan["parent_adapter_path"]
     return resolved
 
 

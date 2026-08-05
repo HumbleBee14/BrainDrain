@@ -17,6 +17,8 @@ from src.workflows.train import (
     TEACHER_REVISION_HYPERPARAM,
     borrowed_fidelity_keys,
     extraction_plan,
+    PARENT_ADAPTER_HYPERPARAM,
+    borrowed_fidelity_keys,
     hyperparams_with_live_teacher,
     unsupported_plan_reason,
 )
@@ -28,6 +30,7 @@ PLAN = {
     "precision": "bf16",
     "gpu_class": "a10080gb_dual",
     "epochs": 3,
+    "parent_adapter_path": "tenants/t/models/parent/",
 }
 
 
@@ -77,6 +80,23 @@ def test_the_run_trains_the_epochs_the_quote_was_priced_from():
     resolved = hyperparams_with_live_teacher({EPOCHS_HYPERPARAM: 9}, PLAN)
 
     assert resolved[EPOCHS_HYPERPARAM] == 3
+
+
+def test_the_parent_adapter_reaches_training_as_a_platform_owned_key():
+    """It names storage the worker reads, so a caller must not be able to supply
+    one — the same rule the teacher model and artifact prefix are under."""
+    resolved = hyperparams_with_live_teacher({}, PLAN)
+
+    assert resolved[PARENT_ADAPTER_HYPERPARAM] == "tenants/t/models/parent/"
+    assert PARENT_ADAPTER_HYPERPARAM in borrowed_fidelity_keys(resolved)
+
+
+def test_a_caller_cannot_choose_the_adapter_the_run_continues_from():
+    resolved = hyperparams_with_live_teacher(
+        {PARENT_ADAPTER_HYPERPARAM: "tenants/other/models/theirs/"}, PLAN
+    )
+
+    assert resolved[PARENT_ADAPTER_HYPERPARAM] == "tenants/t/models/parent/"
 
 
 def test_a_plan_without_an_epoch_count_leaves_hyperparams_alone():
