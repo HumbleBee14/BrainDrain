@@ -1,8 +1,29 @@
 # Distillation Stage 3 — Implementation Plan (on-policy)
 
 > Implements [DESIGN-SPEC.md](DESIGN-SPEC.md) §7 on top of Stages 1–2.
-> Status: **decision-gated.** The topology choice (§2) can only be made honestly after Stage 2 runs on real jobs — this plan fixes the architecture, the product surface, and the decision procedure, and marks execution details **[after-S2]**.
+> Status: **decisions resolved, implemented.** The topology choice (§2) is settled — see §0a. Findings: [STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md). Verification: [STAGE3-TESTING.md](STAGE3-TESTING.md).
 > Branch: `feat/distillation-stage3`. PRs only — the user merges.
+
+---
+
+## 0a. Decisions that overrode this plan
+
+Recorded here because each contradicts something written below, and the reasoning matters more than the original text. Full evidence in [STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md).
+
+1. **Option A's API does not exist as documented.** The `DistillationConfig(use_teacher_server=True, lmbda=…, loss_top_k=…)` this plan's §2 named would raise `TypeError` on TRL v1.9.2. Server-teacher distillation lives in two *other* modules. Realized via `trl.experimental.iw_opd`, which is the only one exposing the `lmbda` knob §1 specifies.
+
+2. **The A-vs-B spike was not needed to choose the architecture, and was not run.** Option B (teacher in the trainer process) is excluded by arithmetic, not preference: our hosted catalog's teacher is Qwen3-32B, ~64 GB of bf16 weights, which cannot sit beside an 8B student's training state on one 80 GB card. B is only viable for teachers our catalog does not offer. No GPU was spent settling a question that memory arithmetic answers.
+   **What the spike was actually for — whether on-policy improves parity per GPU-dollar — remains unanswered and is now the first item of [STAGE3-TESTING.md](STAGE3-TESTING.md).** Option C's threshold stands unchanged: if the measured parity gain is under 1 point over the Stage 2 baseline, revisit rather than tune.
+
+3. **The teacher is a sidecar in the trainer's own container, not a second Modal workload.** This plan's §3 specifies two coordinated GPU workloads with private networking, `teacher_server_*` lifecycle columns, a TTL reaper, and a reap-event alert. Instead, `trl vllm-serve` runs as a **subprocess of the training container** on its own GPU, reachable at `127.0.0.1`. This is a smaller design that removes the failure class §3 was built to survive:
+   - A leaked teacher GPU becomes impossible — the teacher is a child of the trainer, and Modal reclaims the whole container when the function returns, crashes, or is cancelled. There is no state in which a teacher outlives its trainer, so there is nothing for a TTL reaper to find.
+   - No network exposure. TRL's client sends **no authentication** (§4 of the findings), so a routable teacher endpoint would have been an unauthenticated logprob oracle for the tenant's teacher weights. `127.0.0.1` is not reachable from outside the container.
+   - One GPU reservation, one billing row, one concurrency slot — the existing Stage 2 machinery covers it with no new lifecycle table.
+
+   **Therefore not built:** the `teacher_server_{status,modal_call_id,started_at,expires_at,cost}` columns, the stale-server reaper, and the reap-event counter/alert. **Still built, because these failures remain real:** boot health-check with a bounded timeout, liveness monitoring during training that fails the job loudly rather than training without a teacher, and cost that reflects a multi-GPU container.
+   **Given up by this choice:** one teacher cannot be shared across concurrent trainers. That is a scale optimization with no current demand, and revisiting it means reintroducing the lifecycle machinery above — deliberately deferred, not overlooked.
+
+4. **Calibration (ECE) is not implemented.** §4 makes it conditional on a design spike that picks the definition; that spike has not happened, so shipping a number would be inventing a metric. The before/after parity comparison §4 also asks for *is* implemented.
 
 ---
 
@@ -35,6 +56,10 @@ This also matches the research recipe exactly (off-policy phase → on-policy ph
 | **C. Custom trainer** | Own loop: student rollouts (vLLM) → teacher top-k scoring → custom reverse-KL-over-top-k loss with bias correction | Exact loss we want; top-k reverse KL with correction is research-supported | Most code to own; correctness burden on us |
 
 **Decision procedure [after-S2]:** a 2–3 day spike distills the same small pair (e.g. Qwen mid → Qwen small on a tool-call dataset) via A and B, comparing parity gain per GPU-dollar. Ship the winner. **C's threshold is defined up front, not by vibes:** build the custom trainer only if BOTH A and B either (a) fail to improve parity by ≥1 point over the Stage 2 off-policy baseline on the spike pair, or (b) are unstable (divergence/NaN/collapse on ≥2 of 3 seeds). Default expectation going in: **A** (managed constraint, real on-policy, big teachers), with B as the small-teacher fast path.
+
+> **Resolved — see §0a.2.** Shipped **A**, realized through `trl.experimental.iw_opd` with `use_teacher_server=True` (Option A's documented single-trainer form does not exist). B was excluded by teacher-size arithmetic without spending GPU time; C's threshold is unchanged and still governs. The parity-per-dollar question the spike existed to answer is now the first manual verification step, not a prerequisite for the architecture.
+>
+> Shipped loss configuration, all operator-configurable, none hardcoded: `distillation_objective="jsd"`, `beta=1.0` (reverse KL), `loss_top_k=1`, `loss_add_tail=True`, `lmbda=1.0`, `temperature=1.0`. The `"iw_opd"` importance-weighted objective is reachable by configuration but is **not** the default — it is the newest research objective in the newest module, and the parity harness should be what promotes it, not a guess made before the first run.
 
 ## 3. Infrastructure: coordinated teacher + trainer (the new hard part)
 

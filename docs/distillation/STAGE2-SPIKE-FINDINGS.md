@@ -74,10 +74,22 @@ they are compatible. The user-facing copy says so without jargon.
 Verified against current sources rather than the plan's assumptions. Each item
 below **changed a default or a design choice**.
 
-**No library implements our workflow — write the loss.** TRL's distillation
-trainer requires a *live* teacher model in memory, computes full-vocabulary
-generalized-JSD, and has no field for precomputed teacher logprobs. The plan's
-cited `loss_top_k` / `loss_add_tail` parameters **do not exist** in TRL's source.
+**No library implements our workflow — write the loss.** Every TRL distillation
+trainer needs the teacher *live* — either in memory or behind an HTTP endpoint it
+queries during training — and none has a field for precomputed teacher logprobs.
+That, not the parameter set, is what rules TRL out for an offline artifact path.
+
+> **Corrected 2026-08-04 (Stage 3).** This finding originally claimed the plan's
+> cited `loss_top_k` / `loss_add_tail` parameters "do not exist in TRL's source".
+> They do exist — in `trl.experimental.server_distillation` and
+> `trl.experimental.iw_opd`, neither of which Stage 2 examined. The conclusion
+> below is unchanged, because both of those trainers require a live teacher
+> server and so cannot read Stage 2's artifacts; only the stated reason was
+> wrong. TRL's `loss_add_tail` also models the out-of-support mass as an explicit
+> tail bucket, independently corroborating the tail term chosen below over
+> Axolotl's renormalization. See
+> [STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md) §7.
+
 Axolotl's KD plugin *is* real and genuinely offline (reads top-k ids + logprobs
 from a dataset field, `kd_alpha`/`kd_ce_alpha`/`kd_temperature` defaulting to
 exactly 0.9 / 0.1 / 1.0), so it is the structural reference to follow — but its
