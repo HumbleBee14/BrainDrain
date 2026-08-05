@@ -35,7 +35,7 @@ Costs real money — two 80GB-class GPUs for the duration, quoted on the card be
 
 Watch for these specifically, since each is a place where the code is doing something it has never done:
 
-- **The device split.** `CUDA_VISIBLE_DEVICES` must isolate the two. If both land on one card, one of them dies out of memory — the guard in `split_devices` only catches a container that came up with a single GPU, not a mis-set variable.
+- **The device split.** `CUDA_VISIBLE_DEVICES` must isolate the two, and it is only read the first time a process touches CUDA — so the reservation happens in `_reserve_student_devices`, before the engine loads anything, and a process that cannot be confined refuses the run rather than sharing a card. Check `nvidia-smi` mid-run: the teacher and the trainer must appear on different devices. Both on one is an out-of-memory kill waiting for the first long sequence.
 - **Teacher boot time.** The 30-minute startup budget was chosen for a cold weight cache pulling tens of gigabytes. Time it; if a warm cache is much faster, `teacher_startup_timeout_secs` can come down.
 - **Rollout throughput.** This is the number the quote guesses at (`APP_ON_POLICY_TOKENS_PER_SEC`, default 40). Measure the real figure and set it per deployment — the default is deliberately pessimistic, so quotes should come in high at first.
 
@@ -54,7 +54,10 @@ Each of these is unit-tested against a fake process; none has been seen against 
 ## 4. Cost and caps
 
 - Both the quote and the charge should use the paired class. A job quoted at a single-card rate and billed at a double one is the bug to look for.
-- The teacher-GPU spend cap covers on-policy as well as extraction. Set `APP_TEACHER_GPU_SPEND_CAP_STARTER` low and confirm admission refuses with the spend-cap message.
+- A finished on-policy job writes **two** billing rows, not one: `training` for the student's share and `teacher_serving` for the teacher's, split by device count. Confirm they re-add to the container's cost — one row at the full amount means the tenant is billed twice, and no `teacher_serving` row means the spend cap cannot see the run at all.
+- The teacher-GPU spend cap sums both operations. Set `APP_TEACHER_GPU_SPEND_CAP_STARTER` low, run one improve pass to completion, and confirm the next admission refuses with the spend-cap message — the cap is what proves the `teacher_serving` row was delivered and not just written.
+- A failed run splits the same way. Kill a run after the teacher has booted and confirm the cap still grew.
+- The job should train the epoch count it was quoted for. `num_train_epochs` in the job's hyperparams, the `epochs` in its `teacher.extraction` block, and the trainer's own reported epochs must be the same number.
 - `parent_model_id` should be set on the new job and NULL on every other job in the table.
 
 ## 5. Configuration
@@ -71,7 +74,8 @@ Each of these is unit-tested against a fake process; none has been seen against 
 
 ## 6. Known limitations, stated rather than fixed
 
-- **One teacher per run.** Concurrent improve passes each boot their own teacher; nothing is shared. Fixing that means reintroducing the lifecycle machinery §0a.3 of the plan deliberately removed.
+- **One teacher per run.** Concurrent improve passes each boot their own teacher, on their own reserved port; nothing is shared. Fixing that means reintroducing the lifecycle machinery §0a.3 of the plan deliberately removed.
+- **On-policy needs a worker that has not run other GPU work.** The student is confined to its card by `CUDA_VISIBLE_DEVICES`, which a process can only act on before it first touches CUDA. Modal gives every job a fresh container, so the documented path is unaffected. On `LocalGpuProvider`, where training runs in the long-lived worker process, a worker that has already trained something refuses the run instead of putting the student on the teacher's card. Fixing it properly means running the trainer in a subprocess.
 - **No calibration metric.** ECE stays unimplemented because its definition for generative models is ambiguous and the plan gated it on a design spike that has not happened. Shipping a number would be inventing one.
 - **Cost is billed as one container.** The teacher's share is separated for the spend cap by device count, which is exact for a homogeneous container but would not be if mixed-GPU classes were ever offered.
 - **The reverse-KL signal is top-1 plus a tail bucket.** Not a shortcut — a top-k endpoint cannot answer anything richer, and a hand-written loss would face the same wall ([STAGE3-SPIKE-FINDINGS.md](STAGE3-SPIKE-FINDINGS.md) §7).
@@ -80,10 +84,12 @@ Each of these is unit-tested against a fake process; none has been seen against 
 ## 7. What the automatic gates do cover
 
 ```bash
-cargo test --workspace                     # 577 tests
+cargo test --workspace                     # 586 tests
 cargo clippy --workspace --all-targets -- -D warnings
-cd apps/workers && python -m pytest tests/ # 735 tests
+cd apps/workers && python -m pytest tests/ # 759 tests
 cd apps/web && pnpm type-check && pnpm lint
 ```
 
-Notably covered without a GPU: the teacher lifecycle against a scripted fake process (ready, dies at boot, dies mid-run, ignores SIGTERM, missing CLI), every configuration rule TRL enforces inside the trainer, the device split, the platform-owned hyperparam guard, tenant scoping of the parent model, and that a multi-device class is priced and mapped consistently across Rust and Python.
+Notably covered without a GPU: the teacher lifecycle against a scripted fake process (ready, dies at boot, dies mid-run, ignores SIGTERM, missing CLI, a port answered by someone else), every configuration rule TRL enforces inside the trainer, the device split and the order it must happen in relative to loading the student, the platform-owned hyperparam guard, tenant scoping of the parent model, that the epoch count priced is the epoch count trained, that the billing split re-adds to one container's cost, and that a multi-device class is priced and mapped consistently across Rust and Python.
+
+Two of those exist because the gates did not catch what a review did: nothing asserted that the GPU reservation happened before the model loaded, and nothing checked that an operation the spend cap sums is one a worker actually writes. Both are now tests rather than intentions.

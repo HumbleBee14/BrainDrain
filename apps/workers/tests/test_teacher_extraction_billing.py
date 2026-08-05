@@ -30,6 +30,24 @@ from src.activities.pipeline_records import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BILLING_OUTBOX_RS = REPO_ROOT / "crates/api/src/services/billing_outbox.rs"
 TEACHER_CAP_RS = REPO_ROOT / "crates/api/src/services/teacher/billing.rs"
+ENUMS_RS = REPO_ROOT / "crates/shared/src/enums.rs"
+
+# Every place a worker appends a billing_outbox row for teacher GPU time.
+WORKER_BILLING_SOURCES = (
+    Path(__file__).resolve().parents[1] / "src/activities/pipeline_records.py",
+    Path(__file__).resolve().parents[1] / "src/activities/train_model.py",
+)
+
+
+def rust_teacher_gpu_operations() -> list[str]:
+    """Wire names of the operations the teacher-GPU cap sums, read from the enum."""
+    body = ENUMS_RS.read_text(encoding="utf-8")
+    listed = re.search(r"fn teacher_gpu_operations\(\)[^{]*\{\s*\[(.*?)\]", body, re.DOTALL)
+    assert listed, "could not find teacher_gpu_operations() in the shared enums"
+
+    variants = re.findall(r"BillingOperation::(\w+)", listed.group(1))
+    assert variants, "teacher_gpu_operations() listed no operations"
+    return [re.sub(r"(?<!^)(?=[A-Z])", "_", variant).lower() for variant in variants]
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 JOB = "22222222-2222-2222-2222-222222222222"
@@ -407,5 +425,19 @@ class TestRelayContract:
         assert "reap_stale_pending_extractions(tx).await?" in source
         assert "'{extraction_reaped}', 'true'::jsonb" in source
 
-    def test_the_cap_sums_the_operation_the_worker_writes(self):
-        assert "BillingOperation::Extraction" in TEACHER_CAP_RS.read_text()
+    def test_the_cap_sums_every_operation_a_worker_writes(self):
+        """The cap is only a cap over spend somebody records. An operation on the
+        Rust list that no worker writes makes the cap blind to that spend — which is
+        what happened to on-policy: `teacher_serving` was declared and summed while
+        the worker billed its whole container as `training`.
+        """
+        cap = TEACHER_CAP_RS.read_text()
+        assert "BillingOperation::teacher_gpu_operations()" in cap, (
+            "the cap must sum the declared list, not one hardcoded operation"
+        )
+
+        written = "".join(path.read_text() for path in WORKER_BILLING_SOURCES)
+        for operation in rust_teacher_gpu_operations():
+            assert f"'{operation}'" in written, (
+                f"the cap sums '{operation}' but no worker writes an outbox row for it"
+            )
