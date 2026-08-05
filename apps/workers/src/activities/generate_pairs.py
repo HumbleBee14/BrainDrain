@@ -309,13 +309,17 @@ async def generate_pairs_with_checkpoint(
             if not exc.is_retryable:
                 raise
             failed_chunks += 1
-            last_failure = str(exc)
-            activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
+            last_failure = f"{type(exc).__name__}: {exc}"
+            activity.logger.warning(
+                "Chunk %d generation failed transiently, skipping: %s", i, last_failure
+            )
             continue
         except TRANSIENT_GENERATION_ERRORS as exc:
             failed_chunks += 1
-            last_failure = str(exc)
-            activity.logger.warning("Chunk %d generation failed transiently, skipping: %s", i, exc)
+            last_failure = f"{type(exc).__name__}: {exc}"
+            activity.logger.warning(
+                "Chunk %d generation failed transiently, skipping: %s", i, last_failure
+            )
             continue
 
         kept, dropped = await apply_faithfulness_gate(pairs, scorer, enabled=faithfulness_enabled)

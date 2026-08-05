@@ -102,6 +102,29 @@ async def test_transient_chunk_error_is_skipped_not_raised(error):
 
 
 @pytest.mark.asyncio
+async def test_failure_report_names_the_error_even_when_its_message_is_empty():
+    """httpx timeouts often carry an empty message; the report must still say
+    what happened instead of 'Last error: unknown'."""
+    chunks = [{"text": "x" * 60, "doc_id": "d1", "chunk_id": "c1"}]
+    generator = _AlwaysFailsGenerator(httpx.ReadTimeout(""))
+
+    env = ActivityEnvironment()
+    with pytest.raises(RuntimeError, match="ReadTimeout"):
+        await env.run(
+            generate_pairs_with_checkpoint,
+            chunks,
+            [],
+            generator,
+            None,
+            NullCheckpoint(),
+            task_type="qna",
+            guidance="",
+            pairs_per_chunk=1,
+            faithfulness_enabled=False,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error", _TRANSIENT_ERRORS)
 async def test_all_chunks_transiently_failing_raises(error):
     chunks = [
