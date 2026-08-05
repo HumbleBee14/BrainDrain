@@ -7,3 +7,8 @@ terraform.tfvars
 # Any private keys that ever land in this dir.
 *.pem
 *.key
+# Rendered from OCI Vault on the box — never committed.
+.env
+.env.render.*
+.secret-ocid
+*.tfplan
