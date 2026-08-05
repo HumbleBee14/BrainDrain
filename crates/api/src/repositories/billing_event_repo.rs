@@ -196,6 +196,31 @@ impl BillingEventRepository for PgBillingEventRepo {
         })
     }
 
+    fn sum_undelivered_cost_since_for_operation(
+        &self,
+        tenant_id: Uuid,
+        operation: &str,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'_, AppResult<f64>> {
+        let operation = operation.to_string();
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let total = sqlx::query_scalar::<_, f64>(
+                "SELECT COALESCE(SUM(cost_usd), 0)::FLOAT8 FROM billing_outbox \
+                 WHERE tenant_id = $1 AND operation = $2 AND created_at >= $3 \
+                   AND delivered_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(&operation)
+            .bind(since)
+            .fetch_one(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(total)
+        })
+    }
+
     fn usage_by_day(
         &self,
         tenant_id: Uuid,

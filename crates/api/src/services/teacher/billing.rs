@@ -11,16 +11,88 @@
 //! The sum spans every operation in `BillingOperation::teacher_gpu_operations`.
 //! Counting only one of them would leave the other unbounded: a tenant could run
 //! improve passes back to back, each admitted against a total that never grew.
+//!
+//! It also spans both ledgers: `billing_events` (delivered) and the undelivered
+//! rows still in `billing_outbox` — reservations for runs currently holding a
+//! GPU and terminal charges awaiting the relay. Reading only `billing_events`
+//! admits every run in that window against a total none of them contribute to.
+//! The two reads can transiently double-count a row the relay delivers between
+//! them, which errs toward refusing — never toward unbounded admission.
 
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::BillingEventRepository;
 use crate::services::plan_service::current_month_start;
+use crate::services::teacher::cost::ExtractionEstimate;
+use crate::services::teacher::serving_cost::{split_teacher_serving_cost, teacher_serving_share};
 
 /// User-facing refusal message. Verbatim from the Stage 2 plan's UX spec
 /// ("Spend cap hit") — the workflow surfaces this unmodified.
 pub const SPEND_CAP_MESSAGE: &str = "This run reached your GPU spending cap for teachers. Raise the cap in Settings → Billing or resume with a smaller dataset.";
+
+/// A durable claim on the teacher-GPU budget, written by the repository in the
+/// same transaction that creates the run it pays for.
+///
+/// Before this row exists, an admitted on-policy run is invisible: it holds a
+/// GPU for hours while the cap admits its successors against a total it never
+/// joined. The row is withheld from the ledger while `reservation_pending` is
+/// set; the run's terminal charge retires it, and the relay reaps one whose run
+/// died without ever writing that charge.
+pub struct TeacherSpendReservation {
+    /// The teacher's slice of the admission estimate — what the run will
+    /// contribute to the budget if it never reports back.
+    pub gpu_seconds: i32,
+    pub cost_usd: f64,
+    pub metadata: serde_json::Value,
+    /// Re-checked under the creation transaction's lock. `None` reserves
+    /// without refusing: capless tenants still pay for crashed runs.
+    pub cap_usd: Option<f64>,
+    pub month_start: chrono::DateTime<chrono::Utc>,
+    /// The operations whose delivered and in-flight spend count against the
+    /// cap — `BillingOperation::teacher_gpu_operations`, stringly because the
+    /// repository binds them straight into SQL.
+    pub counted_operations: Vec<String>,
+}
+
+/// The reservation an on-policy admission must write, or `None` for a run with
+/// no resident teacher to reserve for.
+///
+/// Derived from the same persisted `teacher` block and the same split the
+/// terminal writers use, so the reservation and the charge that replaces it can
+/// never disagree about whose GPU time it was.
+pub fn admission_reservation(
+    gpu_class: Option<&str>,
+    teacher_config: Option<&serde_json::Value>,
+    estimate: &ExtractionEstimate,
+    cap: Option<f64>,
+) -> Option<TeacherSpendReservation> {
+    let share = teacher_serving_share(gpu_class, teacher_config);
+    if share <= 0.0 {
+        return None;
+    }
+    let estimate_seconds = (estimate.est_gpu_hours * 3600.0).round() as i32;
+    let (_, (teacher_seconds, teacher_cost)) =
+        split_teacher_serving_cost(estimate_seconds, estimate.est_cost_usd, share);
+
+    Some(TeacherSpendReservation {
+        gpu_seconds: teacher_seconds,
+        cost_usd: teacher_cost,
+        metadata: serde_json::json!({
+            "reservation_pending": true,
+            "reservation_reaped": false,
+            "gpu_class": gpu_class,
+            "teacher_device_share": share,
+            "est_cost_usd": teacher_cost,
+        }),
+        cap_usd: cap,
+        month_start: current_month_start(),
+        counted_operations: platform_shared::enums::BillingOperation::teacher_gpu_operations()
+            .iter()
+            .map(|operation| operation.to_string())
+            .collect(),
+    })
+}
 
 /// Whether admitting an extraction estimated at `estimate_cost_usd` would push
 /// the tenant's teacher-GPU spend this month over `cap`. `cap = None` (the
@@ -56,8 +128,12 @@ pub async fn check_teacher_gpu_spend_cap(
     let month_start = current_month_start();
     let mut spent = 0.0;
     for operation in platform_shared::enums::BillingOperation::teacher_gpu_operations() {
+        let operation = operation.to_string();
         spent += billing_repo
-            .sum_cost_since_for_operation(tenant_id, operation.to_string().as_str(), month_start)
+            .sum_cost_since_for_operation(tenant_id, &operation, month_start)
+            .await?;
+        spent += billing_repo
+            .sum_undelivered_cost_since_for_operation(tenant_id, &operation, month_start)
             .await?;
     }
 
@@ -84,28 +160,49 @@ mod tests {
     struct LedgerStub {
         extraction_spend: f64,
         teacher_serving_spend: f64,
+        undelivered_spend: f64,
         asked: Mutex<Vec<String>>,
+        asked_undelivered: Mutex<Vec<String>>,
     }
 
     impl LedgerStub {
+        fn empty() -> Self {
+            Self {
+                extraction_spend: 0.0,
+                teacher_serving_spend: 0.0,
+                undelivered_spend: 0.0,
+                asked: Mutex::new(Vec::new()),
+                asked_undelivered: Mutex::new(Vec::new()),
+            }
+        }
+
         fn with_spend(extraction_spend: f64) -> Self {
             Self {
                 extraction_spend,
-                teacher_serving_spend: 0.0,
-                asked: Mutex::new(Vec::new()),
+                ..Self::empty()
             }
         }
 
         fn with_teacher_serving_spend(teacher_serving_spend: f64) -> Self {
             Self {
-                extraction_spend: 0.0,
                 teacher_serving_spend,
-                asked: Mutex::new(Vec::new()),
+                ..Self::empty()
+            }
+        }
+
+        fn with_undelivered_spend(undelivered_spend: f64) -> Self {
+            Self {
+                undelivered_spend,
+                ..Self::empty()
             }
         }
 
         fn operations_asked_about(&self) -> Vec<String> {
             self.asked.lock().expect("stub lock").clone()
+        }
+
+        fn operations_asked_about_undelivered(&self) -> Vec<String> {
+            self.asked_undelivered.lock().expect("stub lock").clone()
         }
     }
 
@@ -123,6 +220,23 @@ mod tests {
             let spend = match operation {
                 "extraction" => self.extraction_spend,
                 "teacher_serving" => self.teacher_serving_spend,
+                _ => 0.0,
+            };
+            Box::pin(async move { Ok(spend) })
+        }
+
+        fn sum_undelivered_cost_since_for_operation(
+            &self,
+            _tenant_id: Uuid,
+            operation: &str,
+            _since: chrono::DateTime<chrono::Utc>,
+        ) -> BoxFuture<'_, AppResult<f64>> {
+            self.asked_undelivered
+                .lock()
+                .expect("stub lock")
+                .push(operation.to_string());
+            let spend = match operation {
+                "teacher_serving" => self.undelivered_spend,
                 _ => 0.0,
             };
             Box::pin(async move { Ok(spend) })
@@ -232,6 +346,35 @@ mod tests {
                 .map(|operation| operation.to_string())
                 .collect();
         assert_eq!(ledger.operations_asked_about(), expected);
+        assert_eq!(ledger.operations_asked_about_undelivered(), expected);
+    }
+
+    /// A run holding a GPU right now has its charge in the outbox, not the
+    /// ledger. A cap that reads only the ledger admits a second run — and a
+    /// third, and a fourth — for as long as the first one is still training.
+    #[tokio::test]
+    async fn spend_still_in_the_outbox_counts_against_the_cap() {
+        let ledger = LedgerStub::with_undelivered_spend(45.00);
+
+        let refusal = check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(50.00), 6.00)
+            .await
+            .expect_err("45 of in-flight spend + 6 is over a 50 cap");
+
+        assert!(matches!(refusal, AppError::Forbidden { .. }));
+    }
+
+    /// Delivered and in-flight spend are one budget line, not two.
+    #[tokio::test]
+    async fn delivered_and_in_flight_spend_accumulate_against_one_cap() {
+        let ledger = LedgerStub {
+            extraction_spend: 30.00,
+            undelivered_spend: 25.00,
+            ..LedgerStub::empty()
+        };
+
+        check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(50.00), 0.01)
+            .await
+            .expect_err("30 delivered + 25 in flight already exceeds a 50 cap");
     }
 
     /// On-policy spend lands under `teacher_serving`, not `extraction`. Counting
@@ -255,7 +398,7 @@ mod tests {
         let ledger = LedgerStub {
             extraction_spend: 30.00,
             teacher_serving_spend: 25.00,
-            asked: Mutex::new(Vec::new()),
+            ..LedgerStub::empty()
         };
 
         check_teacher_gpu_spend_cap(&ledger, Uuid::new_v4(), Some(50.00), 0.01)
@@ -272,6 +415,7 @@ mod tests {
             .expect("no cap, no refusal");
 
         assert!(ledger.operations_asked_about().is_empty());
+        assert!(ledger.operations_asked_about_undelivered().is_empty());
     }
 
     #[test]
@@ -297,5 +441,123 @@ mod tests {
     #[test]
     fn zero_estimate_never_pushes_over_an_unbreached_cap() {
         assert!(!teacher_gpu_spend_would_exceed_cap(Some(50.0), 10.0, 0.0));
+    }
+
+    // ── Admission reservations ──
+
+    /// The plan and teacher block an admitted improve pass actually persists,
+    /// produced by the code that persists them — a hand-built map is how a
+    /// share that was always zero in production once passed its tests.
+    fn admitted_improve_pass() -> (
+        crate::services::teacher::on_policy::OnPolicyPlan,
+        serde_json::Value,
+    ) {
+        use crate::services::teacher::on_policy::{attach_to_teacher_config, plan_on_policy};
+        use chrono::Utc;
+        use platform_db::models::Dataset;
+
+        let dataset = Dataset {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            name: "d".to_string(),
+            storage_path: None,
+            format: "chatml".to_string(),
+            status: "approved".to_string(),
+            pair_count: Some(100),
+            stats: serde_json::json!({}),
+            config: serde_json::json!({"teacher": {
+                "host": "inference.example.com",
+                "model": "Qwen/Qwen3-32B",
+                "policy": "allowed",
+            }}),
+            error: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            scored_completion_tokens: None,
+            token_count_tokenizer_hash: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let plan = plan_on_policy(
+            &dataset,
+            "Qwen/Qwen3-8B",
+            &serde_json::json!({}),
+            "tenants/t/models/parent/",
+            40.0,
+            |_class| 6.00,
+        )
+        .expect("a hosted teacher is plannable");
+        let block = attach_to_teacher_config(Some(serde_json::json!({"model": "t"})), Some(&plan))
+            .expect("a block to live on")
+            .expect("a block");
+        (plan, block)
+    }
+
+    /// The reservation is the teacher's slice of the admission estimate — what
+    /// the terminal split will bill if the run completes at exactly its quote —
+    /// and it counts the same operations the cap sums.
+    #[test]
+    fn an_improve_pass_reserves_the_teachers_slice_of_its_estimate() {
+        let (plan, block) = admitted_improve_pass();
+
+        let reservation = admission_reservation(
+            Some(&plan.gpu_class),
+            Some(&block),
+            &plan.estimate,
+            Some(50.0),
+        )
+        .expect("an on-policy run reserves");
+
+        let estimate_seconds = (plan.estimate.est_gpu_hours * 3600.0).round() as i32;
+        let (_, (teacher_seconds, teacher_cost)) = split_teacher_serving_cost(
+            estimate_seconds,
+            plan.estimate.est_cost_usd,
+            teacher_serving_share(Some(&plan.gpu_class), Some(&block)),
+        );
+        assert!(reservation.cost_usd > 0.0);
+        assert_eq!(reservation.gpu_seconds, teacher_seconds);
+        assert_eq!(reservation.cost_usd, teacher_cost);
+        assert_eq!(reservation.cap_usd, Some(50.0));
+        assert_eq!(reservation.metadata["reservation_pending"], true);
+        assert_eq!(
+            reservation.counted_operations,
+            platform_shared::enums::BillingOperation::teacher_gpu_operations()
+                .iter()
+                .map(|operation| operation.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A capless tenant still reserves: the row is what bills a crashed run,
+    /// not only what the cap reads.
+    #[test]
+    fn a_capless_tenant_still_reserves() {
+        let (plan, block) = admitted_improve_pass();
+
+        let reservation =
+            admission_reservation(Some(&plan.gpu_class), Some(&block), &plan.estimate, None)
+                .expect("the reservation exists to bill, not only to gate");
+
+        assert_eq!(reservation.cap_usd, None);
+        assert!(reservation.cost_usd > 0.0);
+    }
+
+    /// Every run without a resident teacher — plain SFT, plain distill, logit
+    /// extraction — has no teacher share to reserve.
+    #[test]
+    fn a_run_with_no_resident_teacher_reserves_nothing() {
+        let (plan, _) = admitted_improve_pass();
+
+        assert!(admission_reservation(Some(&plan.gpu_class), None, &plan.estimate, None).is_none());
+        assert!(
+            admission_reservation(
+                Some(&plan.gpu_class),
+                Some(&serde_json::json!({"model": "t"})),
+                &plan.estimate,
+                None
+            )
+            .is_none()
+        );
     }
 }

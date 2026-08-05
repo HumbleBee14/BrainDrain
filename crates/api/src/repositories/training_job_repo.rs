@@ -2,14 +2,78 @@ use platform_db::models::TrainingJob;
 use platform_db::tenant::begin_tenant_tx;
 use platform_shared::enums::TrainingJobStatus;
 use sqlx::PgPool;
+use sqlx::Postgres;
 use uuid::Uuid;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BoxFuture, TrainingJobRepository};
+use crate::services::teacher::billing::{
+    SPEND_CAP_MESSAGE, TeacherSpendReservation, teacher_gpu_spend_would_exceed_cap,
+};
+use crate::services::teacher::serving_cost::teacher_reservation_billing_event_id;
 
 /// The outcome a user-cancelled run is billed under. Distinct from the worker's
 /// own outcomes because only one side ever wins the terminal status transition.
 const CANCELLED_OUTCOME: &str = "cancelled";
+
+/// Re-check the teacher-GPU budget and write the run's reservation, inside the
+/// job-creation transaction.
+///
+/// The admission check the service ran before this read the budget without a
+/// lock: two concurrent admissions can both pass it and together land over the
+/// cap. This one takes a per-tenant advisory lock first, so between its read
+/// and its write no other admission can do either — the second one blocks, then
+/// reads a budget the first has already joined.
+async fn check_cap_and_reserve(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    job_id: Uuid,
+    reservation: TeacherSpendReservation,
+) -> AppResult<()> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('teacher_gpu_spend:' || $1::text, 0))",
+    )
+    .bind(tenant_id)
+    .execute(&mut **tx)
+    .await?;
+
+    let spent = sqlx::query_scalar::<_, f64>(
+        "SELECT COALESCE((SELECT SUM(cost_usd) FROM billing_events \
+            WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3), 0)::FLOAT8 \
+              + COALESCE((SELECT SUM(cost_usd) FROM billing_outbox \
+            WHERE tenant_id = $1 AND operation = ANY($2) AND created_at >= $3 \
+              AND delivered_at IS NULL), 0)::FLOAT8",
+    )
+    .bind(tenant_id)
+    .bind(&reservation.counted_operations)
+    .bind(reservation.month_start)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    if teacher_gpu_spend_would_exceed_cap(reservation.cap_usd, spent, reservation.cost_usd) {
+        return Err(AppError::Forbidden {
+            message: SPEND_CAP_MESSAGE.to_string(),
+        });
+    }
+
+    sqlx::query(
+        "INSERT INTO billing_outbox \
+            (id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
+             gpu_seconds, cost_usd, metadata) \
+         VALUES ($1, $2, 'teacher_serving', $3, 0, 0, $4, $5, $6) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(teacher_reservation_billing_event_id(job_id))
+    .bind(tenant_id)
+    .bind(job_id)
+    .bind(reservation.gpu_seconds)
+    .bind(reservation.cost_usd)
+    .bind(reservation.metadata)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
 
 /// PostgreSQL implementation of the training job repository.
 ///
@@ -39,6 +103,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         cost_estimate: Option<f64>,
         teacher_config: Option<serde_json::Value>,
         parent_model_id: Option<Uuid>,
+        reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>> {
         let base_model = base_model.to_string();
         let method = method.to_string();
@@ -68,6 +133,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .fetch_one(&mut *tx)
             .await?;
 
+            if let Some(reservation) = reservation {
+                check_cap_and_reserve(&mut tx, tenant_id, job.id, reservation).await?;
+            }
+
             tx.commit().await?;
             Ok(job)
         })
@@ -88,6 +157,7 @@ impl TrainingJobRepository for PgTrainingJobRepo {
         teacher_config: Option<serde_json::Value>,
         parent_model_id: Option<Uuid>,
         max_models: i64,
+        reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<Option<TrainingJob>>> {
         let base_model = base_model.to_string();
         let method = method.to_string();
@@ -118,6 +188,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(max_models)
             .fetch_optional(&mut *tx)
             .await?;
+
+            if let (Some(job), Some(reservation)) = (&job, reservation) {
+                check_cap_and_reserve(&mut tx, tenant_id, job.id, reservation).await?;
+            }
 
             tx.commit().await?;
             Ok(job)
@@ -257,6 +331,20 @@ impl TrainingJobRepository for PgTrainingJobRepo {
             .bind(tenant_id)
             .fetch_optional(&mut *tx)
             .await?;
+
+            // A run cancelled before it started never held a GPU, so its
+            // admission reservation must go with it — left behind, the relay
+            // would eventually bill the estimate for a run that never ran.
+            if job.is_some() {
+                sqlx::query(
+                    "DELETE FROM billing_outbox \
+                     WHERE id = $1 AND tenant_id = $2 AND delivered_at IS NULL",
+                )
+                .bind(teacher_reservation_billing_event_id(job_id))
+                .bind(tenant_id)
+                .execute(&mut *tx)
+                .await?;
+            }
 
             tx.commit().await?;
             Ok(job)

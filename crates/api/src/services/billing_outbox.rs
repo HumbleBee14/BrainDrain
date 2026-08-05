@@ -256,6 +256,13 @@ const STREAM_PENDING_STALE_SECS: i64 = 300;
 /// would then be billed the quote instead of the measured GPU time on every run
 /// past the window. A day is comfortably past that and still bounded.
 const EXTRACTION_PENDING_STALE_SECS: i64 = 86_400;
+/// Staleness window for the teacher-share reservation an on-policy admission
+/// writes. Same reasoning as the extraction window — reaping a live run bills
+/// its estimate and forfeits the measured correction — but the run it brackets
+/// is a whole training job, whose closers (the worker's terminal write and the
+/// job reaper) normally retire the reservation long before this fires. A row
+/// still pending after two days means every one of them is gone.
+const TEACHER_RESERVATION_STALE_SECS: i64 = 172_800;
 /// How often the relay prunes delivered outbox rows. Coarse on purpose — the
 /// buffer only needs bounding, not tight trimming.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
@@ -397,6 +404,7 @@ async fn do_relay_work(
 ) -> Result<BatchResult, sqlx::Error> {
     reap_stale_pending_streams(tx).await?;
     reap_stale_pending_extractions(tx).await?;
+    reap_stale_teacher_reservations(tx).await?;
 
     let rows = sqlx::query_as::<_, OutboxRow>(
         "SELECT id, tenant_id, operation, resource_id, tokens_in, tokens_out, \
@@ -406,6 +414,7 @@ async fn do_relay_work(
            AND attempt_count < $1 \
            AND COALESCE((metadata->>'stream_pending')::boolean, false) = false \
            AND COALESCE((metadata->>'extraction_pending')::boolean, false) = false \
+           AND COALESCE((metadata->>'reservation_pending')::boolean, false) = false \
          ORDER BY created_at \
          LIMIT $2 \
          FOR UPDATE SKIP LOCKED",
@@ -520,6 +529,62 @@ async fn reap_stale_pending_extractions(
     Ok(())
 }
 
+/// Close out teacher-share reservations whose run's every closer is gone.
+///
+/// A reservation is normally retired by whichever terminal path closes its run
+/// (the worker, the job reaper, or a cancel), all of which delete it in the
+/// same transaction as the real charge. One still pending after the staleness
+/// window means none of them ever ran, and the job row decides what it owes:
+///
+/// - a job still on a GPU (`provisioning`/`training`) is a run that outlived
+///   every watchdog — deliver the reservation at its estimate, the conservative
+///   fallback the tenant agreed to at admission;
+/// - any other status (or no job at all) is a run that never started or was
+///   closed without GPU time — parked at cost approval, cancelled or refused
+///   before provisioning — so the reservation is deleted, not billed. Deleted
+///   rather than zeroed: a $0 row delivered to the ledger is billing-page noise
+///   for a run the tenant never got.
+async fn reap_stale_teacher_reservations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM billing_outbox \
+         WHERE delivered_at IS NULL \
+           AND COALESCE((metadata->>'reservation_pending')::boolean, false) = true \
+           AND created_at < NOW() - make_interval(secs => $1) \
+           AND NOT EXISTS (
+               SELECT 1 FROM training_jobs \
+               WHERE training_jobs.id = billing_outbox.resource_id \
+                 AND training_jobs.tenant_id = billing_outbox.tenant_id \
+                 AND training_jobs.status IN ('provisioning', 'training')
+           )",
+    )
+    .bind(TEACHER_RESERVATION_STALE_SECS as f64)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE billing_outbox \
+         SET metadata = jsonb_set(
+                 jsonb_set(metadata, '{reservation_pending}', 'false'::jsonb, true),
+                 '{reservation_reaped}', 'true'::jsonb, true
+             ) \
+         WHERE delivered_at IS NULL \
+           AND COALESCE((metadata->>'reservation_pending')::boolean, false) = true \
+           AND created_at < NOW() - make_interval(secs => $1) \
+           AND EXISTS (
+               SELECT 1 FROM training_jobs \
+               WHERE training_jobs.id = billing_outbox.resource_id \
+                 AND training_jobs.tenant_id = billing_outbox.tenant_id \
+                 AND training_jobs.status IN ('provisioning', 'training')
+           )",
+    )
+    .bind(TEACHER_RESERVATION_STALE_SECS as f64)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Idempotent delivery: uses outbox `(id, created_at)` as billing_events composite PK.
 async fn deliver_to_ledger(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -584,6 +649,8 @@ const _: () = {
     assert!(STREAM_PENDING_STALE_SECS <= 600);
     assert!(EXTRACTION_PENDING_STALE_SECS > STREAM_PENDING_STALE_SECS);
     assert!(EXTRACTION_PENDING_STALE_SECS <= 86_400);
+    assert!(TEACHER_RESERVATION_STALE_SECS >= EXTRACTION_PENDING_STALE_SECS);
+    assert!(TEACHER_RESERVATION_STALE_SECS <= 604_800);
 };
 
 #[cfg(test)]
@@ -648,6 +715,15 @@ mod tests {
     fn extraction_window_outlasts_the_longest_extraction_the_worker_allows() {
         let longest_extraction_secs = 6 * 3600 * 2;
         assert!(EXTRACTION_PENDING_STALE_SECS > longest_extraction_secs);
+    }
+
+    /// The reservation brackets a whole training run, and its run has two
+    /// earlier closers (the worker's terminal write and the job reaper). This
+    /// window is the backstop behind both, so it fires last — the compile-time
+    /// invariants above already forbid it undercutting the extraction window.
+    #[test]
+    fn reservation_window_is_the_last_backstop_to_fire() {
+        assert_eq!(TEACHER_RESERVATION_STALE_SECS, 172_800);
     }
 
     #[test]

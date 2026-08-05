@@ -97,6 +97,19 @@ pub fn teacher_serving_billing_event_id(job_id: Uuid, outcome: &str) -> Uuid {
     )
 }
 
+/// Ledger id for the reservation written when an on-policy run is admitted,
+/// holding the teacher's estimated share until a terminal charge replaces it.
+///
+/// Outcome-free, because at admission there is no outcome yet — and distinct
+/// from every terminal id, because the terminal writer deletes this row rather
+/// than colliding with it.
+pub fn teacher_reservation_billing_event_id(job_id: Uuid) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("teacher-serving-reservation:{job_id}").as_bytes(),
+    )
+}
+
 /// What one closed-out run cost, and how much of it the teacher accounts for.
 pub struct RunCharge {
     pub gpu_seconds: i32,
@@ -111,6 +124,12 @@ pub struct RunCharge {
 /// Two rows when a teacher shared the container, so the spend cap sees its time;
 /// one otherwise. Both are written with the caller's transaction so a crash can
 /// never commit the status change without the charge.
+///
+/// Also retires the run's admission reservation in the same transaction: the
+/// real charge replaces the estimate atomically, so no ordering of crashes can
+/// leave the tenant holding both. A reservation the relay already reaped and
+/// delivered has billed the teacher's time at the estimate — the terminal
+/// teacher row is skipped then, because writing it would charge that time twice.
 pub async fn enqueue_run_billing(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: Uuid,
@@ -127,6 +146,15 @@ pub async fn enqueue_run_billing(
     let ((student_seconds, student_cost), (teacher_seconds, teacher_cost)) =
         split_teacher_serving_cost(gpu_seconds, cost_usd, teacher_share);
 
+    let reservation_id = teacher_reservation_billing_event_id(job_id);
+    let voided = sqlx::query(
+        "DELETE FROM billing_outbox WHERE id = $1 AND tenant_id = $2 AND delivered_at IS NULL",
+    )
+    .bind(reservation_id)
+    .bind(tenant_id)
+    .execute(&mut **tx)
+    .await?;
+
     enqueue_in_tx_with_id(
         tx,
         training_billing_event_id(job_id, outcome),
@@ -141,6 +169,28 @@ pub async fn enqueue_run_billing(
 
     if teacher_share <= 0.0 {
         return Ok(());
+    }
+
+    if voided.rows_affected() == 0 {
+        let delivered_charge: Option<f64> = sqlx::query_scalar(
+            "SELECT cost_usd::FLOAT8 FROM billing_outbox \
+             WHERE id = $1 AND tenant_id = $2 AND delivered_at IS NOT NULL",
+        )
+        .bind(reservation_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+        // A reservation delivered at zero was voided for a run that had not
+        // started yet; if the run went on to hold a GPU anyway, its teacher
+        // time is still unbilled and the terminal row must be written.
+        if let Some(estimate_billed) = delivered_charge.filter(|charge| *charge > 0.0) {
+            tracing::warn!(
+                training_job_id = %job_id,
+                estimate_billed,
+                "Teacher reservation was already reaped and delivered; skipping the terminal teacher charge"
+            );
+            return Ok(());
+        }
     }
 
     let mut teacher_metadata = metadata;
@@ -330,5 +380,36 @@ mod tests {
             training_billing_event_id(job, "failed"),
             training_billing_event_id(job, "cancelled")
         );
+    }
+
+    /// Pinned against the worker's own test of the same input, like the terminal
+    /// ids above: the worker deletes this row when it closes a run, and a scheme
+    /// drift means it deletes nothing while the relay bills the estimate anyway.
+    #[test]
+    fn the_reservation_id_matches_the_one_the_worker_deletes() {
+        let job: Uuid = JOB.parse().expect("a fixed id");
+
+        assert_eq!(
+            teacher_reservation_billing_event_id(job).to_string(),
+            "158bff52-8237-5d12-a293-b3f29f0e2095"
+        );
+    }
+
+    /// The reservation must never collide with a terminal row: the terminal
+    /// writer deletes it by id, and a collision would delete a real charge.
+    #[test]
+    fn the_reservation_id_is_distinct_from_every_terminal_id() {
+        let job: Uuid = JOB.parse().expect("a fixed id");
+
+        for outcome in ["completed", "failed", "cancelled"] {
+            assert_ne!(
+                teacher_reservation_billing_event_id(job),
+                training_billing_event_id(job, outcome)
+            );
+            assert_ne!(
+                teacher_reservation_billing_event_id(job),
+                teacher_serving_billing_event_id(job, outcome)
+            );
+        }
     }
 }

@@ -11,6 +11,7 @@ use crate::repositories::traits::{
 };
 use crate::services::plan_service::PlanService;
 use crate::services::secret_cipher::SecretCipher;
+use crate::services::teacher::billing::admission_reservation;
 use crate::services::teacher::config::{
     NOT_TEACHER_DATASET_MESSAGE, TEACHER_MISMATCH_MESSAGE, TEACHER_NOT_APPLICABLE_MESSAGE,
     provenance_from_config, validate_teacher_for_launch,
@@ -327,6 +328,20 @@ impl TrainingJobService {
 
         let parent_model_id = parent.as_ref().map(|parent| parent.id);
 
+        // An improve pass reserves its teacher's estimated share in the same
+        // transaction that creates it: a run that dies without reporting is
+        // still billed, and a concurrent admission reads a budget this run has
+        // already joined. Built from the persisted teacher block — the same
+        // source every terminal writer splits by.
+        let reservation = improve.as_ref().and_then(|plan| {
+            admission_reservation(
+                gpu_class.as_deref(),
+                teacher_config.as_ref(),
+                &plan.estimate,
+                teacher_gpu_spend_cap,
+            )
+        });
+
         // Create the job in DB with atomic plan limit enforcement
         let job = if let Some(max) = max_models {
             training_repo
@@ -343,6 +358,7 @@ impl TrainingJobService {
                     teacher_config.clone(),
                     parent_model_id,
                     max,
+                    reservation,
                 )
                 .await?
                 .ok_or(AppError::Forbidden {
@@ -365,6 +381,7 @@ impl TrainingJobService {
                     Some(cost_estimate),
                     teacher_config,
                     parent_model_id,
+                    reservation,
                 )
                 .await?
         };

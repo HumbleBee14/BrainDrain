@@ -22,6 +22,7 @@ import pytest
 from src.activities.train_model import (
     DISTILL_METHOD_HYPERPARAM,
     _append_training_billing_outbox,
+    _teacher_reservation_billing_event_id,
     _teacher_serving_billing_event_id,
     _training_billing_event_id,
     split_teacher_serving_cost,
@@ -45,14 +46,31 @@ class _Row:
 
 @dataclass
 class _FakeConn:
-    """Records the outbox rows a billing path appends, keyed by operation."""
+    """Records the outbox rows a billing path appends, keyed by operation.
+
+    Also stands in for the run's admission reservation: `pending_reservation`
+    answers the DELETE that retires it, `delivered_reservation_cost` answers the
+    lookup for one the relay already delivered.
+    """
 
     rows: list[_Row] = field(default_factory=list)
+    pending_reservation: bool = False
+    delivered_reservation_cost: float | None = None
+    voided: list[uuid.UUID] = field(default_factory=list)
 
     async def execute(self, sql: str, *args):
         operation = "teacher_serving" if "'teacher_serving'" in sql else "training"
         _id, _tenant, _resource, gpu_seconds, cost_usd, metadata = args
         self.rows.append(_Row(operation, gpu_seconds, cost_usd, json.loads(metadata)))
+
+    async def fetchval(self, sql: str, *args):
+        if sql.lstrip().startswith("DELETE"):
+            if self.pending_reservation:
+                self.pending_reservation = False
+                self.voided.append(args[0])
+                return args[0]
+            return None
+        return self.delivered_reservation_cost
 
     def by_operation(self, operation: str) -> _Row | None:
         return next((row for row in self.rows if row.operation == operation), None)
@@ -154,6 +172,43 @@ async def test_the_two_rows_have_distinct_ids_so_neither_upserts_the_other():
     assert all(isinstance(row_id, uuid.UUID) for row_id in seen)
 
 
+@pytest.mark.asyncio
+async def test_a_finished_run_retires_its_admission_reservation():
+    """The reservation held the teacher's estimated share while the run was in
+    flight; the terminal charge written here replaces it, in one transaction."""
+    conn = _FakeConn(pending_reservation=True)
+
+    await append(conn, share=0.5)
+
+    assert conn.voided == [_teacher_reservation_billing_event_id(JOB)]
+    assert [row.operation for row in conn.rows] == ["training", "teacher_serving"]
+
+
+@pytest.mark.asyncio
+async def test_a_reservation_billed_at_its_estimate_suppresses_the_teacher_row():
+    """Once the relay reaped and delivered the reservation, the teacher's time is
+    in the ledger at the estimate. A terminal teacher row on top of that would
+    charge the same GPU twice."""
+    conn = _FakeConn(delivered_reservation_cost=3.00)
+
+    await append(conn, share=0.5)
+
+    assert [row.operation for row in conn.rows] == ["training"]
+    assert conn.rows[0].cost_usd == 3.00
+
+
+@pytest.mark.asyncio
+async def test_a_reservation_voided_at_zero_settles_nothing():
+    """A reservation delivered at zero was voided for a run that had not started
+    yet. If the run then ran anyway, its teacher time is still unbilled and the
+    terminal row must be written."""
+    conn = _FakeConn(delivered_reservation_cost=0.0)
+
+    await append(conn, share=0.5)
+
+    assert [row.operation for row in conn.rows] == ["training", "teacher_serving"]
+
+
 ENUMS_RS = Path(__file__).resolve().parents[3] / "crates/shared/src/enums.rs"
 
 
@@ -208,4 +263,7 @@ def test_the_control_plane_writes_the_ledger_ids_this_worker_writes():
     )
     assert str(_teacher_serving_billing_event_id(job, "cancelled")) == (
         "fefbc12a-0217-5bb1-987d-dee962b2a406"
+    )
+    assert str(_teacher_reservation_billing_event_id(job)) == (
+        "158bff52-8237-5d12-a293-b3f29f0e2095"
     )
