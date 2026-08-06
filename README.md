@@ -111,6 +111,7 @@ Distillation for agents is the direction: capture what a large model does on rea
 make infra          # PostgreSQL, Redis, MinIO
 make temporal       # Temporal server
 make migrate        # Run DB migrations
+make migrate-remote DATABASE_URL='postgres://...'   # against another database
 make dev-api        # Rust API on :8000
 make dev-web        # Next.js on :3000
 make dev-workers    # Python workers

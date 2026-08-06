@@ -1,4 +1,4 @@
-.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate test lint build clean typegen observability setup-hooks modal-deploy
+.PHONY: dev dev-api dev-web dev-workers infra infra-down migrate migrate-remote test lint build clean typegen observability setup-hooks modal-deploy
 
 # Start all infrastructure (PostgreSQL, Redis, MinIO)
 infra:
@@ -22,6 +22,11 @@ infra-down:
 # Run database migrations
 migrate:
 	cargo run -p platform-db --bin migrate
+
+# Usage: make migrate-remote DATABASE_URL='postgres://...'
+migrate-remote:
+	@test -n "$(DATABASE_URL)" || { echo "Set DATABASE_URL, e.g. make migrate-remote DATABASE_URL='postgres://...'"; exit 1; }
+	DATABASE_URL='$(DATABASE_URL)' cargo run -p platform-db --bin migrate
 
 # Start API server (Rust)
 dev-api:
