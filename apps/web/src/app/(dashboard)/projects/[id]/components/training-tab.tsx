@@ -19,6 +19,7 @@ import { useModelCatalog } from "@/hooks/use-catalog";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { Button } from "@/components/ui/button";
 import { TrainingStatusBadge } from "./training-status-badge";
+import { TrainingModesExplainer } from "./training-modes-explainer";
 import { FidelityUpgrade } from "./fidelity-upgrade";
 
 export function TrainingTab({
@@ -542,6 +543,10 @@ export function TrainingTab({
               ? 'No training jobs yet. Click "Start Training" to begin.'
               : "Approve a dataset first to start training."}
         </p>
+      )}
+
+      {allTrainingJobs.length === 0 && !showTrainForm && (
+        <TrainingModesExplainer />
       )}
     </div>
   );
