@@ -327,6 +327,7 @@ export default function ProjectDetailPage() {
             </Button>
           </Link>
           {distillToggle}
+          {oneClickToggle}
           {hasUploaded && (
             <Button
               variant="ghost"
@@ -387,6 +388,7 @@ export default function ProjectDetailPage() {
               Train another
             </Button>
           )}
+          {distillToggle}
         </NextActionCard>
       );
     }
@@ -443,9 +445,20 @@ export default function ProjectDetailPage() {
       ) : (
         <div className="mb-8 space-y-4">
           {status && (
-            <PipelineStepper
-              steps={computePipelineSteps(status, scoringJobCount)}
-            />
+            <div className="flex items-start gap-4">
+              <div className="min-w-0 flex-1">
+                <PipelineStepper
+                  steps={computePipelineSteps(status, scoringJobCount)}
+                />
+              </div>
+              <Link
+                href={`/projects/${params.id}/lineage`}
+                className="shrink-0 pt-1 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:hover:text-white"
+                title="Trace every model back through its training data to the source documents"
+              >
+                Data Lineage →
+              </Link>
+            </div>
           )}
           {renderNextAction()}
           {showOneClickSetup && (
