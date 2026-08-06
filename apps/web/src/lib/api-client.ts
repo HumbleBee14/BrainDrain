@@ -171,14 +171,31 @@ export interface TeamInvitation {
 
 // ── Frontend-only types (not in Rust DTOs) ──
 
+// Stream fields arrive as strings from Redis; consumers coerce with Number().
 export interface TrainingMetricsEntry {
+  step: number | string;
+  epoch: number | string;
+  loss: number | string;
+  learning_rate: number | string;
+  grad_norm: number | string;
+  phase: string;
+  timestamp: string;
+  total_steps?: number | string;
+  eta_seconds?: number | string;
+  steps_per_second?: number | string;
+  gpu_utilization?: number | string;
+  gpu_memory_used_mb?: number | string;
+  gpu_memory_total_mb?: number | string;
+  gpu_memory_pct?: number | string;
+  gpu_temperature_c?: number | string;
+}
+
+/** Downsampled per-step loss point persisted in the job's metrics at completion. */
+export interface LossHistoryPoint {
   step: number;
   epoch: number;
   loss: number;
-  learning_rate: number;
-  grad_norm: number;
   phase: string;
-  timestamp: string;
 }
 
 export interface ParsedContentResponse {

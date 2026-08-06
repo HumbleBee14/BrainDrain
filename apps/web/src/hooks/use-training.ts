@@ -93,6 +93,14 @@ export function useApproveCost(projectId: string) {
   });
 }
 
+export function useTrainingMetricsSnapshot(jobId: string, enabled = true) {
+  return useAuthedQuery<Record<string, unknown>>({
+    queryKey: ["training-jobs", "metrics-snapshot", jobId],
+    queryFn: (token) => api.trainingJobs.getMetrics(token, jobId),
+    enabled: !!jobId && enabled,
+  });
+}
+
 export function useEstimateTrainingCost(
   projectId: string,
   data: CreateTrainingJobInput,
