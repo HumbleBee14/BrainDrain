@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+const COLLAPSE_KEY = "ft-modes-explainer-collapsed";
+
 const MODES = [
   {
     name: "Quick",
@@ -38,12 +42,49 @@ const MODES = [
   },
 ] as const;
 
-export function TrainingModesExplainer() {
+export function TrainingModesExplainer({
+  defaultCollapsed = false,
+}: {
+  defaultCollapsed?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  // localStorage is read after mount so server and first client render agree;
+  // an explicit user choice overrides the default.
+  useEffect(() => {
+    const stored = localStorage.getItem(COLLAPSE_KEY);
+    if (stored !== null) setCollapsed(stored === "1");
+  }, []);
+
+  const toggle = (next: boolean) => {
+    setCollapsed(next);
+    localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+  };
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={() => toggle(false)}
+        className="text-sm font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+      >
+        What do the fine-tuning modes mean?
+      </button>
+    );
+  }
+
   return (
-    <div className="mt-6">
-      <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
-        Fine-tuning modes this platform supports
-      </h3>
+    <div>
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
+          Fine-tuning modes this platform supports
+        </h3>
+        <button
+          onClick={() => toggle(true)}
+          className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:text-zinc-600 dark:hover:text-zinc-400"
+        >
+          Hide
+        </button>
+      </div>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {MODES.map((mode) => (
           <div

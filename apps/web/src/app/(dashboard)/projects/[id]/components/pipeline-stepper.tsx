@@ -14,7 +14,6 @@ export interface PipelineStep {
 /** Derive the four pipeline stages from raw status counts. */
 export function computePipelineSteps(
   status: ProjectPipelineStatus,
-  scoringCount: number,
 ): PipelineStep[] {
   const docs = status.documents;
   const ds = status.datasets;
@@ -70,10 +69,7 @@ export function computePipelineSteps(
     state: "upcoming",
     detail: "not started",
   };
-  if (scoringCount > 0) {
-    training.state = "active";
-    training.detail = "scoring with teacher…";
-  } else if (jobs.training > 0) {
+  if (jobs.training > 0) {
     training.state = "active";
     training.detail = `${jobs.training} running…`;
   } else if (jobs.pending > 0) {
