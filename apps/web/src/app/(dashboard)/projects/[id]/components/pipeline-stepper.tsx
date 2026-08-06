@@ -23,7 +23,7 @@ export function computePipelineSteps(
 
   const documents: PipelineStep = {
     key: "documents",
-    label: "Documents",
+    label: "Upload Data",
     state: "upcoming",
     detail: "none yet",
   };
@@ -43,7 +43,7 @@ export function computePipelineSteps(
 
   const dataset: PipelineStep = {
     key: "dataset",
-    label: "Dataset",
+    label: "Training Dataset",
     state: "upcoming",
     detail: "none yet",
   };
@@ -66,7 +66,7 @@ export function computePipelineSteps(
 
   const training: PipelineStep = {
     key: "training",
-    label: "Training",
+    label: "Fine-Tuning",
     state: "upcoming",
     detail: "not started",
   };
@@ -84,7 +84,7 @@ export function computePipelineSteps(
     training.detail = `${jobs.completed} completed`;
   } else if (ds.approved > 0) {
     training.state = "current";
-    training.detail = "ready to train";
+    training.detail = "ready to fine-tune";
   } else if (jobs.failed > 0) {
     training.state = "current";
     training.detail = `${jobs.failed} failed`;
@@ -101,7 +101,7 @@ export function computePipelineSteps(
     model.detail =
       models.active > 0
         ? `${models.total} built · ${models.active} deployed`
-        : `${models.total} built`;
+        : `${models.total} built — download or deploy`;
   }
 
   return [documents, dataset, training, model];

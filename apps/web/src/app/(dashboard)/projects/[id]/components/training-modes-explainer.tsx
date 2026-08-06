@@ -24,14 +24,14 @@ const MODES = [
   },
   {
     name: "Iterative",
-    pipeline: "multi-round SFT",
+    pipeline: "Multi-Round SFT",
     detail:
       "Train in rounds with a held-out evaluation after each, keeping the best checkpoint.",
     bestFor: "squeezing quality from small datasets",
   },
   {
     name: "Distill",
-    pipeline: "teacher → student",
+    pipeline: "Distillation",
     detail:
       "A large teacher model trains a small one you own — from its answers, its token distributions, or live on-policy feedback.",
     bestFor: "matching a big model at a fraction of the cost",
@@ -42,7 +42,7 @@ export function TrainingModesExplainer() {
   return (
     <div className="mt-6">
       <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
-        Training modes this platform supports
+        Fine-tuning modes this platform supports
       </h3>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {MODES.map((mode) => (
@@ -51,11 +51,11 @@ export function TrainingModesExplainer() {
             className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
           >
             <div className="flex items-baseline justify-between gap-2">
-              <h4 className="font-medium text-zinc-900 dark:text-white">
-                {mode.name}
-              </h4>
-              <span className="font-mono text-xs text-violet-600 dark:text-violet-400">
+              <h4 className="font-mono text-base font-bold text-violet-700 dark:text-violet-400">
                 {mode.pipeline}
+              </h4>
+              <span className="text-xs text-zinc-400 dark:text-zinc-600">
+                {mode.name}
               </span>
             </div>
             <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">

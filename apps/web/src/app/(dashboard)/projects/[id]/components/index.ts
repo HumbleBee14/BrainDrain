@@ -1,4 +1,3 @@
-export { StatusBadge } from "./status-badge";
 export { DocStatusBadge } from "./doc-status-badge";
 export { DatasetStatusBadge } from "./dataset-status-badge";
 export { DeploymentStatusBadge } from "./deployment-status-badge";

@@ -21,9 +21,12 @@ import { Button } from "@/components/ui/button";
 import { TrainingStatusBadge } from "./training-status-badge";
 import { TrainingModesExplainer } from "./training-modes-explainer";
 import { FidelityUpgrade } from "./fidelity-upgrade";
+import { DistillSetup } from "./distill-setup";
 
 export function TrainingTab({
   projectId,
+  taskType,
+  canDistill,
   datasets,
   allTrainingJobs,
   showTrainForm,
@@ -31,6 +34,8 @@ export function TrainingTab({
   onDistillJobCreated,
 }: {
   projectId: string;
+  taskType: string;
+  canDistill: boolean;
   datasets: Dataset[];
   allTrainingJobs: TrainingJob[];
   showTrainForm: boolean;
@@ -52,6 +57,7 @@ export function TrainingTab({
     useState<DistillOptionsDto | null>(null);
   const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [showDistillSetup, setShowDistillSetup] = useState(false);
 
   const { data: costEstimate } = useEstimateTrainingCost(projectId, trainForm);
   const {
@@ -165,8 +171,8 @@ export function TrainingTab({
       <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <p className="text-sm text-zinc-500">
           {hasApprovedDatasets
-            ? `${approvedDatasets.length} approved dataset(s) ready to train on.`
-            : "Approve a dataset first — training runs on approved datasets only."}
+            ? `${approvedDatasets.length} approved dataset(s) ready to fine-tune on.`
+            : "Approve a dataset first — fine-tuning runs on approved datasets only."}
         </p>
         <div className="flex shrink-0 items-center gap-2">
           {compareIds.length >= 2 && (
@@ -182,18 +188,45 @@ export function TrainingTab({
             </Button>
           )}
           <Button
+            variant="secondary"
+            onClick={() => setShowDistillSetup(!showDistillSetup)}
+            disabled={!canDistill}
+            title={
+              canDistill
+                ? "Use a big, expensive model to teach a small one you own — with a report proving how close it got"
+                : "Upload documents first — the teacher writes its training data from them"
+            }
+          >
+            Distill a Larger Model
+          </Button>
+          <Button
             onClick={() => setShowTrainForm(!showTrainForm)}
             disabled={!hasApprovedDatasets}
             title={
               hasApprovedDatasets
                 ? undefined
-                : "Approve a dataset first to start training"
+                : "Approve a dataset first to start fine-tuning"
             }
           >
-            Start Training
+            Start Fine-Tuning
           </Button>
         </div>
       </div>
+
+      {showDistillSetup && (
+        <div className="mb-4">
+          <DistillSetup
+            projectId={projectId}
+            taskType={taskType}
+            catalogModels={catalogModels}
+            suggestedBaseModel={
+              catalogData?.suggested ?? catalogModels[0]?.model_id ?? ""
+            }
+            disabled={!canDistill}
+            onStarted={() => setShowDistillSetup(false)}
+          />
+        </div>
+      )}
 
       {allTrainingJobs.length > 3 && (
         <div className="mb-3 flex gap-2">
@@ -456,8 +489,8 @@ export function TrainingTab({
               {createTrainingJob.isPending
                 ? "Starting..."
                 : costEstimate
-                  ? `Start Training (~$${costEstimate.cost_estimate.toFixed(2)})`
-                  : "Start Training Job"}
+                  ? `Start Fine-Tuning (~$${costEstimate.cost_estimate.toFixed(2)})`
+                  : "Start Fine-Tuning"}
             </Button>
             <Button variant="secondary" onClick={() => setShowTrainForm(false)}>
               Cancel
@@ -538,10 +571,10 @@ export function TrainingTab({
       {trainingJobs.length === 0 && !showTrainForm && (
         <p className="text-sm text-zinc-400 dark:text-zinc-600">
           {allTrainingJobs.length > 0 && jobStatusFilter !== "all"
-            ? "No training jobs match the current filter."
+            ? "No fine-tuning jobs match the current filter."
             : hasApprovedDatasets
-              ? 'No training jobs yet. Click "Start Training" to begin.'
-              : "Approve a dataset first to start training."}
+              ? 'No fine-tuning jobs yet. Click "Start Fine-Tuning" to begin.'
+              : "Approve a dataset first to start fine-tuning."}
         </p>
       )}
 

@@ -2,18 +2,18 @@
 
 const ROUTES = [
   {
-    title: "Automatic",
-    tagline: "Fastest path",
-    reads: "your documents",
-    produces: "a tuned model, no decisions needed",
+    title: "Standard",
+    tagline: "Step by step",
+    reads: "your documents — or a JSONL dataset directly",
+    produces: "a fine-tuned model you approved every input of",
     detail:
-      "Auto-runs every step: parse, generate training data, train, evaluate.",
+      "Parse documents, generate training data (or import your own), review it, then fine-tune. The page guides each step.",
   },
   {
     title: "Guided",
     tagline: "Quality control",
     reads: "your documents",
-    produces: "a dataset you review before training",
+    produces: "a dataset you shaped before training",
     detail:
       "Steer the data generation in Data Studio — rate samples and refine before any GPU time is spent.",
   },
