@@ -20,7 +20,6 @@ export function SettingsTab({ project }: { project: Project }) {
       await deleteProject.mutateAsync(project.id);
       router.push("/projects");
     } catch {
-      // Error is captured by React Query and surfaced via deleteProject.isError
       setConfirmDelete(false);
     }
   };
@@ -99,6 +98,11 @@ export function SettingsTab({ project }: { project: Project }) {
                 : "Delete Project"}
           </button>
         </div>
+        {deleteProject.isError && (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+            {deleteProject.error.message}
+          </p>
+        )}
       </div>
     </div>
   );

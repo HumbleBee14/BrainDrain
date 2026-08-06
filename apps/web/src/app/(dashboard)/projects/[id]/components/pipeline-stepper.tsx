@@ -56,6 +56,9 @@ export function computePipelineSteps(
   } else if (ds.review_pending > 0) {
     dataset.state = "current";
     dataset.detail = `${ds.review_pending} awaiting review`;
+  } else if (ds.failed > 0) {
+    dataset.state = "current";
+    dataset.detail = `${ds.failed} failed`;
   } else if (docs.parsed > 0) {
     dataset.state = "current";
     dataset.detail = "ready to generate";

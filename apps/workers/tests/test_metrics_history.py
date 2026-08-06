@@ -11,6 +11,7 @@ from src.activities.train_model import (
     _METRICS_HISTORY,
     _drain_history,
     _record_history_point,
+    _stitch_iteration_history,
 )
 
 
@@ -55,3 +56,42 @@ class TestDrainHistory:
         _record_history_point("job-b", _point(2))
         assert [p["step"] for p in _drain_history("job-a")] == [1]
         assert [p["step"] for p in _drain_history("job-b")] == [2]
+
+
+class TestStitchIterationHistory:
+    def test_rounds_concatenate_with_cumulative_steps(self):
+        metrics = {
+            "iter_0": {"loss_history": [_point(1, "iter_0"), _point(5, "iter_0")]},
+            "iter_1": {"loss_history": [_point(1, "iter_1"), _point(5, "iter_1")]},
+            "iter_0_eval_loss": 0.4,
+        }
+        history = _stitch_iteration_history(metrics)
+        assert [p["step"] for p in history] == [1, 5, 6, 10]
+        assert [p["phase"] for p in history] == ["iter_0", "iter_0", "iter_1", "iter_1"]
+
+    def test_rounds_ordered_numerically_not_lexically(self):
+        metrics = {
+            f"iter_{n}": {"loss_history": [_point(1, f"iter_{n}")]} for n in [10, 2, 0]
+        }
+        history = _stitch_iteration_history(metrics)
+        assert [p["phase"] for p in history] == ["iter_0", "iter_2", "iter_10"]
+
+    def test_per_round_histories_removed_after_stitch(self):
+        metrics = {"iter_0": {"loss_history": [_point(1)], "iter_0_train_loss": 0.5}}
+        _stitch_iteration_history(metrics)
+        assert "loss_history" not in metrics["iter_0"]
+
+    def test_no_round_histories_returns_empty(self):
+        assert _stitch_iteration_history({"iter_0": {"sft_train_loss": 0.5}}) == []
+
+    def test_stitched_series_downsampled(self):
+        metrics = {
+            "iter_0": {
+                "loss_history": [_point(s, "iter_0") for s in range(_HISTORY_MAX_POINTS)]
+            },
+            "iter_1": {
+                "loss_history": [_point(s, "iter_1") for s in range(_HISTORY_MAX_POINTS)]
+            },
+        }
+        history = _stitch_iteration_history(metrics)
+        assert len(history) == _HISTORY_MAX_POINTS
