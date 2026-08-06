@@ -274,6 +274,25 @@ impl ModelRepository for PgModelRepo {
         })
     }
 
+    fn delete_with_training_job(
+        &self,
+        tenant_id: Uuid,
+        training_job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<bool>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let deleted = sqlx::query("DELETE FROM training_jobs WHERE id = $1 AND tenant_id = $2")
+                .bind(training_job_id)
+                .bind(tenant_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+            tx.commit().await?;
+
+            Ok(deleted > 0)
+        })
+    }
+
     fn count_by_tenant_deployment_status(
         &self,
         tenant_id: Uuid,

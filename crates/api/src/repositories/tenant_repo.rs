@@ -106,6 +106,26 @@ impl TenantRepository for PgTenantRepo {
         })
     }
 
+    fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+        Box::pin(async move {
+            let total = sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT (
+                    (SELECT COALESCE(SUM(file_size), 0) FROM documents WHERE tenant_id = $1)
+                  + (SELECT COALESCE(SUM(size_bytes), 0) FROM datasets WHERE tenant_id = $1)
+                  + (SELECT COALESCE(SUM(adapter_size_bytes), 0) FROM models WHERE tenant_id = $1)
+                  + (SELECT COALESCE(SUM(file_size_bytes), 0) FROM model_exports WHERE tenant_id = $1)
+                )::BIGINT
+                "#,
+            )
+            .bind(tenant_id)
+            .fetch_one(&self.db)
+            .await?;
+
+            Ok(total)
+        })
+    }
+
     fn get_settings(&self, id: Uuid) -> BoxFuture<'_, AppResult<serde_json::Value>> {
         Box::pin(async move {
             let settings = sqlx::query_scalar::<_, serde_json::Value>(

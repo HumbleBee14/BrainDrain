@@ -70,6 +70,8 @@ pub struct Dataset {
     /// `token_count_tokenizer_hash`.
     pub scored_completion_tokens: Option<i64>,
     pub token_count_tokenizer_hash: Option<String>,
+    /// Stored bytes of the dataset's JSONL objects. NULL = never measured.
+    pub size_bytes: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

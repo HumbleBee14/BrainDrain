@@ -15,14 +15,11 @@ pub fn dataset_path(tenant_id: Uuid, project_id: Uuid, dataset_id: Uuid) -> Stri
     format!("datasets/{tenant_id}/{project_id}/{dataset_id}.jsonl")
 }
 
-/// Build S3 key prefix for a trained model adapter.
-pub fn adapter_prefix(tenant_id: Uuid, model_id: Uuid) -> String {
-    format!("adapters/{tenant_id}/{model_id}/")
-}
-
-/// Build S3 key for a specific adapter file.
-pub fn adapter_file(tenant_id: Uuid, model_id: Uuid, filename: &str) -> String {
-    format!("adapters/{tenant_id}/{model_id}/{filename}")
+/// Build S3 key prefix for a trained adapter. Keyed by training job, because
+/// the trainer uploads the adapter before any model row exists; the resulting
+/// prefix is stored on the model as `adapter_path`.
+pub fn adapter_prefix(tenant_id: Uuid, training_id: Uuid) -> String {
+    format!("adapters/{tenant_id}/{training_id}/")
 }
 
 /// Build S3 key for training checkpoints.
@@ -55,6 +52,39 @@ pub fn tenant_prefixes(tenant_id: Uuid) -> Vec<String> {
     .iter()
     .map(|category| format!("{category}/{tenant_id}/"))
     .collect()
+}
+
+/// Every prefix holding objects keyed by project, each as
+/// `"{category}/{tenant_id}/{project_id}/"`. Adapters, checkpoints and exports
+/// are keyed by model or training job rather than project, so they are NOT
+/// here — see [`model_prefixes`] and [`checkpoint_prefix`].
+pub fn project_prefixes(tenant_id: Uuid, project_id: Uuid) -> Vec<String> {
+    [
+        "uploads",
+        "parsed",
+        "datasets",
+        "chunks",
+        "pairs",
+        "pair-checkpoints",
+    ]
+    .iter()
+    .map(|category| format!("{category}/{tenant_id}/{project_id}/"))
+    .collect()
+}
+
+/// Prefix holding every export built from one model.
+pub fn export_prefix(tenant_id: Uuid, model_id: Uuid) -> String {
+    format!("exports/{tenant_id}/{model_id}/")
+}
+
+/// Every prefix holding objects for one training run: the adapter it produced
+/// and the checkpoints it wrote on the way. Both are keyed by job id, so this
+/// also reclaims the adapter of a run that died before its model row existed.
+pub fn training_job_prefixes(tenant_id: Uuid, training_id: Uuid) -> Vec<String> {
+    vec![
+        adapter_prefix(tenant_id, training_id),
+        checkpoint_prefix(tenant_id, training_id),
+    ]
 }
 
 #[cfg(test)]

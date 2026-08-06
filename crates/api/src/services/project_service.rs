@@ -136,28 +136,6 @@ impl ProjectService {
         Ok(project.into())
     }
 
-    pub async fn delete(
-        repo: &dyn ProjectRepository,
-        tenant_id: Uuid,
-        project_id: Uuid,
-    ) -> AppResult<()> {
-        let deleted = repo.delete(tenant_id, project_id).await?;
-
-        if !deleted {
-            return Err(AppError::NotFound {
-                message: "Project not found".to_string(),
-            });
-        }
-
-        tracing::info!(
-            project_id = %project_id,
-            tenant_id = %tenant_id,
-            "Project deleted"
-        );
-
-        Ok(())
-    }
-
     /// Update a project's status with state machine validation.
     ///
     /// Only allows valid transitions:

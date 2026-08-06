@@ -258,15 +258,19 @@ impl DatasetService {
         let split_idx = ((total as f64 * IMPORT_TRAIN_FRACTION) as usize).max(1);
         let (train, val) = records.split_at(split_idx.min(total));
 
+        let train_bytes = jsonl_bytes(train);
+        let mut size_bytes = train_bytes.len() as i64;
         storage
-            .put(&dataset_key, jsonl_bytes(train), "application/jsonl")
+            .put(&dataset_key, train_bytes, "application/jsonl")
             .await
             .map_err(AppError::Storage)?;
 
         if !val.is_empty() {
             let val_key = dataset_key.replace(".jsonl", "_val.jsonl");
+            let val_bytes = jsonl_bytes(val);
+            size_bytes += val_bytes.len() as i64;
             storage
-                .put(&val_key, jsonl_bytes(val), "application/jsonl")
+                .put(&val_key, val_bytes, "application/jsonl")
                 .await
                 .map_err(AppError::Storage)?;
         }
@@ -294,6 +298,7 @@ impl DatasetService {
                 dataset_key.clone(),
                 total as i32,
                 stats,
+                size_bytes,
             )
             .await;
         if created.is_err() {

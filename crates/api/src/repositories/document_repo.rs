@@ -198,21 +198,6 @@ impl DocumentRepository for PgDocumentRepo {
         })
     }
 
-    fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
-        Box::pin(async move {
-            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
-            let total = sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(SUM(file_size), 0)::BIGINT FROM documents WHERE tenant_id = $1",
-            )
-            .bind(tenant_id)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-            Ok(total)
-        })
-    }
-
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;

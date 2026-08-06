@@ -27,6 +27,7 @@ pub mod ollama_modelfile;
 pub mod pipeline_service;
 pub mod plan_service;
 pub mod project_service;
+pub mod purge_service;
 pub mod reaper;
 pub mod secret_cipher;
 pub mod smtp_email;

@@ -363,7 +363,7 @@ impl TrainingJobService {
                 .await?
                 .ok_or(AppError::Forbidden {
                     message: format!(
-                        "Plan limit reached: maximum {} models on your current plan",
+                        "Plan limit reached: your plan allows {} models, and every run that is queued, training or completed holds one. Delete a project you no longer need, or upgrade.",
                         max
                     ),
                 })?
@@ -1511,6 +1511,14 @@ mod parent_model_tests {
             _tenant_id: Uuid,
             _status: DeploymentStatus,
         ) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("a parent check only reads one model")
+        }
+
+        fn delete_with_training_job(
+            &self,
+            _tenant_id: Uuid,
+            _training_job_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<bool>> {
             unimplemented!("a parent check only reads one model")
         }
 

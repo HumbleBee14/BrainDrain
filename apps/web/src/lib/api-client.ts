@@ -861,6 +861,9 @@ export const api = {
     get: (token: string, id: string) =>
       request<ModelResponse>(`/api/v1/models/${id}`, { token }),
 
+    delete: (token: string, id: string) =>
+      request<void>(`/api/v1/models/${id}`, { token, method: "DELETE" }),
+
     listVersions: (token: string, id: string) =>
       request<ModelResponse[]>(`/api/v1/models/${id}/versions`, { token }),
 

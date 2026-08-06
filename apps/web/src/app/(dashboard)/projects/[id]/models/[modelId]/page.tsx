@@ -1,10 +1,15 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { useModel, useModelVersions, useRollbackModel } from "@/hooks/use-models";
+import {
+  useDeleteModel,
+  useModel,
+  useModelVersions,
+  useRollbackModel,
+} from "@/hooks/use-models";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import {
   useDeploymentStatus,
@@ -119,6 +124,8 @@ export default function ModelDetailPage() {
   const createApiKey = useCreateApiKey(params.modelId);
   const revokeApiKey = useRevokeApiKey(params.modelId);
   const rollbackModel = useRollbackModel(params.modelId);
+  const deleteModel = useDeleteModel(params.modelId);
+  const router = useRouter();
 
   const { markStepComplete } = useOnboarding();
 
@@ -172,6 +179,7 @@ export default function ModelDetailPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [ollamaForExport, setOllamaForExport] = useState<string | null>(null);
   const [copiedModelfile, setCopiedModelfile] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const evaluations = evalsData?.data ?? [];
   const keys = apiKeys ?? [];
@@ -837,6 +845,57 @@ export default function ModelDetailPage() {
           </div>
         </div>
       )}
+
+      <div className="rounded-lg border border-zinc-200 p-6 dark:border-zinc-800">
+        <h3 className="mb-4 text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          Danger Zone
+        </h3>
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm text-zinc-900 dark:text-white">
+              Delete this model
+            </p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-600">
+              Takes it offline if deployed, then erases its adapter, exports,
+              checkpoints, API keys and the training run that produced it.
+              Frees a model slot on your plan. Your documents and datasets
+              stay.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              if (!confirmDelete) {
+                setConfirmDelete(true);
+                return;
+              }
+              deleteModel.mutate(undefined, {
+                onSuccess: () => {
+                  toast.success("Model deleted");
+                  router.push(`/projects/${params.id}`);
+                },
+                onError: () => setConfirmDelete(false),
+              });
+            }}
+            disabled={deleteModel.isPending}
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+              confirmDelete
+                ? "bg-red-600 text-white hover:bg-red-500"
+                : "border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/30"
+            }`}
+          >
+            {deleteModel.isPending
+              ? "Deleting..."
+              : confirmDelete
+                ? "Confirm — erase this model"
+                : "Delete Model"}
+          </button>
+        </div>
+        {deleteModel.isError && (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+            {deleteModel.error.message}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

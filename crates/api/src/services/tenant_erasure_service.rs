@@ -84,6 +84,9 @@ mod tests {
         fn get_by_id(&self, _id: Uuid) -> BoxFuture<'_, AppResult<Option<Tenant>>> {
             unimplemented!()
         }
+        fn sum_storage_bytes(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
+            unimplemented!("erasure never reads storage usage")
+        }
         fn update_stripe_customer(
             &self,
             _id: Uuid,

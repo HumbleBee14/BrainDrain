@@ -69,7 +69,7 @@ impl DocumentService {
 
         // Enforce the plan storage allowance against the real size, rolling back
         // the uploaded object if it would push the tenant over the limit.
-        let current_bytes = repo.sum_storage_bytes(tenant_id).await?;
+        let current_bytes = tenant_repo.sum_storage_bytes(tenant_id).await?;
         if let Err(e) =
             PlanService::check_storage_limit(tenant_repo, tenant_id, current_bytes, file_size).await
         {
@@ -451,10 +451,6 @@ mod tests {
         }
 
         fn count_by_tenant(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
-            unimplemented!()
-        }
-
-        fn sum_storage_bytes(&self, _tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>> {
             unimplemented!()
         }
     }

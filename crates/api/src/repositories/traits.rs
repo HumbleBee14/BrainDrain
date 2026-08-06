@@ -133,9 +133,6 @@ pub trait DocumentRepository: Send + Sync {
     /// Count all documents across all projects for a tenant.
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
-    /// Sum of uploaded document bytes for a tenant (storage-quota accounting).
-    fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
-
     /// Hard-delete a document row. Returns whether a row was deleted.
     fn delete(&self, tenant_id: Uuid, document_id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
@@ -188,6 +185,7 @@ pub trait DatasetRepository: Send + Sync {
         storage_path: String,
         pair_count: i32,
         stats: serde_json::Value,
+        size_bytes: i64,
     ) -> BoxFuture<'_, AppResult<Dataset>>;
 
     /// Reserve a `generating` row before starting a refine run, so the run is
@@ -480,6 +478,16 @@ pub trait ModelRepository: Send + Sync {
 
     /// Count all models for a tenant.
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
+
+    /// Hard-delete the run that produced a model, cascading the model row and
+    /// everything hanging off it (evaluations, exports, captured samples).
+    /// A run and its model are one unit: deleting the model alone would leave a
+    /// completed run pointing at nothing and still holding a plan slot.
+    fn delete_with_training_job(
+        &self,
+        tenant_id: Uuid,
+        training_job_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<bool>>;
 
     /// Count models by deployment status for a tenant (across all projects).
     fn count_by_tenant_deployment_status(
@@ -945,6 +953,12 @@ pub trait TenantRepository: Send + Sync {
         id: Uuid,
         settings: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>>;
+
+    /// Every stored byte a tenant is accountable for: uploaded documents,
+    /// built datasets, trained adapters and finished exports. Rows whose size
+    /// was never recorded contribute zero, so this is a floor, never an
+    /// over-count.
+    fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     /// Delete a tenant row. Cascades all operational tables (tenant erasure).
     /// Returns whether a row was deleted (false if the tenant was already gone).

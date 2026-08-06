@@ -23,6 +23,7 @@ use crate::services::adapter_download_service::AdapterDownloadService;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::model_service::ModelService;
 use crate::services::plan_service::PlanService;
+use crate::services::purge_service::PurgeService;
 use crate::services::training_job_service::TrainingJobService;
 use crate::temporal::TraceContext;
 
@@ -56,7 +57,7 @@ pub fn router() -> Router<AppState> {
         .route("/training-jobs/{id}/metrics", get(get_training_metrics))
         // Models
         .route("/projects/{project_id}/models", get(list_models))
-        .route("/models/{id}", get(get_model))
+        .route("/models/{id}", get(get_model).delete(delete_model))
         .route("/models/{id}/versions", get(list_model_versions))
         .route("/models/{id}/rollback", post(rollback_model))
         .route("/models/{id}/adapter/download", get(download_adapter))
@@ -553,6 +554,45 @@ pub async fn get_model(
 ) -> AppResult<Json<ModelResponse>> {
     let model = ModelService::get(state.model_repo(), user.tenant_id, id).await?;
     Ok(Json(model))
+}
+
+/// DELETE /api/v1/models/:id
+///
+/// Removes the model, its adapter and exports, and the run that produced it.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/models/{id}",
+    tag = "Training",
+    params(
+        ("id" = Uuid, Path, description = "Model ID")
+    ),
+    responses(
+        (status = 204, description = "Model, its artifacts and its training run deleted"),
+        (status = 400, description = "Model is mid-deployment; retry once it settles", body = crate::error::ErrorEnvelope),
+        (status = 404, body = crate::error::ErrorEnvelope),
+    ),
+    security(("jwt" = []))
+)]
+pub async fn delete_model(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    require_role(&user, TeamRole::Member)?;
+    let summary = PurgeService::purge_model(&state, user.tenant_id, id).await?;
+    AuditLogger::log(
+        state.audit_log_repo(),
+        &user,
+        "delete",
+        "model",
+        Some(id),
+        serde_json::json!({
+            "models_undeployed": summary.models_undeployed,
+            "objects_deleted": summary.objects_deleted,
+        }),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// GET /api/v1/models/:id/adapter/download

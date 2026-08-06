@@ -138,6 +138,7 @@ fn v1_router() -> Router<AppState> {
         training::get_training_metrics,
         training::list_models,
         training::get_model,
+        training::delete_model,
         training::download_adapter,
         // Catalog
         catalog::get_catalog,

@@ -46,6 +46,25 @@ export function useModelVersions(id: string) {
   });
 }
 
+export function useDeleteModel(modelId: string) {
+  const { getToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation<void, Error, void>({
+    mutationFn: async () => {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      return api.models.delete(token, modelId);
+    },
+    onSuccess: () => {
+      // The run that produced the model goes with it, so training lists are
+      // stale too.
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: ["training-jobs"] });
+    },
+  });
+}
+
 export function useRollbackModel(modelId: string) {
   const { getToken } = useAuth();
   const queryClient = useQueryClient();

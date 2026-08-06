@@ -248,6 +248,7 @@ mod tests {
             completion_tokens: None,
             scored_completion_tokens: None,
             token_count_tokenizer_hash: None,
+            size_bytes: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

@@ -120,12 +120,18 @@ class BuildDatasetActivity:
         # Upload dataset
         dataset_key = s3_paths.dataset_path(input.tenant_id, input.project_id, input.dataset_id)
 
+        # Every uploaded byte is summed so the dataset counts toward the
+        # tenant's storage allowance alongside documents, adapters and exports.
+        size_bytes = 0
+
         # Main dataset (train)
         train_lines = [json.dumps(r, ensure_ascii=False) for r in train_records]
+        train_body = "\n".join(train_lines).encode("utf-8")
+        size_bytes += len(train_body)
         s3.put_object(
             Bucket=bucket,
             Key=dataset_key,
-            Body="\n".join(train_lines).encode("utf-8"),
+            Body=train_body,
             ContentType="application/jsonl",
         )
 
@@ -133,10 +139,12 @@ class BuildDatasetActivity:
         if val_records:
             val_key = dataset_key.replace(".jsonl", "_val.jsonl")
             val_lines = [json.dumps(r, ensure_ascii=False) for r in val_records]
+            val_body = "\n".join(val_lines).encode("utf-8")
+            size_bytes += len(val_body)
             s3.put_object(
                 Bucket=bucket,
                 Key=val_key,
-                Body="\n".join(val_lines).encode("utf-8"),
+                Body=val_body,
                 ContentType="application/jsonl",
             )
 
@@ -155,10 +163,12 @@ class BuildDatasetActivity:
             if golden_records:
                 golden_key = dataset_key.replace(".jsonl", "_golden.jsonl")
                 golden_lines = [json.dumps(r, ensure_ascii=False) for r in golden_records]
+                golden_body = "\n".join(golden_lines).encode("utf-8")
+                size_bytes += len(golden_body)
                 s3.put_object(
                     Bucket=bucket,
                     Key=golden_key,
-                    Body="\n".join(golden_lines).encode("utf-8"),
+                    Body=golden_body,
                     ContentType="application/jsonl",
                 )
 
@@ -175,15 +185,17 @@ class BuildDatasetActivity:
         await db.execute(
             """
             INSERT INTO datasets (id, tenant_id, project_id, name, format, storage_path,
-                                  status, pair_count, stats, config, created_at, updated_at)
+                                  status, pair_count, stats, config, size_bytes,
+                                  created_at, updated_at)
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'chatml', $5, 'review_pending',
-                    $6, $7::jsonb, $8::jsonb, now(), now())
+                    $6, $7::jsonb, $8::jsonb, $9, now(), now())
             ON CONFLICT (id) DO UPDATE SET
                 pair_count = $6, storage_path = $5, status = 'review_pending',
                 stats = $7::jsonb,
                 config = CASE WHEN datasets.config ? 'teacher'
                               THEN datasets.config
                               ELSE datasets.config || EXCLUDED.config END,
+                size_bytes = $9,
                 updated_at = now()
             """,
             input.dataset_id,
@@ -203,6 +215,7 @@ class BuildDatasetActivity:
                 }
             ),
             config_json,
+            size_bytes,
         )
 
         activity.logger.info(

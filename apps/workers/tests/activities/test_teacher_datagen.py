@@ -20,6 +20,12 @@ from src.teacher import TeacherConfig
 
 KEY_B64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 TEACHER_MODEL = "big-teacher-72b"
+
+# Position of the config JSON ($8) in the datasets upsert's argument list.
+# Bound by name rather than counting from the end, so appending a parameter to
+# the statement fails loudly here instead of silently asserting the wrong one.
+DATASET_CONFIG_ARG = 7
+DATASET_SIZE_BYTES_ARG = 8
 TENANT_MODEL = "tenant-model"
 TEACHER_KEY = "sk-teacher-plain"
 TENANT_KEY = "sk-tenant-plain"
@@ -349,7 +355,7 @@ class TestBuildDatasetProvenance:
         assert output.pair_count == 1
 
         query, args = db.executed[-1]
-        config_json = args[-1]
+        config_json = args[DATASET_CONFIG_ARG]
         config = json.loads(config_json)
         assert config["teacher"]["host"] == "teacher.example.com"
         assert config["teacher"]["model"] == TEACHER_MODEL
@@ -369,7 +375,13 @@ class TestBuildDatasetProvenance:
     async def test_no_teacher_writes_empty_config(self):
         db, _ = await self._run(None)
         _, args = db.executed[-1]
-        assert json.loads(args[-1]) == {}
+        assert json.loads(args[DATASET_CONFIG_ARG]) == {}
+
+    @pytest.mark.asyncio
+    async def test_uploaded_bytes_are_recorded_for_the_storage_quota(self):
+        db, _ = await self._run(None)
+        _, args = db.executed[-1]
+        assert args[DATASET_SIZE_BYTES_ARG] > 0
 
 
 class TestWireCompatibility:

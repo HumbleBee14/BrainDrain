@@ -357,13 +357,38 @@ impl ObjectStorage for S3Storage {
                     .set_objects(Some(ids))
                     .build()
                     .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
-                self.client
+                let resp = self
+                    .client
                     .delete_objects()
                     .bucket(&self.bucket)
                     .delete(delete)
                     .send()
                     .await
                     .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
+
+                // A batch delete answers 200 while reporting per-key failures in
+                // the body. Callers that delete storage before dropping the rows
+                // that point at it must hear about those, or they commit to a
+                // deletion that never happened.
+                let failures = resp.errors();
+                if !failures.is_empty() {
+                    let sample: Vec<String> = failures
+                        .iter()
+                        .take(3)
+                        .map(|e| {
+                            format!(
+                                "{}: {}",
+                                e.key().unwrap_or("<no key>"),
+                                e.message().unwrap_or("unknown error")
+                            )
+                        })
+                        .collect();
+                    return Err(StorageError::DeleteFailed(format!(
+                        "{} of {count} objects under '{prefix}' failed to delete ({})",
+                        failures.len(),
+                        sample.join("; ")
+                    )));
+                }
                 deleted += count;
             }
 

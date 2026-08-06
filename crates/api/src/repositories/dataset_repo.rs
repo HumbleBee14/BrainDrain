@@ -161,6 +161,7 @@ impl DatasetRepository for PgDatasetRepo {
         storage_path: String,
         pair_count: i32,
         stats: serde_json::Value,
+        size_bytes: i64,
     ) -> BoxFuture<'_, AppResult<Dataset>> {
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
@@ -168,8 +169,8 @@ impl DatasetRepository for PgDatasetRepo {
                 r#"
                 INSERT INTO datasets
                     (id, tenant_id, project_id, name, format, storage_path,
-                     status, pair_count, stats, config)
-                VALUES ($1, $2, $3, $4, 'chatml', $5, $6, $7, $8, '{}'::jsonb)
+                     status, pair_count, stats, config, size_bytes)
+                VALUES ($1, $2, $3, $4, 'chatml', $5, $6, $7, $8, '{}'::jsonb, $9)
                 RETURNING *
                 "#,
             )
@@ -181,6 +182,7 @@ impl DatasetRepository for PgDatasetRepo {
             .bind(DatasetStatus::ReviewPending.to_string())
             .bind(pair_count)
             .bind(stats)
+            .bind(size_bytes)
             .fetch_one(&mut *tx)
             .await?;
 

@@ -17,6 +17,7 @@ use crate::rbac::require_role;
 use crate::services::audit_logger::AuditLogger;
 use crate::services::plan_service::PlanService;
 use crate::services::project_service::ProjectService;
+use crate::services::purge_service::PurgeService;
 
 /// Project CRUD routes.
 pub fn router() -> Router<AppState> {
@@ -199,7 +200,8 @@ pub async fn update_project_status(
     tag = "Projects",
     params(("id" = Uuid, Path, description = "Project ID")),
     responses(
-        (status = 204, description = "Project deleted"),
+        (status = 204, description = "Project and all its artifacts deleted"),
+        (status = 400, description = "A model is mid-deployment; retry once it settles", body = crate::error::ErrorEnvelope),
         (status = 404, body = crate::error::ErrorEnvelope),
     ),
     security(("jwt" = []))
@@ -210,14 +212,18 @@ pub async fn delete_project(
     Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     require_role(&user, TeamRole::Member)?;
-    ProjectService::delete(state.project_repo(), user.tenant_id, id).await?;
+    let summary = PurgeService::purge_project(&state, user.tenant_id, id).await?;
     AuditLogger::log(
         state.audit_log_repo(),
         &user,
         "delete",
         "project",
         Some(id),
-        serde_json::json!({}),
+        serde_json::json!({
+            "jobs_stopped": summary.jobs_stopped,
+            "models_undeployed": summary.models_undeployed,
+            "objects_deleted": summary.objects_deleted,
+        }),
     )
     .await;
     Ok(StatusCode::NO_CONTENT)

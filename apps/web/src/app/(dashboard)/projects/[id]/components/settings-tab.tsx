@@ -79,7 +79,9 @@ export function SettingsTab({ project }: { project: Project }) {
               Delete this project
             </p>
             <p className="text-xs text-zinc-400 dark:text-zinc-600">
-              This action cannot be undone.
+              Stops any running job, takes deployed models offline, and
+              permanently erases every document, dataset, adapter and export.
+              This cannot be undone.
             </p>
           </div>
           <button
@@ -94,7 +96,7 @@ export function SettingsTab({ project }: { project: Project }) {
             {deleteProject.isPending
               ? "Deleting..."
               : confirmDelete
-                ? "Confirm Delete"
+                ? "Confirm — erase everything"
                 : "Delete Project"}
           </button>
         </div>
