@@ -311,9 +311,16 @@ impl DeploymentService {
 
         tx.commit().await?;
 
-        // Best-effort adapter unload AFTER DB commit.
-        // If this fails, the adapter lingers until instance restart — acceptable.
-        let _ = resolved_backend.unload_adapter(&adapter_ref).await;
+        // Best-effort unload AFTER DB commit. A failure leaks GPU memory until
+        // the instance restarts, so it must not be silent.
+        if let Err(e) = resolved_backend.unload_adapter(&adapter_ref).await {
+            tracing::warn!(
+                model_id = %model_id,
+                adapter_ref = %adapter_ref,
+                error = %e,
+                "Adapter unload failed after undeploy; it holds GPU memory until the instance restarts"
+            );
+        }
 
         tracing::info!(model_id = %model_id, "Model undeployed");
         Ok(updated.into())

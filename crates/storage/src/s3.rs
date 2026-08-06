@@ -1,5 +1,6 @@
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{Credentials, Region};
+use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
@@ -294,14 +295,15 @@ impl ObjectStorage for S3Storage {
             .await
         {
             Ok(_) => Ok(true),
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("404") || msg.contains("NotFound") || msg.contains("NoSuchKey") {
-                    Ok(false)
-                } else {
-                    Err(StorageError::Backend(msg))
+            // Typed, not Display-text: a missing key renders as a bare
+            // "service error" on some backends.
+            Err(e) => match &e {
+                SdkError::ServiceError(service) if service.err().is_not_found() => Ok(false),
+                SdkError::ServiceError(service) => {
+                    Err(StorageError::Backend(service.err().to_string()))
                 }
-            }
+                other => Err(StorageError::Backend(other.to_string())),
+            },
         }
     }
 
@@ -366,10 +368,8 @@ impl ObjectStorage for S3Storage {
                     .await
                     .map_err(|e| StorageError::DeleteFailed(e.to_string()))?;
 
-                // A batch delete answers 200 while reporting per-key failures in
-                // the body. Callers that delete storage before dropping the rows
-                // that point at it must hear about those, or they commit to a
-                // deletion that never happened.
+                // A batch delete answers 200 while reporting per-key failures
+                // in the body.
                 let failures = resp.errors();
                 if !failures.is_empty() {
                     let sample: Vec<String> = failures

@@ -15,9 +15,8 @@ pub fn dataset_path(tenant_id: Uuid, project_id: Uuid, dataset_id: Uuid) -> Stri
     format!("datasets/{tenant_id}/{project_id}/{dataset_id}.jsonl")
 }
 
-/// Build S3 key prefix for a trained adapter. Keyed by training job, because
-/// the trainer uploads the adapter before any model row exists; the resulting
-/// prefix is stored on the model as `adapter_path`.
+/// Prefix for a trained adapter. Keyed by training job — the trainer uploads
+/// before any model row exists, and this lands in `models.adapter_path`.
 pub fn adapter_prefix(tenant_id: Uuid, training_id: Uuid) -> String {
     format!("adapters/{tenant_id}/{training_id}/")
 }
@@ -54,10 +53,8 @@ pub fn tenant_prefixes(tenant_id: Uuid) -> Vec<String> {
     .collect()
 }
 
-/// Every prefix holding objects keyed by project, each as
-/// `"{category}/{tenant_id}/{project_id}/"`. Adapters, checkpoints and exports
-/// are keyed by model or training job rather than project, so they are NOT
-/// here — see [`model_prefixes`] and [`checkpoint_prefix`].
+/// Prefixes keyed by project. Adapters, checkpoints and exports are keyed by
+/// job or model instead — see [`training_job_prefixes`] and [`export_prefix`].
 pub fn project_prefixes(tenant_id: Uuid, project_id: Uuid) -> Vec<String> {
     [
         "uploads",
@@ -77,9 +74,8 @@ pub fn export_prefix(tenant_id: Uuid, model_id: Uuid) -> String {
     format!("exports/{tenant_id}/{model_id}/")
 }
 
-/// Every prefix holding objects for one training run: the adapter it produced
-/// and the checkpoints it wrote on the way. Both are keyed by job id, so this
-/// also reclaims the adapter of a run that died before its model row existed.
+/// A run's adapter and checkpoints. Both keyed by job id, so this also
+/// reclaims the adapter of a run that died before its model row existed.
 pub fn training_job_prefixes(tenant_id: Uuid, training_id: Uuid) -> Vec<String> {
     vec![
         adapter_prefix(tenant_id, training_id),

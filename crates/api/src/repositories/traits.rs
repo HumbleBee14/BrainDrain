@@ -76,6 +76,8 @@ pub trait ProjectRepository: Send + Sync {
         status: &str,
     ) -> BoxFuture<'_, AppResult<Option<Project>>>;
 
+    /// Hard-delete a project, cascading documents, datasets, runs and models.
+    /// Callers must erase its stored objects first.
     fn delete(&self, tenant_id: Uuid, project_id: Uuid) -> BoxFuture<'_, AppResult<bool>>;
 }
 
@@ -320,9 +322,8 @@ pub trait TrainingJobRepository: Send + Sync {
         reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
-    /// Atomic create with plan limit enforcement. Inserts only if the tenant's
-    /// count of jobs that still hold a model slot (failed and cancelled runs
-    /// release theirs) is below `max_models`. Returns None if the limit is hit.
+    /// Atomic create with plan limit enforcement. Failed and cancelled runs
+    /// release their slot. Returns None if the limit is hit.
     fn create_with_limit(
         &self,
         tenant_id: Uuid,
@@ -480,9 +481,7 @@ pub trait ModelRepository: Send + Sync {
     fn count_by_tenant(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     /// Hard-delete the run that produced a model, cascading the model row and
-    /// everything hanging off it (evaluations, exports, captured samples).
-    /// A run and its model are one unit: deleting the model alone would leave a
-    /// completed run pointing at nothing and still holding a plan slot.
+    /// everything hanging off it. A run and its model are one unit.
     fn delete_with_training_job(
         &self,
         tenant_id: Uuid,
@@ -954,10 +953,8 @@ pub trait TenantRepository: Send + Sync {
         settings: serde_json::Value,
     ) -> BoxFuture<'_, AppResult<()>>;
 
-    /// Every stored byte a tenant is accountable for: uploaded documents,
-    /// built datasets, trained adapters and finished exports. Rows whose size
-    /// was never recorded contribute zero, so this is a floor, never an
-    /// over-count.
+    /// Documents + datasets + adapters + exports. Rows with no recorded size
+    /// contribute zero, so this is a floor.
     fn sum_storage_bytes(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<i64>>;
 
     /// Delete a tenant row. Cascades all operational tables (tenant erasure).

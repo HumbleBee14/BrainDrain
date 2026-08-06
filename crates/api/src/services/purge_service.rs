@@ -18,20 +18,14 @@ pub struct PurgeSummary {
     pub objects_deleted: usize,
 }
 
-/// Removes a resource and everything it owns — running work, served adapters,
-/// stored objects, and finally the rows.
+/// Removes a resource and everything it owns.
 pub struct PurgeService;
 
 impl PurgeService {
     /// Delete a project and every artifact it produced.
     ///
-    /// Order is stop → unload → storage → rows, and every step propagates its
-    /// error instead of warning past it. Aborting leaves the project row in
-    /// place, so the caller simply deletes again: stopping an already-stopped
-    /// job and deleting an already-gone object are both no-ops, and the retry
-    /// carries on from where it failed. Deleting the rows first (the previous
-    /// behaviour) stranded every adapter, dataset and export in object storage
-    /// with nothing left pointing at them.
+    /// Order is stop → unload → storage → rows. Any failure aborts before the
+    /// rows go, so the project stays listed and the delete is retryable.
     pub async fn purge_project(
         state: &AppState,
         tenant_id: Uuid,
@@ -55,11 +49,11 @@ impl PurgeService {
                 .unwrap_or(DeploymentStatus::Undeployed)
             {
                 DeploymentStatus::Active => {
-                    DeploymentService::undeploy(state, tenant_id, model.id).await?;
-                    summary.models_undeployed += 1;
+                    if Self::unload_active(state, tenant_id, model).await? {
+                        summary.models_undeployed += 1;
+                    }
                 }
-                // A half-finished deploy would put the adapter back after we
-                // unloaded it, so refuse rather than race it.
+                // A deploy in flight would reload the adapter behind us.
                 DeploymentStatus::Deploying => {
                     return Err(AppError::BadRequest {
                         message: format!(
@@ -102,14 +96,9 @@ impl PurgeService {
         Ok(summary)
     }
 
-    /// Delete one model: its adapter, its exports, the checkpoints of the run
-    /// that produced it, and the run itself (which cascades the model row).
-    ///
-    /// Same ordering guarantee as [`Self::purge_project`] — unload, erase, then
-    /// rows — so a failure leaves the model listed and the delete retryable.
-    /// The run goes with the model because they are one unit: a completed run
-    /// whose model no longer exists still holds a plan slot and can never
-    /// produce another.
+    /// Delete a model: adapter, exports, the run's checkpoints, and the run
+    /// itself (which cascades the model row). The run goes too, or it would
+    /// keep holding a plan slot it can never use again.
     pub async fn purge_model(
         state: &AppState,
         tenant_id: Uuid,
@@ -125,8 +114,7 @@ impl PurgeService {
 
         let mut summary = PurgeSummary::default();
 
-        // A model normally implies a finished run, but never delete a run's rows
-        // while a GPU is still attached to it.
+        // Never drop a run's rows while a GPU is still attached to it.
         if let Some(job) = state
             .training_job_repo()
             .get_by_id(tenant_id, model.training_job_id)
@@ -142,8 +130,9 @@ impl PurgeService {
             .unwrap_or(DeploymentStatus::Undeployed)
         {
             DeploymentStatus::Active => {
-                DeploymentService::undeploy(state, tenant_id, model_id).await?;
-                summary.models_undeployed = 1;
+                if Self::unload_active(state, tenant_id, &model).await? {
+                    summary.models_undeployed = 1;
+                }
             }
             DeploymentStatus::Deploying => {
                 return Err(AppError::BadRequest {
@@ -156,8 +145,7 @@ impl PurgeService {
 
         let mut prefixes = s3_paths::training_job_prefixes(tenant_id, model.training_job_id);
         prefixes.push(s3_paths::export_prefix(tenant_id, model_id));
-        // The row records where the adapter actually landed; trust it over the
-        // reconstructed prefix in case an older run wrote somewhere else.
+        // The row is authoritative if an older run wrote elsewhere.
         if let Some(adapter_path) = model.adapter_path.as_deref()
             && !prefixes.iter().any(|p| p == adapter_path)
         {
@@ -188,9 +176,8 @@ impl PurgeService {
         Ok(summary)
     }
 
-    /// Delete one prefix, turning a storage failure into an answer the caller
-    /// can act on. The underlying error is logged, never returned: the client
-    /// only needs to know that nothing was deleted and a retry is safe.
+    /// Delete one prefix. The backend error is logged, not returned — the
+    /// client only needs to know nothing was deleted and a retry is safe.
     async fn erase_prefix(storage: &impl ObjectStorage, prefix: &str) -> AppResult<usize> {
         storage.delete_prefix(prefix).await.map_err(|e| {
             tracing::error!(prefix = prefix, error = %e, "Purge aborted: prefix delete failed");
@@ -201,9 +188,35 @@ impl PurgeService {
         })
     }
 
-    /// Cancel a run that is still queued or on a GPU, so the workflow stops and
-    /// the partial run is billed before its rows are deleted. Returns whether
-    /// anything was stopped; terminal runs are left alone.
+    /// Take a deployed model off its serving engine. A model whose instance is
+    /// already gone has nothing to unload, and failing there would leave it
+    /// undeletable forever. Returns whether an adapter was unloaded.
+    async fn unload_active(
+        state: &AppState,
+        tenant_id: Uuid,
+        model: &platform_db::models::Model,
+    ) -> AppResult<bool> {
+        if let Some(instance_id) = model.inference_instance_id
+            && state
+                .inference_instance_repo()
+                .get_by_id(instance_id)
+                .await?
+                .is_none()
+        {
+            tracing::warn!(
+                model_id = %model.id,
+                instance_id = %instance_id,
+                "Model is marked active but its serving instance is gone; deleting without unload"
+            );
+            return Ok(false);
+        }
+
+        DeploymentService::undeploy(state, tenant_id, model.id).await?;
+        Ok(true)
+    }
+
+    /// Cancel a queued or running job so the GPU stops and the partial run is
+    /// billed before its rows go. Returns whether anything was stopped.
     async fn stop_if_in_flight(
         state: &AppState,
         tenant_id: Uuid,
@@ -220,20 +233,49 @@ impl PurgeService {
             return Ok(false);
         }
 
-        TrainingJobService::cancel(
+        let cancelled = TrainingJobService::cancel(
             state.training_job_repo(),
             state.tenant_repo(),
             state.orchestrator(),
             tenant_id,
             job.id,
         )
-        .await?;
-        Ok(true)
+        .await;
+
+        match cancelled {
+            Ok(_) => Ok(true),
+            Err(e) => {
+                // The run may have settled between the read and this cancel —
+                // the state we wanted. Re-read rather than parse the error.
+                let settled = state
+                    .training_job_repo()
+                    .get_by_id(tenant_id, job.id)
+                    .await?
+                    .map(|j| {
+                        matches!(
+                            j.status.parse().unwrap_or(TrainingJobStatus::Failed),
+                            TrainingJobStatus::Completed
+                                | TrainingJobStatus::Failed
+                                | TrainingJobStatus::Cancelled
+                        )
+                    })
+                    .unwrap_or(true);
+
+                if settled {
+                    tracing::info!(
+                        training_job_id = %job.id,
+                        "Run settled on its own while the purge was cancelling it"
+                    );
+                    Ok(false)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
-    /// Every stored object belonging to a project: the project-keyed prefixes,
-    /// the adapter and checkpoints of each run (keyed by job id), and the
-    /// exports of each model (keyed by model id).
+    /// Project-keyed prefixes, each run's adapter and checkpoints (keyed by job
+    /// id), and each model's exports (keyed by model id).
     pub async fn purge_project_objects(
         storage: &impl ObjectStorage,
         tenant_id: Uuid,
@@ -307,9 +349,8 @@ mod tests {
         )
     }
 
-    /// Written exactly where the trainer writes it: under the TRAINING JOB id,
-    /// which is what lands in `models.adapter_path`. Keying this by model id
-    /// instead would let every adapter survive a project delete.
+    /// Written where the trainer writes it: under the job id, which is what
+    /// lands in `models.adapter_path`.
     fn trained_adapter_key(tenant: Uuid, job: Uuid) -> String {
         format!(
             "{}adapter_model.safetensors",
@@ -330,8 +371,7 @@ mod tests {
             s3_paths::export_path(tenant, model, "model.gguf"),
             format!("{}shard-0.pt", s3_paths::checkpoint_prefix(tenant, job)),
             format!("chunks/{tenant}/{project}/batch-0.jsonl"),
-            // Teacher logprob artifacts live under the dataset's own key, so the
-            // dataset prefix must reclaim them too.
+            // Teacher logprob artifacts nest under the dataset's own key.
             format!("datasets/{tenant}/{project}/{model}-teacher-logprobs/abc/0001.json"),
         ];
         for key in &keys {

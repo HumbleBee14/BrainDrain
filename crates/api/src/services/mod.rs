@@ -39,3 +39,6 @@ pub mod tenant_settings_service;
 pub mod token_estimator;
 pub mod training_job_service;
 pub mod url_guard;
+
+#[cfg(test)]
+mod purge_integration;

@@ -10,8 +10,8 @@ use chrono::{Datelike, TimeZone, Utc};
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BillingEventRepository, TenantRepository};
 
-/// Per-plan overrides parsed from `PLAN_LIMIT_OVERRIDES`. Every field is
-/// optional so a deployment can raise one ceiling without restating the rest.
+/// Per-plan overrides. Every field optional so a deployment can raise one
+/// ceiling without restating the rest.
 #[derive(Debug, Clone, Default, Deserialize)]
 struct PlanLimitOverride {
     max_projects: Option<i64>,
@@ -22,9 +22,8 @@ struct PlanLimitOverride {
     max_monthly_spend_usd: Option<f64>,
 }
 
-/// `PLAN_LIMIT_OVERRIDES` maps a plan name to the ceilings it should use, e.g.
-/// `{"starter":{"max_models":25,"max_projects":5}}`. Read once per process;
-/// invalid JSON falls back to the built-in limits rather than failing startup.
+/// `PLAN_LIMIT_OVERRIDES`, e.g. `{"starter":{"max_models":25}}`. Read once per
+/// process; invalid JSON falls back to the built-in limits.
 fn limit_overrides() -> &'static HashMap<String, PlanLimitOverride> {
     static OVERRIDES: OnceLock<HashMap<String, PlanLimitOverride>> = OnceLock::new();
     OVERRIDES.get_or_init(|| match std::env::var("PLAN_LIMIT_OVERRIDES") {

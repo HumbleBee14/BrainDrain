@@ -221,8 +221,7 @@ impl ProjectRepository for PgProjectRepo {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
             let result = sqlx::query(
                 r#"
-                UPDATE projects
-                SET deleted_at = now()
+                DELETE FROM projects
                 WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
                 "#,
             )
