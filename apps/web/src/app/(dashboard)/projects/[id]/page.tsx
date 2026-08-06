@@ -55,9 +55,6 @@ export default function ProjectDetailPage() {
 
   const [tab, setTab] = useState<TabKey>("data");
   const [showTrainForm, setShowTrainForm] = useState(false);
-  // No response field carries extraction state, so a fidelity run is only known
-  // to the session that launched it — enough to follow the run in progress.
-  const [scoringJobIds, setScoringJobIds] = useState<string[]>([]);
 
   // Track onboarding steps + toast notifications for pipeline mutations
   useEffect(() => {
@@ -102,14 +99,6 @@ export default function ProjectDetailPage() {
   const allTrainingJobs = trainingJobsData?.data ?? [];
   const models = modelsData?.data ?? [];
   const status = pipelineStatus;
-
-  // Scoring happens before the student starts training, so a tracked job counts
-  // as scoring until it leaves the states that precede its own GPU run.
-  const scoringJobCount = allTrainingJobs.filter(
-    (job) =>
-      scoringJobIds.includes(job.id) &&
-      ["pending", "cost_approval", "provisioning"].includes(job.status),
-  ).length;
 
   if (isLoading) {
     return (
@@ -185,9 +174,7 @@ export default function ProjectDetailPage() {
         status && (
           <div className="mb-8 flex items-start gap-4">
             <div className="min-w-0 flex-1">
-              <PipelineStepper
-                steps={computePipelineSteps(status, scoringJobCount)}
-              />
+              <PipelineStepper steps={computePipelineSteps(status)} />
             </div>
             <Link
               href={`/projects/${params.id}/lineage`}
@@ -243,9 +230,6 @@ export default function ProjectDetailPage() {
               allTrainingJobs={allTrainingJobs}
               showTrainForm={showTrainForm}
               setShowTrainForm={setShowTrainForm}
-              onDistillJobCreated={(jobId) =>
-                setScoringJobIds((prev) => [...prev, jobId])
-              }
             />
             <NextStepBar
               label="Next: Models"
