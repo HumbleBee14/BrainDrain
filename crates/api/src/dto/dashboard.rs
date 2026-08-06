@@ -24,6 +24,7 @@ pub struct UsageSummary {
     pub total_tokens_out: i64,
     pub total_events: i64,
     pub cost_by_day: Vec<DailyCost>,
+    pub cost_by_operation: Vec<OperationCost>,
 }
 
 /// Cost for a single day.
@@ -32,6 +33,15 @@ pub struct UsageSummary {
 pub struct DailyCost {
     pub date: String,
     pub cost_usd: f64,
+}
+
+/// Lifetime cost attributed to one billed operation type.
+#[derive(Debug, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct OperationCost {
+    pub operation: String,
+    pub cost_usd: f64,
+    pub events: i64,
 }
 
 /// Recent activity entry from the audit log.

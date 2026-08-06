@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -513,6 +514,10 @@ class FinalizeIterativeTrainingActivity:
         actual_cost = round(runtime_hours * gpu_rate, 2)
         input.metrics["estimated_cost"] = actual_cost
 
+        stitched_history = _stitch_iteration_history(input.metrics)
+        if stitched_history:
+            input.metrics["loss_history"] = stitched_history
+
         model_name = f"{input.base_model.split('/')[-1]}-{input.mode}-{job_id[:8]}"
         gpu_seconds = int(round(total_runtime))
 
@@ -668,22 +673,28 @@ async def run_training_core(
             s3_bucket=s3_bucket,
         )
 
-        metrics = strategy.execute(
-            model=model,
-            tokenizer=tokenizer,
-            dataset=dataset,
-            hp=hp,
-            job_id=job_id,
-            max_seq_length=max_seq_length,
-            tenant_id=input.tenant_id,
-            base_model=input.base_model,
-            dataset_path=input.dataset_path,
-            s3=s3,
-            bucket=s3_bucket,
-            llm_config=llm_config,
-            settings=settings,
-            teacher_devices=teacher_devices,
-        )
+        try:
+            metrics = strategy.execute(
+                model=model,
+                tokenizer=tokenizer,
+                dataset=dataset,
+                hp=hp,
+                job_id=job_id,
+                max_seq_length=max_seq_length,
+                tenant_id=input.tenant_id,
+                base_model=input.base_model,
+                dataset_path=input.dataset_path,
+                s3=s3,
+                bucket=s3_bucket,
+                llm_config=llm_config,
+                settings=settings,
+                teacher_devices=teacher_devices,
+            )
+            history = _drain_history(job_id)
+            if history:
+                metrics["loss_history"] = history
+        finally:
+            _METRICS_HISTORY.pop(job_id, None)
 
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
         total_runtime = _sum_gpu_runtime_seconds(metrics)
@@ -769,18 +780,24 @@ async def run_sft_round_core(
             )
 
         phase = f"iter_{iteration}"
-        metrics = _train_sft(
-            model,
-            tokenizer,
-            dataset,
-            hp,
-            job_id,
-            max_seq_length,
-            phase=phase,
-            tenant_id=input.tenant_id,
-            s3=s3,
-            bucket=s3_bucket,
-        )
+        try:
+            metrics = _train_sft(
+                model,
+                tokenizer,
+                dataset,
+                hp,
+                job_id,
+                max_seq_length,
+                phase=phase,
+                tenant_id=input.tenant_id,
+                s3=s3,
+                bucket=s3_bucket,
+            )
+            history = _drain_history(job_id)
+            if history:
+                metrics["loss_history"] = history
+        finally:
+            _METRICS_HISTORY.pop(job_id, None)
 
         adapter_dir = tmpdir_path / "adapter"
         engine.save_adapter(model, tokenizer, adapter_dir)
@@ -1902,6 +1919,53 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
 
 _metrics_collector = None
 
+# Per-process loss history, keyed by job_id. The Redis stream is capped and
+# lost on page reload; this survives into training_jobs.metrics at completion.
+_METRICS_HISTORY: dict[str, list[dict]] = {}
+_HISTORY_MAX_POINTS = 300
+
+
+def _record_history_point(job_id: str, point: dict) -> None:
+    _METRICS_HISTORY.setdefault(job_id, []).append(point)
+
+
+def _downsample_points(points: list[dict]) -> list[dict]:
+    if len(points) <= _HISTORY_MAX_POINTS:
+        return points
+    stride = len(points) / _HISTORY_MAX_POINTS
+    sampled = [points[int(i * stride)] for i in range(_HISTORY_MAX_POINTS)]
+    sampled[-1] = points[-1]
+    return sampled
+
+
+def _drain_history(job_id: str) -> list[dict]:
+    """Remove and downsample the job's accumulated loss history."""
+    return _downsample_points(_METRICS_HISTORY.pop(job_id, []))
+
+
+def _stitch_iteration_history(metrics: dict) -> list[dict]:
+    """Combine per-round `iter_N.loss_history` into one top-level series.
+
+    Each round's trainer restarts at step 0, so steps are re-indexed
+    cumulatively. The per-round lists are removed to avoid persisting the
+    same points twice.
+    """
+    rounds = []
+    for key, value in metrics.items():
+        match = re.fullmatch(r"iter_(\d+)", key)
+        if match and isinstance(value, dict) and isinstance(value.get("loss_history"), list):
+            rounds.append((int(match.group(1)), value))
+
+    combined: list[dict] = []
+    offset = 0
+    for _, round_metrics in sorted(rounds):
+        history = round_metrics.pop("loss_history")
+        for point in history:
+            combined.append({**point, "step": point["step"] + offset})
+        if combined:
+            offset = combined[-1]["step"]
+    return _downsample_points(combined)
+
 
 def _get_metrics_collector(settings=None):
     """Get or create the module-level MetricsCollector (backend selected from settings)."""
@@ -2030,6 +2094,17 @@ def _build_callback_class():
                 _get_metrics_collector().record(stream_key, metrics, maxlen=10000)
             except Exception as e:
                 logger.warning("Failed to stream metrics: %s", e)
+
+            if isinstance(logs.get("loss"), (int, float)):
+                _record_history_point(
+                    self.job_id,
+                    {
+                        "step": current_step,
+                        "epoch": round(state.epoch or 0, 2),
+                        "loss": float(logs["loss"]),
+                        "phase": self.phase,
+                    },
+                )
 
             safe_heartbeat(f"step={current_step}/{max_steps}")
 

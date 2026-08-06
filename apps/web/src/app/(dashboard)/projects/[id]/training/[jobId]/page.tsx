@@ -7,10 +7,14 @@ import {
   useTrainingJob,
   useApproveCost,
   useCancelTrainingJob,
+  useTrainingMetricsSnapshot,
 } from "@/hooks/use-training";
 import { useTrainingMetricsStream } from "@/hooks/use-training-metrics";
 import { useMemo, useEffect } from "react";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { Button } from "@/components/ui/button";
+import { LossChart, type LossPoint } from "@/components/loss-chart";
+import type { LossHistoryPoint } from "@/lib/api-client";
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
@@ -43,51 +47,24 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function MetricsChart({
-  metrics,
-}: {
-  metrics: { step: number; loss: number }[];
-}) {
-  // Simple ASCII-style chart using CSS bars
-  const maxLoss = useMemo(
-    () => Math.max(...metrics.map((m) => m.loss), 0.001),
-    [metrics],
-  );
+function formatEta(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = Math.floor(totalSeconds % 60);
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
 
-  if (metrics.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-40 text-zinc-400 dark:text-zinc-600 text-sm">
-        Waiting for training metrics...
-      </div>
-    );
-  }
-
-  // Show last 50 data points for readability
-  const displayMetrics = metrics.slice(-50);
-
+function GpuStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="space-y-1">
-      <div className="flex items-end gap-[2px] h-40">
-        {displayMetrics.map((m, i) => {
-          const height = Math.max(2, (m.loss / maxLoss) * 100);
-          return (
-            <div
-              key={i}
-              className="bg-violet-500 dark:bg-violet-500/80 hover:bg-violet-400 transition rounded-t flex-1 min-w-[3px]"
-              style={{ height: `${height}%` }}
-              title={`Step ${m.step}: loss=${m.loss.toFixed(4)}`}
-            />
-          );
-        })}
-      </div>
-      <div className="flex justify-between text-xs text-zinc-400 dark:text-zinc-600">
-        <span>Step {displayMetrics[0]?.step ?? 0}</span>
-        <span>
-          Loss:{" "}
-          {displayMetrics[displayMetrics.length - 1]?.loss.toFixed(4) ?? "-"}
-        </span>
-        <span>Step {displayMetrics[displayMetrics.length - 1]?.step ?? 0}</span>
-      </div>
+    <div className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+      <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+        {label}
+      </p>
+      <p className="mt-0.5 font-mono text-sm text-zinc-900 dark:text-white">
+        {value}
+      </p>
     </div>
   );
 }
@@ -117,18 +94,48 @@ export default function TrainingJobDetailPage() {
 
   const isActiveTraining =
     job?.status === "training" || job?.status === "provisioning";
+  const isTerminal =
+    job != null &&
+    ["completed", "failed", "cancelled"].includes(job.status ?? "");
   const { metrics: streamedMetrics, connected } = useTrainingMetricsStream(
     params.jobId,
     isActiveTraining,
   );
 
-  const chartMetrics = useMemo(
-    () =>
-      streamedMetrics
-        .filter((m) => m.loss > 0)
-        .map((m) => ({ step: Number(m.step), loss: Number(m.loss) })),
-    [streamedMetrics],
+  // Finished jobs read the loss history persisted with the job record, so the
+  // chart survives page reloads after the live stream is gone.
+  const { data: metricsSnapshot } = useTrainingMetricsSnapshot(
+    params.jobId,
+    isTerminal,
   );
+
+  const chartPoints: LossPoint[] = useMemo(() => {
+    if (streamedMetrics.length > 0) {
+      return streamedMetrics
+        .filter((m) => Number(m.loss) > 0)
+        .map((m) => ({
+          step: Number(m.step),
+          loss: Number(m.loss),
+          epoch: Number(m.epoch),
+          phase: m.phase,
+        }));
+    }
+    const history = metricsSnapshot?.loss_history;
+    if (!Array.isArray(history)) return [];
+    return (history as LossHistoryPoint[])
+      .filter((p) => typeof p?.loss === "number" && p.loss > 0)
+      .map((p) => ({
+        step: p.step,
+        loss: p.loss,
+        epoch: p.epoch,
+        phase: p.phase,
+      }));
+  }, [streamedMetrics, metricsSnapshot]);
+
+  const latest =
+    streamedMetrics.length > 0
+      ? streamedMetrics[streamedMetrics.length - 1]
+      : null;
 
   if (isLoading) {
     return (
@@ -175,8 +182,10 @@ export default function TrainingJobDetailPage() {
             </span>
           )}
           {isActiveTraining && (
-            <button
-              type="button"
+            <Button
+              variant="danger"
+              size="sm"
+              className="ml-auto shrink-0"
               onClick={() => {
                 if (
                   confirm(
@@ -186,17 +195,16 @@ export default function TrainingJobDetailPage() {
                   cancelJob.mutate(params.jobId);
                 }
               }}
-              disabled={cancelJob.isPending}
-              className="ml-auto shrink-0 rounded-md border border-red-300 dark:border-red-800 px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition disabled:opacity-50"
+              loading={cancelJob.isPending}
             >
               {cancelJob.isPending ? "Stopping..." : "Stop training"}
-            </button>
+            </Button>
           )}
         </div>
         <p className="text-zinc-500 mt-1">
           {job.method.toUpperCase()} &middot; {job.mode} mode
           {job.cost_estimate != null &&
-            ` \u00b7 Est. $${job.cost_estimate.toFixed(2)}`}
+            ` · Est. $${job.cost_estimate.toFixed(2)}`}
         </p>
       </div>
 
@@ -234,41 +242,118 @@ export default function TrainingJobDetailPage() {
         </div>
       )}
 
-      {/* Training progress bar */}
+      {/* Teacher extraction phase — runs before the student's own GPU run */}
+      {job.teacher_extraction_status === "running" && (
+        <div className="mb-6 rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-900/20 p-4">
+          <div className="flex items-center gap-3">
+            <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-violet-500" />
+            <div>
+              <p className="text-sm font-medium text-violet-700 dark:text-violet-300">
+                Scoring dataset with the teacher model
+              </p>
+              <p className="mt-0.5 text-sm text-violet-600/80 dark:text-violet-300/70">
+                The teacher scores every training example first. Student
+                training starts automatically when scoring completes.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      {job.teacher_extraction_status === "completed" &&
+        !isTerminal &&
+        job.status !== "training" && (
+          <div className="mb-6 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-3">
+            <p className="text-sm text-emerald-700 dark:text-emerald-400">
+              Teacher scoring complete — waiting for a GPU to start student
+              training.
+            </p>
+          </div>
+        )}
+      {job.teacher_extraction_status === "failed" && (
+        <div className="mb-6 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-3">
+          <p className="text-sm text-red-600 dark:text-red-400">
+            Teacher scoring failed — see the error details below.
+          </p>
+        </div>
+      )}
+
+      {/* Training progress */}
       {isActiveTraining &&
-        streamedMetrics.length > 0 &&
+        latest &&
         (() => {
-          const totalEpochs =
-            (job.hyperparams as Record<string, unknown>)?.num_train_epochs ??
-            (job.hyperparams as Record<string, unknown>)?.epochs ??
-            3;
-          const currentEpoch = Number(
-            streamedMetrics[streamedMetrics.length - 1]?.epoch ?? 0,
-          );
-          const pct = Math.min(100, (currentEpoch / Number(totalEpochs)) * 100);
+          const step = Number(latest.step);
+          const totalSteps = Number(latest.total_steps ?? 0);
+          const epoch = Number(latest.epoch);
+          const eta = Number(latest.eta_seconds ?? 0);
+          const pct =
+            totalSteps > 0 ? Math.min(100, (step / totalSteps) * 100) : null;
           return (
             <div className="mb-6">
               <div className="flex justify-between text-sm mb-1.5">
                 <span className="text-zinc-600 dark:text-zinc-400">
-                  Epoch {currentEpoch.toFixed(2)} / {String(totalEpochs)}
+                  {totalSteps > 0
+                    ? `Step ${step} / ${totalSteps} · epoch ${epoch.toFixed(2)}`
+                    : `Epoch ${epoch.toFixed(2)}`}
+                  {latest.phase && ` · ${latest.phase}`}
                 </span>
-                <span className="text-zinc-600 dark:text-zinc-400">{pct.toFixed(0)}%</span>
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  {pct != null && `${pct.toFixed(0)}%`}
+                  {eta > 0 && ` · ~${formatEta(eta)} left`}
+                </span>
               </div>
               <div className="h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-violet-500 transition-all duration-500"
-                  style={{ width: `${pct}%` }}
+                  style={{ width: `${pct ?? 100}%` }}
                 />
               </div>
             </div>
           );
         })()}
 
-      {/* Real-time loss chart */}
+      {/* Live GPU stats */}
+      {isActiveTraining && latest?.gpu_utilization != null && (
+        <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <GpuStat label="GPU Util" value={`${latest.gpu_utilization}%`} />
+          <GpuStat
+            label="GPU Memory"
+            value={`${latest.gpu_memory_used_mb ?? "?"} / ${latest.gpu_memory_total_mb ?? "?"} MB`}
+          />
+          <GpuStat
+            label="GPU Temp"
+            value={`${latest.gpu_temperature_c ?? "?"}°C`}
+          />
+          <GpuStat
+            label="Speed"
+            value={`${Number(latest.steps_per_second ?? 0).toFixed(2)} steps/s`}
+          />
+        </div>
+      )}
+
+      {/* Loss chart — live while training, persisted history afterwards */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Training Loss</h2>
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+            Training Loss
+          </h2>
+          {chartPoints.length > 0 && (
+            <span className="font-mono text-sm text-zinc-500">
+              final {chartPoints[chartPoints.length - 1].loss.toFixed(4)}
+            </span>
+          )}
+        </div>
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-          <MetricsChart metrics={chartMetrics} />
+          {chartPoints.length > 0 ? (
+            <LossChart points={chartPoints} />
+          ) : (
+            <div className="flex h-40 items-center justify-center text-sm text-zinc-400 dark:text-zinc-600">
+              {isActiveTraining
+                ? "Waiting for training metrics..."
+                : isTerminal
+                  ? "No loss history was recorded for this job."
+                  : "Metrics appear here once training starts."}
+            </div>
+          )}
         </div>
       </div>
 
@@ -311,7 +396,7 @@ export default function TrainingJobDetailPage() {
                         className="border-b border-zinc-200/50 dark:border-zinc-800/50 last:border-b-0"
                       >
                         <td className="px-4 py-1.5 text-zinc-900 dark:text-white font-mono">
-                          {m.step}
+                          {String(m.step)}
                         </td>
                         <td className="px-4 py-1.5 text-zinc-600 dark:text-zinc-400 font-mono">
                           {Number(m.epoch).toFixed(2)}

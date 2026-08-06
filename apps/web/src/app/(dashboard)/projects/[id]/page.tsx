@@ -1,101 +1,39 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { useProject, useDeleteProject } from "@/hooks/use-projects";
+import { useEffect, useState } from "react";
+import { useProject } from "@/hooks/use-projects";
 import { useDocuments, useUploadDocuments } from "@/hooks/use-documents";
 import {
   usePipelineStatus,
   useTriggerParse,
   useTriggerRefine,
-  useTriggerFullPipeline,
 } from "@/hooks/use-pipeline";
 import { useDatasets } from "@/hooks/use-datasets";
-import {
-  useTrainingJobs,
-  useCreateTrainingJob,
-  useCancelTrainingJob,
-  useEstimateTrainingCost,
-} from "@/hooks/use-training";
-import type {
-  CreateTrainingJobInput,
-  Dataset,
-  DistillOptionsDto,
-} from "@/lib/api-client";
+import { useTrainingJobs } from "@/hooks/use-training";
 import { useModels } from "@/hooks/use-models";
-import { useModelCatalog } from "@/hooks/use-catalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import { DatasetImportCard } from "@/components/dataset-import-card";
+import { TabBar } from "@/components/ui/tabs";
 import {
-  StatusBadge,
-  DatasetStatusBadge,
-  DeploymentStatusBadge,
-  TrainingStatusBadge,
-  DocumentRow,
-  PipelineStageCard,
-} from "./components";
-import { DistillSetup } from "./components/distill-setup";
-import { FidelityUpgrade } from "./components/fidelity-upgrade";
+  PipelineStepper,
+  computePipelineSteps,
+} from "./components/pipeline-stepper";
+import { RouteExplainer } from "./components/route-explainer";
+import { DocumentDropzone } from "./components/document-dropzone";
+import { DataTab } from "./components/data-tab";
+import { NextStepBar } from "./components/next-step-bar";
+import { TrainingTab } from "./components/training-tab";
+import { ModelsTab } from "./components/models-tab";
+import { SettingsTab } from "./components/settings-tab";
 
-function DatasetRow({
-  dataset,
-  projectId,
-}: {
-  dataset: Dataset;
-  projectId: string;
-}) {
-  const isGenerating = dataset.status === "generating";
-  const isFailed = dataset.status === "failed";
-
-  const detail = isFailed
-    ? (dataset.error ?? "Generation failed")
-    : isGenerating
-      ? "Generating pairs — this takes a few minutes"
-      : `${dataset.pair_count ?? 0} pairs · ${dataset.format}`;
-
-  const body = (
-    <div className="flex items-center justify-between gap-3 px-4 py-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm text-zinc-900 dark:text-white">
-          {dataset.name}
-        </p>
-        <p
-          className={`mt-0.5 text-xs ${isFailed ? "text-red-600 dark:text-red-400" : "text-zinc-400 dark:text-zinc-600"}`}
-        >
-          {detail}
-        </p>
-      </div>
-      <DatasetStatusBadge status={dataset.status} />
-    </div>
-  );
-
-  // Nothing to review until pairs exist, so these rows are not navigable.
-  if (isGenerating || isFailed) {
-    return (
-      <div className="border-b border-zinc-200 last:border-b-0 dark:border-zinc-800">
-        {body}
-      </div>
-    );
-  }
-
-  return (
-    <Link
-      href={`/projects/${projectId}/dataset?datasetId=${dataset.id}`}
-      className="block border-b border-zinc-200 transition last:border-b-0 hover:bg-zinc-50/50 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
-    >
-      {body}
-    </Link>
-  );
-}
+type TabKey = "data" | "training" | "models" | "settings";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const { data: project, isLoading, error } = useProject(params.id);
-  const deleteProject = useDeleteProject();
   const { data: pipelineStatus } = usePipelineStatus(params.id);
   const isActive =
     (pipelineStatus?.documents.parsing ?? 0) > 0 ||
@@ -113,12 +51,15 @@ export default function ProjectDetailPage() {
   const uploadDocs = useUploadDocuments(params.id);
   const triggerParse = useTriggerParse(params.id);
   const triggerRefine = useTriggerRefine(params.id);
-  const triggerFullPipeline = useTriggerFullPipeline(params.id);
-  const createTrainingJob = useCreateTrainingJob(params.id);
-  const cancelTrainingJob = useCancelTrainingJob(params.id);
   const { markStepComplete } = useOnboarding();
 
-  // Track onboarding steps + show toast notifications when mutations succeed/fail
+  const [tab, setTab] = useState<TabKey>("data");
+  const [showTrainForm, setShowTrainForm] = useState(false);
+  // No response field carries extraction state, so a fidelity run is only known
+  // to the session that launched it — enough to follow the run in progress.
+  const [scoringJobIds, setScoringJobIds] = useState<string[]>([]);
+
+  // Track onboarding steps + toast notifications for pipeline mutations
   useEffect(() => {
     if (uploadDocs.isSuccess) {
       markStepComplete("upload_document");
@@ -156,158 +97,9 @@ export default function ProjectDetailPage() {
     if (triggerRefine.isError) toast.error(triggerRefine.error.message);
   }, [triggerRefine.isError, triggerRefine.error]);
 
-  useEffect(() => {
-    if (createTrainingJob.isSuccess) {
-      markStepComplete("start_training");
-      toast.success("Training job created");
-    }
-  }, [createTrainingJob.isSuccess, markStepComplete]);
-
-  useEffect(() => {
-    if (createTrainingJob.isError) toast.error(createTrainingJob.error.message);
-  }, [createTrainingJob.isError, createTrainingJob.error]);
-
-  useEffect(() => {
-    if (cancelTrainingJob.isSuccess) toast.success("Training job cancelled");
-  }, [cancelTrainingJob.isSuccess]);
-
-  useEffect(() => {
-    if (cancelTrainingJob.isError) toast.error(cancelTrainingJob.error.message);
-  }, [cancelTrainingJob.isError, cancelTrainingJob.error]);
-
-  useEffect(() => {
-    if (triggerFullPipeline.isSuccess)
-      toast.success(
-        `Full pipeline started for ${triggerFullPipeline.data.document_count} documents`,
-      );
-  }, [triggerFullPipeline.isSuccess, triggerFullPipeline.data]);
-
-  useEffect(() => {
-    if (triggerFullPipeline.isError)
-      toast.error(triggerFullPipeline.error.message);
-  }, [triggerFullPipeline.isError, triggerFullPipeline.error]);
-
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [showTrainForm, setShowTrainForm] = useState(false);
-  const [showDistillSetup, setShowDistillSetup] = useState(false);
-  const [trainForm, setTrainForm] = useState<CreateTrainingJobInput>({
-    dataset_id: "",
-    base_model: "",
-    method: "qlora",
-    mode: "quick",
-  });
-  const [distillOptions, setDistillOptions] =
-    useState<DistillOptionsDto | null>(null);
-  // No response field carries extraction state, so a fidelity run is only known
-  // to the session that launched it — enough to follow the run in progress.
-  const [scoringJobIds, setScoringJobIds] = useState<string[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { data: costEstimate } = useEstimateTrainingCost(params.id, trainForm);
-  const {
-    data: catalogData,
-    isLoading: catalogLoading,
-    isError: catalogIsError,
-    error: catalogError,
-    refetch: refetchCatalog,
-  } = useModelCatalog();
-  const catalogModels = useMemo(
-    () => catalogData?.models ?? [],
-    [catalogData],
-  );
-
-  // Default the base model to the catalog's suggestion once it loads.
-  useEffect(() => {
-    if (!trainForm.base_model && catalogModels.length > 0) {
-      setTrainForm((prev) => ({
-        ...prev,
-        base_model: catalogData?.suggested ?? catalogModels[0].model_id,
-      }));
-    }
-  }, [catalogModels, catalogData?.suggested, trainForm.base_model]);
-
-  const selectedCatalogModel = useMemo(
-    () => catalogModels.find((m) => m.model_id === trainForm.base_model),
-    [catalogModels, trainForm.base_model],
-  );
-
-  const trainingPresets = useMemo(() => {
-    if (catalogModels.length === 0) return [];
-    const bySize = [...catalogModels].sort(
-      (a, b) => a.vram_4bit_gb - b.vram_4bit_gb,
-    );
-    const smallest = bySize[0];
-    const midRange =
-      catalogModels.find(
-        (m) => !m.gated && m.model_id !== smallest.model_id,
-      ) ?? bySize[Math.min(1, bySize.length - 1)];
-    const productionModel =
-      [...catalogModels]
-        .filter((m) => m.gated)
-        .sort((a, b) => b.vram_4bit_gb - a.vram_4bit_gb)[0] ??
-      bySize[bySize.length - 1];
-    const reasoningModel =
-      catalogModels.find((m) => m.recommended_for.includes("reasoning")) ??
-      productionModel;
-
-    return [
-      {
-        label: "Quick Experiment",
-        method: "qlora" as const,
-        mode: "quick" as const,
-        base_model: smallest.model_id,
-        desc: `Fastest, ${smallest.display_name}, QLoRA`,
-      },
-      {
-        label: "Balanced",
-        method: "qlora" as const,
-        mode: "aligned" as const,
-        base_model: midRange.model_id,
-        desc: `SFT + DPO, ${midRange.display_name}`,
-      },
-      {
-        label: "Production",
-        method: "lora" as const,
-        mode: "aligned" as const,
-        base_model: productionModel.model_id,
-        gpu_class: "a10g" as const,
-        desc: `${productionModel.display_name}, LoRA, A10G GPU`,
-      },
-      {
-        label: "Max Quality",
-        method: "lora" as const,
-        mode: "reasoning" as const,
-        base_model: reasoningModel.model_id,
-        gpu_class: "l40s" as const,
-        desc: `${reasoningModel.display_name}, GRPO reasoning, L40S`,
-      },
-    ];
-  }, [catalogModels]);
-
-  // Search/filter state
-  const [docSearch, setDocSearch] = useState("");
-  const [docStatusFilter, setDocStatusFilter] = useState<string>("all");
-  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
-  const [compareIds, setCompareIds] = useState<string[]>([]);
-
   const allDocuments = docsData?.data ?? [];
   const datasets = datasetsData?.data ?? [];
   const allTrainingJobs = trainingJobsData?.data ?? [];
-
-  // Filter documents
-  const documents = allDocuments.filter((doc) => {
-    const matchesSearch =
-      !docSearch ||
-      doc.filename.toLowerCase().includes(docSearch.toLowerCase());
-    const matchesStatus =
-      docStatusFilter === "all" || doc.status === docStatusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  // Filter training jobs
-  const trainingJobs = allTrainingJobs.filter((job) => {
-    return jobStatusFilter === "all" || job.status === jobStatusFilter;
-  });
   const models = modelsData?.data ?? [];
   const status = pipelineStatus;
 
@@ -319,39 +111,6 @@ export default function ProjectDetailPage() {
       ["pending", "cost_approval", "provisioning"].includes(job.status),
   ).length;
 
-  const handleFiles = useCallback(
-    (files: FileList | File[]) => {
-      const fileArray = Array.from(files);
-      if (fileArray.length > 0) {
-        uploadDocs.mutate(fileArray);
-      }
-    },
-    [uploadDocs],
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      handleFiles(e.dataTransfer.files);
-    },
-    [handleFiles],
-  );
-
-  const handleDelete = async () => {
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      return;
-    }
-    try {
-      await deleteProject.mutateAsync(params.id);
-      router.push("/projects");
-    } catch {
-      // Error is captured by React Query and surfaced via deleteProject.isError
-      setConfirmDelete(false);
-    }
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -362,11 +121,11 @@ export default function ProjectDetailPage() {
 
   if (error || !project) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <div className="flex flex-col items-center justify-center gap-4 py-20">
         <p className="text-zinc-500">Project not found</p>
         <Link
           href="/projects"
-          className="text-sm text-zinc-900 dark:text-white underline hover:no-underline"
+          className="text-sm text-zinc-900 underline hover:no-underline dark:text-white"
         >
           Back to Projects
         </Link>
@@ -374,797 +133,132 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const hasUploaded = (status?.documents.uploaded ?? 0) > 0;
-  const hasParsed = (status?.documents.parsed ?? 0) > 0;
-  const isParsing = (status?.documents.parsing ?? 0) > 0;
-  const isGenerating = (status?.datasets.generating ?? 0) > 0;
-  const hasApprovedDatasets = (status?.datasets.approved ?? 0) > 0;
-  const approvedDatasets = datasets.filter((ds) => ds.status === "approved");
+  const docs = status?.documents;
+  const ds = status?.datasets;
+  const jobs = status?.training_jobs;
+  const modelCounts = status?.models;
+
+  const hasUploaded = (docs?.uploaded ?? 0) > 0;
+  const hasParsed = (docs?.parsed ?? 0) > 0;
+  const isParsing = (docs?.parsing ?? 0) > 0;
+  const hasApprovedDatasets = (ds?.approved ?? 0) > 0;
+  const isEmpty = (docs?.total ?? 0) === 0 && (ds?.total ?? 0) === 0;
+
+  const taskType = project.task_type || "question_answering";
+
+  const tabs = [
+    {
+      key: "data",
+      label: "Data",
+      count: (docs?.total ?? 0) + (ds?.total ?? 0),
+    },
+    { key: "training", label: "Fine-Tuning", count: jobs?.total },
+    { key: "models", label: "Models", count: modelCounts?.total },
+    { key: "settings", label: "Settings" },
+  ];
 
   return (
     <div>
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <Breadcrumbs
           items={[
             { label: "Projects", href: "/projects" },
             { label: project.name },
           ]}
         />
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white truncate">{project.name}</h1>
-          <StatusBadge status={project.status} />
-        </div>
+        <h1 className="truncate text-xl font-bold text-zinc-900 dark:text-white md:text-2xl">
+          {project.name}
+        </h1>
         {project.description && (
-          <p className="text-zinc-500 mt-1">{project.description}</p>
+          <p className="mt-1 text-zinc-500">{project.description}</p>
         )}
       </div>
 
-      {/* Pipeline status overview */}
-      {status && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-              Pipeline Status
-            </h2>
+      {/* Where you are in the pipeline — informational, actions live in the tabs */}
+      {isEmpty ? (
+        <div className="mb-8 space-y-6">
+          <RouteExplainer onImport={() => setTab("data")} />
+          <DocumentDropzone uploadDocs={uploadDocs} />
+        </div>
+      ) : (
+        status && (
+          <div className="mb-8 flex items-start gap-4">
+            <div className="min-w-0 flex-1">
+              <PipelineStepper
+                steps={computePipelineSteps(status, scoringJobCount)}
+              />
+            </div>
             <Link
               href={`/projects/${params.id}/lineage`}
-              className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-white transition"
+              className="shrink-0 pt-1 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline dark:hover:text-white"
+              title="Trace every model back through its training data to the source documents"
             >
-              Data Lineage
+              Data Lineage →
             </Link>
           </div>
-          <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 md:gap-3 mb-4">
-            <PipelineStageCard
-              label="Uploaded"
-              count={status.documents.uploaded}
-              active={status.documents.uploaded > 0}
-            />
-            <PipelineStageCard
-              label="Parsing"
-              count={status.documents.parsing}
-              active={status.documents.parsing > 0}
-            />
-            <PipelineStageCard
-              label="Parsed"
-              count={status.documents.parsed}
-              active={status.documents.parsed > 0}
-            />
-            <PipelineStageCard
-              label="Datasets"
-              count={status.datasets.total}
-              active={status.datasets.approved > 0}
-            />
-            {scoringJobCount > 0 && (
-              <PipelineStageCard
-                label="Scoring with teacher"
-                count={scoringJobCount}
-                active
-              />
-            )}
-            <PipelineStageCard
-              label="Training"
-              count={status.training_jobs?.training ?? 0}
-              active={(status.training_jobs?.training ?? 0) > 0}
-            />
-            <PipelineStageCard
-              label="Models"
-              count={status.models?.total ?? 0}
-              active={(status.models?.active ?? 0) > 0}
-            />
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2 md:gap-3">
-            <button
-              onClick={() => triggerParse.mutate()}
-              disabled={!hasUploaded || triggerParse.isPending || isParsing}
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {triggerParse.isPending
-                ? "Starting..."
-                : isParsing
-                  ? "Parsing..."
-                  : "Parse Documents"}
-            </button>
-            <button
-              onClick={() =>
-                triggerRefine.mutate({
-                  taskType: project.task_type || "question_answering",
-                })
-              }
-              disabled={!hasParsed || triggerRefine.isPending || isGenerating}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {triggerRefine.isPending
-                ? "Starting..."
-                : isGenerating
-                  ? "Generating..."
-                  : "Generate Training Data"}
-            </button>
-            {hasParsed && (
-              <Link
-                href={`/projects/${params.id}/data-studio`}
-                className="rounded-lg border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 px-4 py-2 text-sm font-medium text-violet-700 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition inline-flex items-center"
-                title="Review facets and preview samples before generating the dataset"
-              >
-                Data Studio (Guided)
-              </Link>
-            )}
-            <button
-              onClick={() =>
-                triggerFullPipeline.mutate({
-                  task_type: project.task_type || "question_answering",
-                  base_model:
-                    catalogData?.suggested ??
-                    catalogModels[0]?.model_id ??
-                    "unsloth/Llama-3.2-1B-Instruct",
-                  training_config: {
-                    method: "qlora",
-                    mode: "quick",
-                  },
-                })
-              }
-              disabled={
-                (!hasUploaded && !hasParsed) || triggerFullPipeline.isPending
-              }
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Run the entire pipeline: parse → generate data → train → evaluate"
-            >
-              {triggerFullPipeline.isPending
-                ? "Starting..."
-                : "One-Click Fine-Tune"}
-            </button>
-            <button
-              onClick={() => setShowDistillSetup(!showDistillSetup)}
-              disabled={!hasUploaded && !hasParsed}
-              className={`rounded-lg border px-4 py-2 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${
-                showDistillSetup
-                  ? "border-violet-500 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300"
-                  : "border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/40"
-              }`}
-              title="Use a big, expensive model to teach a small one you own — with a report proving how close it got"
-            >
-              Distill a Larger Model
-            </button>
-          </div>
-
-          {showDistillSetup && (
-            <div className="mt-4">
-              <DistillSetup
-                projectId={params.id}
-                taskType={project.task_type || "question_answering"}
-                catalogModels={catalogModels}
-                suggestedBaseModel={
-                  catalogData?.suggested ??
-                  catalogModels[0]?.model_id ??
-                  "unsloth/Llama-3.2-1B-Instruct"
-                }
-                disabled={!hasUploaded && !hasParsed}
-                onStarted={() => setShowDistillSetup(false)}
-              />
-            </div>
-          )}
-
-          {triggerParse.isError && (
-            <p className="text-sm text-red-400 mt-2">
-              {triggerParse.error.message}
-            </p>
-          )}
-          {triggerRefine.isError && (
-            <p className="text-sm text-red-400 mt-2">
-              {triggerRefine.error.message}
-            </p>
-          )}
-          {triggerParse.isSuccess && (
-            <p className="text-sm text-emerald-400 mt-2">
-              Parse workflow started for {triggerParse.data.document_count}{" "}
-              documents
-            </p>
-          )}
-          {triggerRefine.isSuccess && (
-            <p className="text-sm text-emerald-400 mt-2">
-              Refine workflow started for {triggerRefine.data.document_count}{" "}
-              documents
-            </p>
-          )}
-        </div>
+        )
       )}
 
-      {/* Upload area */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-            Documents{" "}
-            {allDocuments.length > 0 &&
-              `(${documents.length}${documents.length !== allDocuments.length ? ` of ${allDocuments.length}` : ""})`}
-          </h2>
-        </div>
-        {/* Document search & filter */}
-        {allDocuments.length > 3 && (
-          <div className="flex flex-col sm:flex-row gap-2 mb-3">
-            <input
-              value={docSearch}
-              onChange={(e) => setDocSearch(e.target.value)}
-              placeholder="Search documents..."
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+      <TabBar
+        tabs={tabs}
+        active={tab}
+        onChange={(key) => setTab(key as TabKey)}
+      />
+      <div className="pt-6">
+        {tab === "data" && (
+          <>
+            <DataTab
+              projectId={params.id}
+              allDocuments={allDocuments}
+              uploadDocs={uploadDocs}
+              datasets={datasets}
+              hasParsedDocuments={hasParsed}
+              canParse={hasUploaded && !isParsing}
+              isParsing={isParsing}
+              onParse={() => triggerParse.mutate()}
+              parsePending={triggerParse.isPending}
+              onGenerate={() => triggerRefine.mutate({ taskType })}
+              generatePending={triggerRefine.isPending}
             />
-            <select
-              value={docStatusFilter}
-              onChange={(e) => setDocStatusFilter(e.target.value)}
-              className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white"
-            >
-              <option value="all">All statuses</option>
-              <option value="uploaded">Uploaded</option>
-              <option value="parsing">Parsing</option>
-              <option value="parsed">Parsed</option>
-              <option value="failed">Failed</option>
-            </select>
-          </div>
+            <NextStepBar
+              label="Next: Fine-Tuning"
+              enabled={hasApprovedDatasets}
+              hint={
+                (ds?.review_pending ?? 0) > 0
+                  ? "Review and approve a dataset to unlock fine-tuning"
+                  : "Generate or import a dataset, then approve it, to unlock fine-tuning"
+              }
+              onNext={() => setTab("training")}
+            />
+          </>
         )}
-        <div
-          className={`rounded-lg border-2 border-dashed p-4 md:p-8 text-center transition ${
-            isDragging
-              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/10"
-              : "border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-600"
-          }`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-        >
-          {uploadDocs.isPending ? (
-            <p className="text-zinc-600 dark:text-zinc-400">Uploading...</p>
-          ) : (
-            <>
-              <p className="text-zinc-500 mb-2">
-                {isDragging
-                  ? "Drop files here"
-                  : "Drag and drop files here or click to upload"}
-              </p>
-              <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                Supports PDF, DOCX, TXT, HTML, MD, CSV (max 500 MB)
-              </p>
-              <label className="mt-4 inline-block cursor-pointer rounded-lg bg-zinc-100 dark:bg-zinc-800 px-4 py-2 text-sm text-zinc-900 dark:text-white hover:bg-zinc-200 dark:hover:bg-zinc-700 transition">
-                Choose Files
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept=".pdf,.docx,.txt,.html,.htm,.md,.csv"
-                  onChange={(e) => {
-                    if (e.target.files) handleFiles(e.target.files);
-                  }}
-                />
-              </label>
-            </>
-          )}
-          {uploadDocs.isError && (
-            <p className="text-sm text-red-400 mt-2">
-              {uploadDocs.error.message}
-            </p>
-          )}
-          {uploadDocs.isSuccess && (
-            <p className="text-sm text-emerald-400 mt-2">
-              {uploadDocs.data.length} file(s) uploaded successfully
-            </p>
-          )}
-        </div>
-
-        {/* Document list */}
-        {documents.length > 0 && (
-          <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 divide-y divide-zinc-200 dark:divide-zinc-800">
-            {documents.map((doc) => (
-              <DocumentRow key={doc.id} doc={doc} />
-            ))}
-          </div>
+        {tab === "training" && (
+          <>
+            <TrainingTab
+              projectId={params.id}
+              taskType={taskType}
+              canDistill={hasUploaded || hasParsed}
+              datasets={datasets}
+              allTrainingJobs={allTrainingJobs}
+              showTrainForm={showTrainForm}
+              setShowTrainForm={setShowTrainForm}
+              onDistillJobCreated={(jobId) =>
+                setScoringJobIds((prev) => [...prev, jobId])
+              }
+            />
+            <NextStepBar
+              label="Next: Models"
+              enabled={(modelCounts?.total ?? 0) > 0}
+              hint="Complete a fine-tuning run to unlock models"
+              onNext={() => setTab("models")}
+            />
+          </>
         )}
-      </div>
-
-      {/* Datasets section */}
-      <div className="mb-8">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">
-          Datasets{" "}
-          {datasets.length > 0 && `(${datasetsData?.total ?? datasets.length})`}
-        </h2>
-        <div className="mb-4">
-          <DatasetImportCard projectId={params.id} />
-        </div>
-        {datasets.length > 0 && (
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-            {datasets.map((ds) => (
-              <DatasetRow key={ds.id} dataset={ds} projectId={params.id} />
-            ))}
-          </div>
+        {tab === "models" && (
+          <ModelsTab projectId={params.id} models={models} />
         )}
-      </div>
-
-      {/* Training Jobs section */}
-      <div className="mb-8">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-            Training Jobs{" "}
-            {allTrainingJobs.length > 0 &&
-              `(${trainingJobs.length}${trainingJobs.length !== allTrainingJobs.length ? ` of ${allTrainingJobs.length}` : ""})`}
-          </h2>
-          <div className="flex items-center gap-2 shrink-0">
-            {compareIds.length >= 2 && (
-              <button
-                onClick={() =>
-                  router.push(
-                    `/projects/${params.id}/compare?jobs=${compareIds.slice(0, 2).join(",")}`,
-                  )
-                }
-                className="rounded-lg border border-blue-700 bg-blue-600/10 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition"
-              >
-                Compare ({compareIds.length})
-              </button>
-            )}
-            <button
-              onClick={() => setShowTrainForm(!showTrainForm)}
-              disabled={!hasApprovedDatasets}
-              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Start Training
-            </button>
-          </div>
-        </div>
-
-        {/* Training jobs filter */}
-        {allTrainingJobs.length > 3 && (
-          <div className="flex gap-2 mb-3">
-            <select
-              value={jobStatusFilter}
-              onChange={(e) => setJobStatusFilter(e.target.value)}
-              className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 text-sm text-zinc-900 dark:text-white"
-            >
-              <option value="all">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="training">Training</option>
-              <option value="completed">Completed</option>
-              <option value="failed">Failed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-        )}
-
-        {/* Training form */}
-        {showTrainForm && (
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4 space-y-3">
-            {/* Hyperparameter presets */}
-            {trainingPresets.length > 0 && (
-              <div>
-                <label className="block text-xs text-zinc-500 mb-2">
-                  Quick Presets
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {trainingPresets.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() =>
-                        setTrainForm({
-                          ...trainForm,
-                          method: preset.method,
-                          mode: preset.mode,
-                          base_model: preset.base_model,
-                          gpu_class: preset.gpu_class,
-                        })
-                      }
-                      className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs text-zinc-600 dark:text-zinc-400 hover:border-zinc-500 hover:text-zinc-900 dark:hover:text-white transition"
-                      title={preset.desc}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Dataset
-                </label>
-                <select
-                  value={trainForm.dataset_id}
-                  onChange={(e) =>
-                    setTrainForm({ ...trainForm, dataset_id: e.target.value })
-                  }
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                >
-                  <option value="">Select dataset...</option>
-                  {approvedDatasets.map((ds) => (
-                    <option key={ds.id} value={ds.id}>
-                      {ds.name} ({ds.pair_count ?? 0} pairs)
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Base Model
-                </label>
-                {catalogIsError ? (
-                  <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-600 dark:text-red-400">
-                    <p>
-                      Couldn&apos;t load the model catalog
-                      {catalogError instanceof Error
-                        ? `: ${catalogError.message}`
-                        : "."}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => refetchCatalog()}
-                      className="mt-1 font-medium underline underline-offset-2 hover:no-underline"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : (
-                  <select
-                    value={trainForm.base_model}
-                    onChange={(e) =>
-                      setTrainForm({
-                        ...trainForm,
-                        base_model: e.target.value,
-                      })
-                    }
-                    disabled={catalogLoading || catalogModels.length === 0}
-                    className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white disabled:opacity-50"
-                  >
-                    {catalogLoading ? (
-                      <option value="">Loading models...</option>
-                    ) : (
-                      <>
-                        <option value="" disabled>
-                          Select a base model...
-                        </option>
-                        {catalogModels.map((m) => (
-                          <option key={m.model_id} value={m.model_id}>
-                            {m.display_name} &mdash; {m.size}
-                            {m.gated ? " (gated)" : ""}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                )}
-                {selectedCatalogModel && (
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {selectedCatalogModel.best_for.join(" · ")} &mdash; ~
-                    {selectedCatalogModel.vram_4bit_gb}GB VRAM (4-bit)
-                    {selectedCatalogModel.gated && " · requires HF token"}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  Method
-                </label>
-                <select
-                  value={trainForm.method}
-                  onChange={(e) =>
-                    setTrainForm({
-                      ...trainForm,
-                      method: e.target
-                        .value as CreateTrainingJobInput["method"],
-                    })
-                  }
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                >
-                  <option value="qlora">QLoRA (4-bit, fastest)</option>
-                  <option value="lora">LoRA (16-bit)</option>
-                  <option value="full">Full Fine-tune</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">Mode</label>
-                <select
-                  value={trainForm.mode}
-                  onChange={(e) =>
-                    setTrainForm({
-                      ...trainForm,
-                      mode: e.target.value as CreateTrainingJobInput["mode"],
-                    })
-                  }
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                >
-                  <option value="quick">Quick (SFT only)</option>
-                  <option value="aligned">Aligned (SFT + DPO)</option>
-                  <option value="reasoning">Reasoning (SFT + GRPO)</option>
-                  <option value="iterative">Iterative (Multi-round)</option>
-                  <option value="distill">
-                    Distill (teacher-generated dataset)
-                  </option>
-                </select>
-                {trainForm.mode === "distill" && (
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Needs a dataset generated by a teacher — use “Distill a
-                    Larger Model” above, or pick a teacher-generated dataset.
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-500 mb-1">
-                  GPU Class
-                </label>
-                <select
-                  value={trainForm.gpu_class ?? ""}
-                  onChange={(e) =>
-                    setTrainForm({
-                      ...trainForm,
-                      gpu_class: e.target.value || undefined,
-                    })
-                  }
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
-                >
-                  <option value="">Auto (default)</option>
-                  <option value="t4">T4 (budget, small models)</option>
-                  <option value="a10g">A10G (7B-13B LoRA)</option>
-                  <option value="l40s">L40S (13B-30B)</option>
-                  <option value="a10040gb">A100 40GB (30B+)</option>
-                  <option value="a10080gb">A100 80GB (large models)</option>
-                  <option value="h100">H100 (max throughput)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Keyed on the pair being judged: a different dataset or student is
-                a different offer, and the upgrade must never carry over unasked. */}
-            {trainForm.mode === "distill" && trainForm.dataset_id && (
-              <FidelityUpgrade
-                key={`${trainForm.dataset_id}:${trainForm.base_model}`}
-                datasetId={trainForm.dataset_id}
-                studentModel={trainForm.base_model}
-                onChange={setDistillOptions}
-              />
-            )}
-
-            {/* Cost estimate breakdown */}
-            {costEstimate && (
-              <div className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/50 p-3 text-sm">
-                <p className="text-zinc-600 dark:text-zinc-400 font-medium mb-1">Estimated Cost</p>
-                <p className="text-zinc-900 dark:text-white text-lg font-semibold">
-                  ${costEstimate.cost_estimate.toFixed(2)}
-                </p>
-                <div className="mt-1 text-xs text-zinc-500 space-y-0.5">
-                  <p>
-                    GPU: {costEstimate.gpu_class.toUpperCase()} ($
-                    {costEstimate.gpu_rate_per_hour.toFixed(2)}/hr)
-                  </p>
-                  <p>
-                    Duration: ~{costEstimate.estimated_hours.toFixed(1)} hours
-                  </p>
-                  <p>
-                    Mode: {trainForm.mode}{" "}
-                    {trainForm.mode === "aligned"
-                      ? "(SFT + DPO)"
-                      : trainForm.mode === "reasoning"
-                        ? "(SFT + GRPO)"
-                        : trainForm.mode === "iterative"
-                          ? "(multi-round)"
-                          : "(SFT only)"}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => {
-                  if (!trainForm.dataset_id || !trainForm.base_model) return;
-                  const distill =
-                    trainForm.mode === "distill" ? distillOptions : null;
-                  // A refused launch (spend cap, incompatible pair) is reported
-                  // inside this form, so it stays open until a job exists.
-                  createTrainingJob.mutate(
-                    distill ? { ...trainForm, distill } : trainForm,
-                    {
-                      onSuccess: (job) => {
-                        if (distill)
-                          setScoringJobIds((prev) => [...prev, job.id]);
-                        setShowTrainForm(false);
-                      },
-                    },
-                  );
-                }}
-                disabled={
-                  !trainForm.dataset_id ||
-                  !trainForm.base_model ||
-                  createTrainingJob.isPending
-                }
-                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 transition disabled:opacity-50"
-              >
-                {createTrainingJob.isPending
-                  ? "Starting..."
-                  : costEstimate
-                    ? `Start Training (~$${costEstimate.cost_estimate.toFixed(2)})`
-                    : "Start Training Job"}
-              </button>
-              <button
-                onClick={() => setShowTrainForm(false)}
-                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:border-zinc-400 dark:hover:border-zinc-600 transition"
-              >
-                Cancel
-              </button>
-            </div>
-            {createTrainingJob.isError && (
-              <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-3">
-                <p className="text-sm text-red-600 dark:text-red-400">
-                  {createTrainingJob.error.message}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Training jobs list */}
-        {trainingJobs.length > 0 && (
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-            {trainingJobs.map((job) => (
-              <div
-                key={job.id}
-                className="flex items-center border-b border-zinc-200 dark:border-zinc-800 last:border-b-0"
-              >
-                {allTrainingJobs.length >= 2 && (
-                  <label
-                    className="flex items-center pl-4 cursor-pointer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={compareIds.includes(job.id)}
-                      onChange={() =>
-                        setCompareIds((prev) =>
-                          prev.includes(job.id)
-                            ? prev.filter((id) => id !== job.id)
-                            : [...prev, job.id].slice(-2),
-                        )
-                      }
-                      className="h-3.5 w-3.5 rounded border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-violet-500 focus:ring-violet-500 focus:ring-offset-0"
-                    />
-                  </label>
-                )}
-                <Link
-                  href={`/projects/${params.id}/training/${job.id}`}
-                  className="flex-1 flex items-center justify-between py-3 px-4 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
-                >
-                  <div>
-                    <p className="text-sm text-zinc-900 dark:text-white">
-                      {job.base_model.split("/").pop()} &mdash; {job.mode}
-                    </p>
-                    <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                      {job.method.toUpperCase()}
-                      {job.cost_estimate != null &&
-                        ` \u00b7 ~$${job.cost_estimate.toFixed(2)}`}
-                      {" \u00b7 "}
-                      {new Date(job.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {["pending", "cost_approval"].includes(job.status) && (
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          cancelTrainingJob.mutate(job.id);
-                        }}
-                        className="text-xs text-red-400 hover:text-red-300 transition"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    <TrainingStatusBadge status={job.status} />
-                  </div>
-                </Link>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {trainingJobs.length === 0 && !showTrainForm && (
-          <p className="text-sm text-zinc-400 dark:text-zinc-600">
-            {allTrainingJobs.length > 0 && jobStatusFilter !== "all"
-              ? "No training jobs match the current filter."
-              : hasApprovedDatasets
-                ? 'No training jobs yet. Click "Start Training" to begin.'
-                : "Approve a dataset first to start training."}
-          </p>
-        )}
-      </div>
-
-      {/* Models section */}
-      {models.length > 0 && (
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-              Models ({modelsData?.total ?? models.length})
-            </h2>
-            {models.filter((m) => m.deployment_status === "active").length >=
-              1 && (
-              <Link
-                href={`/projects/${params.id}/playground`}
-                className="rounded-lg border border-blue-700 bg-blue-600/10 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-blue-600/20 transition"
-              >
-                A/B Playground
-              </Link>
-            )}
-          </div>
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800">
-            {models.map((model) => (
-              <Link
-                key={model.id}
-                href={`/projects/${params.id}/models/${model.id}`}
-                className="flex items-center justify-between py-3 px-4 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0 hover:bg-zinc-50/50 dark:hover:bg-zinc-900/50 transition"
-              >
-                <div>
-                  <p className="text-sm text-zinc-900 dark:text-white">{model.name}</p>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                    v{model.version} &middot;{" "}
-                    {model.base_model.split("/").pop()}
-                  </p>
-                </div>
-                <DeploymentStatusBadge status={model.deployment_status} />
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Info grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">
-            Task Type
-          </p>
-          <p className="text-zinc-900 dark:text-white mt-1">{project.task_type || "Not set"}</p>
-        </div>
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">
-            Created
-          </p>
-          <p className="text-zinc-900 dark:text-white mt-1">
-            {new Date(project.created_at).toLocaleDateString()}
-          </p>
-        </div>
-        <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider">
-            Updated
-          </p>
-          <p className="text-zinc-900 dark:text-white mt-1">
-            {new Date(project.updated_at).toLocaleDateString()}
-          </p>
-        </div>
-      </div>
-
-      {/* Danger zone */}
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6">
-        <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">Danger Zone</h3>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <p className="text-sm text-zinc-900 dark:text-white">Delete this project</p>
-            <p className="text-xs text-zinc-400 dark:text-zinc-600">
-              This action cannot be undone.
-            </p>
-          </div>
-          <button
-            onClick={handleDelete}
-            disabled={deleteProject.isPending}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-              confirmDelete
-                ? "bg-red-600 text-white hover:bg-red-500"
-                : "border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
-            } disabled:opacity-50`}
-          >
-            {deleteProject.isPending
-              ? "Deleting..."
-              : confirmDelete
-                ? "Confirm Delete"
-                : "Delete Project"}
-          </button>
-        </div>
+        {tab === "settings" && <SettingsTab project={project} />}
       </div>
     </div>
   );

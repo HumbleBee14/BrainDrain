@@ -285,6 +285,13 @@ mod tests {
             unimplemented!("not part of spend-cap accounting")
         }
 
+        fn usage_by_operation(
+            &self,
+            _tenant_id: Uuid,
+        ) -> BoxFuture<'_, AppResult<Vec<(String, f64, i64)>>> {
+            unimplemented!("not part of spend-cap accounting")
+        }
+
         fn sum_cost_since(
             &self,
             _tenant_id: Uuid,

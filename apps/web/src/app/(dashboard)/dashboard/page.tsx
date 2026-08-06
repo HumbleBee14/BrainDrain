@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { OnboardingBanner } from "@/components/onboarding-banner";
 import { ErrorState } from "@/components/error-state";
+import { CostChart } from "@/components/cost-chart";
 import {
   useDashboardStats,
   useUsageSummary,
@@ -34,10 +35,6 @@ export default function DashboardPage() {
 
   const isError = statsError || usageError || activityError;
   const isFetching = statsFetching || usageFetching || activityFetching;
-
-  const maxCost = usage?.cost_by_day?.length
-    ? Math.max(...usage.cost_by_day.map((d) => d.cost_usd), 0.01)
-    : 0;
 
   return (
     <div>
@@ -72,6 +69,7 @@ export default function DashboardPage() {
           label="Projects"
           value={stats?.total_projects}
           loading={statsLoading}
+          href="/projects"
         />
         <StatCard
           label="Models"
@@ -93,9 +91,17 @@ export default function DashboardPage() {
       {/* Usage Summary + Cost Chart */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6 md:mb-8">
         <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
-          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
-            Usage
-          </h2>
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="text-sm text-zinc-500 uppercase tracking-wide">
+              Usage
+            </h2>
+            <Link
+              href="/settings/usage"
+              className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+            >
+              View details →
+            </Link>
+          </div>
           {usageLoading ? (
             <p className="text-zinc-500">Loading...</p>
           ) : (
@@ -130,38 +136,21 @@ export default function DashboardPage() {
 
         {/* Cost Chart */}
         <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-6">
-          <h2 className="text-sm text-zinc-500 uppercase tracking-wide mb-3">
-            Daily Cost
-          </h2>
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="text-sm text-zinc-500 uppercase tracking-wide">
+              Daily Cost
+            </h2>
+            <Link
+              href="/settings/usage"
+              className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+            >
+              View details →
+            </Link>
+          </div>
           {usageLoading ? (
             <p className="text-zinc-500">Loading...</p>
-          ) : !usage?.cost_by_day?.length ? (
-            <p className="text-zinc-500 text-sm">No cost data yet.</p>
           ) : (
-            <div className="flex items-end gap-1 h-32">
-              {usage.cost_by_day.map((day) => {
-                const heightPct =
-                  maxCost > 0 ? (day.cost_usd / maxCost) * 100 : 0;
-                return (
-                  <div
-                    key={day.date}
-                    className="flex-1 flex flex-col items-center justify-end h-full group relative"
-                  >
-                    <div
-                      className="w-full bg-emerald-500 dark:bg-emerald-500/80 rounded-t min-h-[2px] transition-all"
-                      style={{ height: `${Math.max(heightPct, 1)}%` }}
-                    />
-                    <span className="text-[10px] text-zinc-400 dark:text-zinc-600 mt-1 truncate w-full text-center">
-                      {day.date.slice(5)}
-                    </span>
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full mb-1 hidden group-hover:block bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
-                      {day.date}: ${day.cost_usd.toFixed(2)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <CostChart costByDay={usage?.cost_by_day ?? []} />
           )}
         </div>
       </div>
@@ -239,13 +228,15 @@ function StatCard({
   label,
   value,
   loading,
+  href,
 }: {
   label: string;
   value?: number;
   loading: boolean;
+  href?: string;
 }) {
-  return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 md:p-6">
+  const body = (
+    <>
       <p className="text-sm text-zinc-500">{label}</p>
       <p className="text-xl md:text-3xl font-bold text-zinc-900 dark:text-white mt-1">
         {loading ? (
@@ -254,8 +245,20 @@ function StatCard({
           (value ?? 0).toLocaleString()
         )}
       </p>
-    </div>
+    </>
   );
+  const cls = "rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 md:p-6";
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`${cls} block transition hover:border-zinc-300 dark:hover:border-zinc-700`}
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className={cls}>{body}</div>;
 }
 
 function ActivityIcon({ action }: { action: string }) {
