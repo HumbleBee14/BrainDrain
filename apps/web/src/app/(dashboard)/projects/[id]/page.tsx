@@ -10,7 +10,6 @@ import {
   usePipelineStatus,
   useTriggerParse,
   useTriggerRefine,
-  useTriggerFullPipeline,
 } from "@/hooks/use-pipeline";
 import { useDatasets } from "@/hooks/use-datasets";
 import { useTrainingJobs } from "@/hooks/use-training";
@@ -34,6 +33,7 @@ import { TrainingTab } from "./components/training-tab";
 import { ModelsTab } from "./components/models-tab";
 import { SettingsTab } from "./components/settings-tab";
 import { DistillSetup } from "./components/distill-setup";
+import { OneClickSetup } from "./components/one-click-setup";
 
 const FALLBACK_BASE_MODEL = "unsloth/Llama-3.2-1B-Instruct";
 
@@ -59,7 +59,6 @@ export default function ProjectDetailPage() {
   const uploadDocs = useUploadDocuments(params.id);
   const triggerParse = useTriggerParse(params.id);
   const triggerRefine = useTriggerRefine(params.id);
-  const triggerFullPipeline = useTriggerFullPipeline(params.id);
   const { markStepComplete } = useOnboarding();
   const { data: catalogData } = useModelCatalog();
   const catalogModels = useMemo(
@@ -70,6 +69,7 @@ export default function ProjectDetailPage() {
   const [tab, setTab] = useState<TabKey>("documents");
   const [showTrainForm, setShowTrainForm] = useState(false);
   const [showDistillSetup, setShowDistillSetup] = useState(false);
+  const [showOneClickSetup, setShowOneClickSetup] = useState(false);
   // No response field carries extraction state, so a fidelity run is only known
   // to the session that launched it — enough to follow the run in progress.
   const [scoringJobIds, setScoringJobIds] = useState<string[]>([]);
@@ -111,18 +111,6 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (triggerRefine.isError) toast.error(triggerRefine.error.message);
   }, [triggerRefine.isError, triggerRefine.error]);
-
-  useEffect(() => {
-    if (triggerFullPipeline.isSuccess)
-      toast.success(
-        `Full pipeline started for ${triggerFullPipeline.data.document_count} documents`,
-      );
-  }, [triggerFullPipeline.isSuccess, triggerFullPipeline.data]);
-
-  useEffect(() => {
-    if (triggerFullPipeline.isError)
-      toast.error(triggerFullPipeline.error.message);
-  }, [triggerFullPipeline.isError, triggerFullPipeline.error]);
 
   const allDocuments = docsData?.data ?? [];
   const datasets = datasetsData?.data ?? [];
@@ -176,20 +164,29 @@ export default function ProjectDetailPage() {
     catalogData?.suggested ?? catalogModels[0]?.model_id ?? FALLBACK_BASE_MODEL;
   const taskType = project.task_type || "question_answering";
 
-  const startOneClick = () =>
-    triggerFullPipeline.mutate({
-      task_type: taskType,
-      base_model: suggestedBaseModel,
-      training_config: { method: "qlora", mode: "quick" },
-    });
-
   const distillToggle = (
     <Button
       variant="secondary"
-      onClick={() => setShowDistillSetup(!showDistillSetup)}
+      onClick={() => {
+        setShowDistillSetup(!showDistillSetup);
+        setShowOneClickSetup(false);
+      }}
       title="Use a big, expensive model to teach a small one you own — with a report proving how close it got"
     >
       Distill a Larger Model
+    </Button>
+  );
+
+  const oneClickToggle = (
+    <Button
+      variant="secondary"
+      onClick={() => {
+        setShowOneClickSetup(!showOneClickSetup);
+        setShowDistillSetup(false);
+      }}
+      title="Run the entire pipeline unattended: parse → generate data → train → evaluate"
+    >
+      One-Click Fine-Tune
     </Button>
   );
 
@@ -288,14 +285,7 @@ export default function ProjectDetailPage() {
           >
             {triggerParse.isPending ? "Starting..." : "Parse Documents"}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={startOneClick}
-            loading={triggerFullPipeline.isPending}
-            title="Run the entire pipeline: parse → generate data → train → evaluate"
-          >
-            One-Click Fine-Tune
-          </Button>
+          {oneClickToggle}
           {distillToggle}
         </NextActionCard>
       );
@@ -458,6 +448,18 @@ export default function ProjectDetailPage() {
             />
           )}
           {renderNextAction()}
+          {showOneClickSetup && (
+            <OneClickSetup
+              projectId={params.id}
+              taskType={taskType}
+              catalogModels={catalogModels}
+              suggestedBaseModel={suggestedBaseModel}
+              onStarted={() => {
+                setShowOneClickSetup(false);
+                toast.success("Full pipeline started");
+              }}
+            />
+          )}
           {showDistillSetup && (
             <DistillSetup
               projectId={params.id}
