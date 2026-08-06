@@ -7,7 +7,7 @@ const ROUTES = [
     reads: "your documents",
     produces: "a tuned model, no decisions needed",
     detail:
-      "One click runs the whole pipeline: parse, generate training data, train, evaluate.",
+      "Auto-runs every step: parse, generate training data, train, evaluate.",
   },
   {
     title: "Guided",

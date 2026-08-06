@@ -184,9 +184,9 @@ export default function ProjectDetailPage() {
         setShowOneClickSetup(!showOneClickSetup);
         setShowDistillSetup(false);
       }}
-      title="Run the entire pipeline unattended: parse → generate data → train → evaluate"
+      title="Run every remaining step unattended: parse → generate data → train → evaluate"
     >
-      One-Click Fine-Tune
+      Auto-Run All Steps
     </Button>
   );
 

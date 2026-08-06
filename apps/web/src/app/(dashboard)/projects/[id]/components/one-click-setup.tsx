@@ -46,12 +46,13 @@ export function OneClickSetup({
     <div className="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800 md:p-5">
       <div>
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
-          One-Click Fine-Tune
+          Auto-run all steps
         </h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Runs the whole pipeline unattended. You still review nothing in
-          between — use the Guided route if you want to check the dataset
-          first.
+          Runs every remaining step unattended — the generated dataset is
+          saved for you to inspect, but training starts without waiting for
+          your review. Use the step-by-step buttons or the Guided route if you
+          want to approve the data first.
         </p>
       </div>
 
