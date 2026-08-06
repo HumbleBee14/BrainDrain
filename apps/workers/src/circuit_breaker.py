@@ -20,7 +20,13 @@ def _counts_as_outage(exc: Exception) -> bool:
     """A breaker guards against an unhealthy dependency, not against our own
     malformed request. An error that reports itself as non-retryable (a 4xx such
     as an unknown model) would otherwise trip the breaker and block every caller.
+
+    ValueError is our own configuration surface (missing API key, bad settings):
+    tripping the breaker on it would replace the actionable message with a
+    generic "provider unavailable" for every caller.
     """
+    if isinstance(exc, ValueError):
+        return False
     retryable = getattr(exc, "is_retryable", None)
     return retryable is not False
 
@@ -73,6 +79,7 @@ class AsyncCircuitBreaker:
         self._failures = 0
         self._state = "closed"
         self._opened_at: float = 0
+        self._last_failure: str = ""
         self._lock = threading.Lock()
 
     @property
@@ -87,24 +94,26 @@ class AsyncCircuitBreaker:
         current = self.state
 
         if current == "open":
+            cause = f" Last error: {self._last_failure}" if self._last_failure else ""
             raise CircuitBreakerOpen(
                 f"The {self._name} provider is temporarily unavailable after repeated "
-                f"failures. Retry in about {self._reset_timeout} seconds."
+                f"failures. Retry in about {self._reset_timeout} seconds.{cause}"
             )
 
         try:
             result = await func(*args, **kwargs)
         except Exception as exc:
             if _counts_as_outage(exc):
-                self._record_failure()
+                self._record_failure(exc)
             raise
 
         self._record_success()
         return result
 
-    def _record_failure(self) -> None:
+    def _record_failure(self, exc: Exception) -> None:
         with self._lock:
             self._failures += 1
+            self._last_failure = str(exc)[:300]
             if self._failures >= self._fail_max:
                 old = self._state
                 self._state = "open"

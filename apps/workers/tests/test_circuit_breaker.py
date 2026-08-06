@@ -186,3 +186,30 @@ async def test_open_message_is_user_facing():
 
     with pytest.raises(CircuitBreakerOpen, match="temporarily unavailable"):
         await breaker.call(boom)
+
+
+@pytest.mark.asyncio
+async def test_config_value_error_does_not_open_the_breaker():
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=1, reset_timeout=30)
+
+    async def misconfigured():
+        raise ValueError("LLM API key not configured")
+
+    with pytest.raises(ValueError):
+        await breaker.call(misconfigured)
+
+    assert breaker.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_open_message_includes_last_underlying_error():
+    breaker = AsyncCircuitBreaker(name="llm-api", fail_max=1, reset_timeout=30)
+
+    async def boom():
+        raise TimeoutError("upstream took too long")
+
+    with pytest.raises(TimeoutError):
+        await breaker.call(boom)
+
+    with pytest.raises(CircuitBreakerOpen, match="upstream took too long"):
+        await breaker.call(boom)
