@@ -186,8 +186,9 @@ export default function UsagePage() {
             </div>
           )}
 
-          {/* Cost attribution per operation */}
-          {dashUsage && dashUsage.cost_by_operation.length > 0 && (
+          {/* Cost attribution per operation. Optional-chained: an API from
+              before this field existed returns summaries without it. */}
+          {dashUsage && (dashUsage.cost_by_operation?.length ?? 0) > 0 && (
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
               <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
                 Where the Money Went
