@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { Dataset } from "@/lib/api-client";
 import { DatasetImportCard } from "@/components/dataset-import-card";
+import { Button } from "@/components/ui/button";
 import { DatasetStatusBadge } from "./dataset-status-badge";
 
 function DatasetRow({
@@ -59,12 +60,49 @@ function DatasetRow({
 export function DatasetsTab({
   projectId,
   datasets,
+  hasParsedDocuments,
+  onGenerate,
+  generatePending,
 }: {
   projectId: string;
   datasets: Dataset[];
+  hasParsedDocuments: boolean;
+  onGenerate: () => void;
+  generatePending: boolean;
 }) {
   return (
     <div>
+      <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <p className="text-sm text-zinc-500">
+          {hasParsedDocuments
+            ? "Generate a dataset from your parsed documents, or import one."
+            : "Parse documents first to generate a dataset, or import one below."}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          {hasParsedDocuments ? (
+            <Link href={`/projects/${projectId}/data-studio`}>
+              <Button
+                variant="secondary"
+                title="Review facets and preview samples before generating the dataset"
+              >
+                Data Studio (Guided)
+              </Button>
+            </Link>
+          ) : (
+            <Button variant="secondary" disabled title="Parse documents first">
+              Data Studio (Guided)
+            </Button>
+          )}
+          <Button
+            onClick={onGenerate}
+            disabled={!hasParsedDocuments}
+            loading={generatePending}
+            title={hasParsedDocuments ? undefined : "Parse documents first"}
+          >
+            {generatePending ? "Starting..." : "Generate Training Data"}
+          </Button>
+        </div>
+      </div>
       <DatasetImportCard projectId={projectId} />
       {datasets.length > 0 && (
         <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800">

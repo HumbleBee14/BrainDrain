@@ -484,7 +484,13 @@ export default function ProjectDetailPage() {
           <DocumentsTab allDocuments={allDocuments} uploadDocs={uploadDocs} />
         )}
         {tab === "datasets" && (
-          <DatasetsTab projectId={params.id} datasets={datasets} />
+          <DatasetsTab
+            projectId={params.id}
+            datasets={datasets}
+            hasParsedDocuments={hasParsed}
+            onGenerate={() => triggerRefine.mutate({ taskType })}
+            generatePending={triggerRefine.isPending}
+          />
         )}
         {tab === "training" && (
           <TrainingTab
