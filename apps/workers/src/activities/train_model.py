@@ -668,22 +668,28 @@ async def run_training_core(
             s3_bucket=s3_bucket,
         )
 
-        metrics = strategy.execute(
-            model=model,
-            tokenizer=tokenizer,
-            dataset=dataset,
-            hp=hp,
-            job_id=job_id,
-            max_seq_length=max_seq_length,
-            tenant_id=input.tenant_id,
-            base_model=input.base_model,
-            dataset_path=input.dataset_path,
-            s3=s3,
-            bucket=s3_bucket,
-            llm_config=llm_config,
-            settings=settings,
-            teacher_devices=teacher_devices,
-        )
+        try:
+            metrics = strategy.execute(
+                model=model,
+                tokenizer=tokenizer,
+                dataset=dataset,
+                hp=hp,
+                job_id=job_id,
+                max_seq_length=max_seq_length,
+                tenant_id=input.tenant_id,
+                base_model=input.base_model,
+                dataset_path=input.dataset_path,
+                s3=s3,
+                bucket=s3_bucket,
+                llm_config=llm_config,
+                settings=settings,
+                teacher_devices=teacher_devices,
+            )
+            history = _drain_history(job_id)
+            if history:
+                metrics["loss_history"] = history
+        finally:
+            _METRICS_HISTORY.pop(job_id, None)
 
         gpu_rate = GPU_HOURLY_RATES.get(input.gpu_class or "", GPU_DEFAULT_HOURLY_RATE)
         total_runtime = _sum_gpu_runtime_seconds(metrics)
@@ -1902,6 +1908,26 @@ def _evaluate_on_holdout(model, tokenizer, val_dataset, hp, max_seq_length) -> f
 
 _metrics_collector = None
 
+# Per-process loss history, keyed by job_id. The Redis stream is capped and
+# lost on page reload; this survives into training_jobs.metrics at completion.
+_METRICS_HISTORY: dict[str, list[dict]] = {}
+_HISTORY_MAX_POINTS = 300
+
+
+def _record_history_point(job_id: str, point: dict) -> None:
+    _METRICS_HISTORY.setdefault(job_id, []).append(point)
+
+
+def _drain_history(job_id: str) -> list[dict]:
+    """Remove and downsample the job's accumulated loss history."""
+    points = _METRICS_HISTORY.pop(job_id, [])
+    if len(points) <= _HISTORY_MAX_POINTS:
+        return points
+    stride = len(points) / _HISTORY_MAX_POINTS
+    sampled = [points[int(i * stride)] for i in range(_HISTORY_MAX_POINTS)]
+    sampled[-1] = points[-1]
+    return sampled
+
 
 def _get_metrics_collector(settings=None):
     """Get or create the module-level MetricsCollector (backend selected from settings)."""
@@ -2030,6 +2056,17 @@ def _build_callback_class():
                 _get_metrics_collector().record(stream_key, metrics, maxlen=10000)
             except Exception as e:
                 logger.warning("Failed to stream metrics: %s", e)
+
+            if "loss" in logs:
+                _record_history_point(
+                    self.job_id,
+                    {
+                        "step": current_step,
+                        "epoch": round(state.epoch or 0, 2),
+                        "loss": float(logs["loss"]),
+                        "phase": self.phase,
+                    },
+                )
 
             safe_heartbeat(f"step={current_step}/{max_steps}")
 
