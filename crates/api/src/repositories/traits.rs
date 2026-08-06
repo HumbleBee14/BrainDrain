@@ -741,6 +741,12 @@ pub trait BillingEventRepository: Send + Sync {
         days: i32,
     ) -> BoxFuture<'_, AppResult<Vec<(String, f64)>>>;
 
+    /// Aggregate lifetime cost and event count per operation, most expensive first.
+    fn usage_by_operation(
+        &self,
+        tenant_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Vec<(String, f64, i64)>>>;
+
     /// Aggregate total cost, tokens_in, and tokens_out for a tenant.
     fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>>;
 

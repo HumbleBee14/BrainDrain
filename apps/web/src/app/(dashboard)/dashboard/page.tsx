@@ -141,10 +141,10 @@ export default function DashboardPage() {
               Daily Cost
             </h2>
             <Link
-              href="/settings/billing"
+              href="/settings/usage"
               className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
             >
-              Billing →
+              View details →
             </Link>
           </div>
           {usageLoading ? (

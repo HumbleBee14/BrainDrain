@@ -239,6 +239,33 @@ impl BillingEventRepository for PgBillingEventRepo {
         })
     }
 
+    fn usage_by_operation(
+        &self,
+        tenant_id: Uuid,
+    ) -> BoxFuture<'_, AppResult<Vec<(String, f64, i64)>>> {
+        Box::pin(async move {
+            let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;
+            let rows = sqlx::query_as::<_, (String, f64, i64)>(
+                r#"
+                SELECT
+                    operation,
+                    COALESCE(SUM(cost_usd), 0)::FLOAT8 AS cost,
+                    COUNT(*) AS events
+                FROM billing_events
+                WHERE tenant_id = $1
+                GROUP BY operation
+                ORDER BY cost DESC
+                "#,
+            )
+            .bind(tenant_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            Ok(rows)
+        })
+    }
+
     fn usage_totals(&self, tenant_id: Uuid) -> BoxFuture<'_, AppResult<(f64, i64, i64)>> {
         Box::pin(async move {
             let mut tx = begin_tenant_tx(&self.db, tenant_id).await?;

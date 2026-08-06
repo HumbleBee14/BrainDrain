@@ -1114,6 +1114,11 @@ export const api = {
         total_tokens_out: number;
         total_events: number;
         cost_by_day: Array<{ date: string; cost_usd: number }>;
+        cost_by_operation: Array<{
+          operation: string;
+          cost_usd: number;
+          events: number;
+        }>;
       }>("/api/v1/dashboard/usage", { token }),
 
     getActivity: (token: string) =>

@@ -2,7 +2,9 @@ use platform_shared::enums::{DeploymentStatus, TrainingJobStatus};
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-use crate::dto::dashboard::{ActivityEntry, DailyCost, DashboardStats, UsageSummary};
+use crate::dto::dashboard::{
+    ActivityEntry, DailyCost, DashboardStats, OperationCost, UsageSummary,
+};
 use crate::error::AppResult;
 use crate::repositories::traits::{
     AuditLogRepository, BillingEventRepository, DocumentRepository, EvaluationRepository,
@@ -95,9 +97,10 @@ impl DashboardService {
         }
 
         // Cache miss — run queries
-        let (totals, daily, total_events) = tokio::try_join!(
+        let (totals, daily, by_operation, total_events) = tokio::try_join!(
             billing_repo.usage_totals(tenant_id),
             billing_repo.usage_by_day(tenant_id, 30),
+            billing_repo.usage_by_operation(tenant_id),
             billing_repo.count_by_tenant(tenant_id),
         )?;
 
@@ -108,12 +111,22 @@ impl DashboardService {
             .map(|(date, cost_usd)| DailyCost { date, cost_usd })
             .collect();
 
+        let cost_by_operation = by_operation
+            .into_iter()
+            .map(|(operation, cost_usd, events)| OperationCost {
+                operation,
+                cost_usd,
+                events,
+            })
+            .collect();
+
         let usage = UsageSummary {
             total_cost_usd,
             total_tokens_in,
             total_tokens_out,
             total_events,
             cost_by_day,
+            cost_by_operation,
         };
 
         // Write to cache

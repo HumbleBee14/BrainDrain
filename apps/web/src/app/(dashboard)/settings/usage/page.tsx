@@ -15,6 +15,14 @@ function formatCost(n: number): string {
   return `$${n.toFixed(4)}`;
 }
 
+const OPERATION_LABELS: Record<string, string> = {
+  training: "Model training (GPU)",
+  inference: "Inference (tokens)",
+  teacher_serving: "Teacher model serving (GPU)",
+  extraction: "Teacher scoring (GPU)",
+  deploy: "Deployments",
+};
+
 function BarChart({
   data,
   maxValue,
@@ -174,6 +182,53 @@ export default function UsagePage() {
                     {formatNumber(dashUsage.total_tokens_out)}
                   </p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Cost attribution per operation */}
+          {dashUsage && dashUsage.cost_by_operation.length > 0 && (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-6 mb-8">
+              <h2 className="text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-4">
+                Where the Money Went
+              </h2>
+              <div className="space-y-4">
+                {dashUsage.cost_by_operation.map((op) => {
+                  const share =
+                    dashUsage.total_cost_usd > 0
+                      ? op.cost_usd / dashUsage.total_cost_usd
+                      : 0;
+                  return (
+                    <div key={op.operation}>
+                      <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                        <span className="text-zinc-900 dark:text-white">
+                          {OPERATION_LABELS[op.operation] ?? op.operation}
+                          <span className="ml-1.5 text-xs text-zinc-400 dark:text-zinc-600">
+                            {op.events.toLocaleString()} event
+                            {op.events === 1 ? "" : "s"}
+                          </span>
+                        </span>
+                        <span className="font-mono text-zinc-600 dark:text-zinc-400">
+                          {formatCost(op.cost_usd)}
+                          <span className="ml-1.5 text-xs text-zinc-400 dark:text-zinc-600">
+                            {(share * 100).toFixed(0)}%
+                          </span>
+                        </span>
+                      </div>
+                      <div
+                        className="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
+                        title={`${formatCost(op.cost_usd)} · ${(share * 100).toFixed(1)}% of total spend`}
+                      >
+                        <div
+                          className="h-full rounded-full bg-violet-500"
+                          style={{
+                            width: `${Math.max(share * 100, op.cost_usd > 0 ? 1 : 0)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
