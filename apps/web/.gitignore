@@ -5,3 +5,6 @@
 # opennext / cloudflare workers build artifacts
 /.open-next/
 /.wrangler/
+
+# typescript incremental build cache
+*.tsbuildinfo
