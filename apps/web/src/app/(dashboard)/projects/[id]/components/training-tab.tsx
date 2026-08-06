@@ -188,8 +188,11 @@ export function TrainingTab({
             </Button>
           )}
           <Button
-            variant="secondary"
-            onClick={() => setShowDistillSetup(!showDistillSetup)}
+            variant={showDistillSetup ? "primary" : "secondary"}
+            onClick={() => {
+              setShowDistillSetup(!showDistillSetup);
+              if (!showDistillSetup) setShowTrainForm(false);
+            }}
             disabled={!canDistill}
             title={
               canDistill
@@ -200,7 +203,11 @@ export function TrainingTab({
             Distill a Larger Model
           </Button>
           <Button
-            onClick={() => setShowTrainForm(!showTrainForm)}
+            variant={showTrainForm ? "primary" : "secondary"}
+            onClick={() => {
+              setShowTrainForm(!showTrainForm);
+              if (!showTrainForm) setShowDistillSetup(false);
+            }}
             disabled={!hasApprovedDatasets}
             title={
               hasApprovedDatasets
