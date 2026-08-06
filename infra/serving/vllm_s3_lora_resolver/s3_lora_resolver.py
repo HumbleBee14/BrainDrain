@@ -7,7 +7,7 @@ caches it on local disk, and hands vLLM a ``LoRARequest`` pointing at the
 cached directory.
 
 The control plane addresses an adapter by its S3 key prefix (the same
-``adapter_path`` stored on the model row, e.g. ``adapters/<tenant>/<model>/``).
+``adapter_path`` stored on the model row, e.g. ``adapters/<tenant>/<job_id>/``).
 That prefix is the ``lora_name`` vLLM passes here.
 
 Enable it by launching vLLM with::
