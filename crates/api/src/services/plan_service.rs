@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -7,10 +10,40 @@ use chrono::{Datelike, TimeZone, Utc};
 use crate::error::{AppError, AppResult};
 use crate::repositories::traits::{BillingEventRepository, TenantRepository};
 
+/// Per-plan overrides parsed from `PLAN_LIMIT_OVERRIDES`. Every field is
+/// optional so a deployment can raise one ceiling without restating the rest.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct PlanLimitOverride {
+    max_projects: Option<i64>,
+    max_models: Option<i64>,
+    max_team_members: Option<i64>,
+    max_training_pairs: Option<i64>,
+    max_storage_gb: Option<i64>,
+    max_monthly_spend_usd: Option<f64>,
+}
+
+/// `PLAN_LIMIT_OVERRIDES` maps a plan name to the ceilings it should use, e.g.
+/// `{"starter":{"max_models":25,"max_projects":5}}`. Read once per process;
+/// invalid JSON falls back to the built-in limits rather than failing startup.
+fn limit_overrides() -> &'static HashMap<String, PlanLimitOverride> {
+    static OVERRIDES: OnceLock<HashMap<String, PlanLimitOverride>> = OnceLock::new();
+    OVERRIDES.get_or_init(|| match std::env::var("PLAN_LIMIT_OVERRIDES") {
+        Ok(raw) if !raw.trim().is_empty() => serde_json::from_str(&raw).unwrap_or_else(|e| {
+            tracing::error!(
+                error = %e,
+                "PLAN_LIMIT_OVERRIDES is not valid JSON — using built-in plan limits"
+            );
+            HashMap::new()
+        }),
+        _ => HashMap::new(),
+    })
+}
+
 /// Resource limits for each subscription plan.
 ///
-/// Computed from the plan name string. The `plan_limits` JSONB column
-/// in the database is reserved for potential future per-tenant overrides.
+/// The values below are the defaults; `PLAN_LIMIT_OVERRIDES` raises or lowers
+/// any of them per deployment. The `plan_limits` JSONB column in the database
+/// is reserved for potential future per-tenant overrides.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 pub struct PlanLimits {
@@ -25,7 +58,43 @@ pub struct PlanLimits {
 
 impl PlanLimits {
     pub fn for_plan(plan: &str) -> Self {
-        match plan {
+        let tier = match plan {
+            "growth" => "growth",
+            "pro" => "pro",
+            other => {
+                if other != "starter" && other != "free" && !other.is_empty() {
+                    tracing::warn!(plan = other, "Unknown plan — defaulting to starter limits");
+                }
+                "starter"
+            }
+        };
+
+        let mut limits = Self::defaults_for_tier(tier);
+        if let Some(o) = limit_overrides().get(tier) {
+            if let Some(v) = o.max_projects {
+                limits.max_projects = v;
+            }
+            if let Some(v) = o.max_models {
+                limits.max_models = v;
+            }
+            if let Some(v) = o.max_team_members {
+                limits.max_team_members = v;
+            }
+            if let Some(v) = o.max_training_pairs {
+                limits.max_training_pairs = v;
+            }
+            if let Some(v) = o.max_storage_gb {
+                limits.max_storage_gb = v;
+            }
+            if let Some(v) = o.max_monthly_spend_usd {
+                limits.max_monthly_spend_usd = Some(v);
+            }
+        }
+        limits
+    }
+
+    fn defaults_for_tier(tier: &str) -> Self {
+        match tier {
             "growth" => PlanLimits {
                 max_projects: 10,
                 max_models: 10,
@@ -43,19 +112,14 @@ impl PlanLimits {
                 max_monthly_spend_usd: None,
             },
             // starter/free — default tier
-            _ => {
-                if plan != "starter" && plan != "free" && !plan.is_empty() {
-                    tracing::warn!(plan = plan, "Unknown plan — defaulting to starter limits");
-                }
-                PlanLimits {
-                    max_projects: 2,
-                    max_models: 2,
-                    max_team_members: 1,
-                    max_training_pairs: 1_000,
-                    max_storage_gb: 5,
-                    max_monthly_spend_usd: Some(50.0),
-                }
-            }
+            _ => PlanLimits {
+                max_projects: 2,
+                max_models: 10,
+                max_team_members: 1,
+                max_training_pairs: 1_000,
+                max_storage_gb: 5,
+                max_monthly_spend_usd: Some(50.0),
+            },
         }
     }
 

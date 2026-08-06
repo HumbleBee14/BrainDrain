@@ -18,7 +18,10 @@ import { useModelCatalog } from "@/hooks/use-catalog";
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { Button } from "@/components/ui/button";
 import { TrainingStatusBadge } from "./training-status-badge";
-import { TrainingModesExplainer } from "./training-modes-explainer";
+import {
+  TrainingModesExplainer,
+  type TrainingModeKey,
+} from "./training-modes-explainer";
 import { DistillSetup } from "./distill-setup";
 
 export function TrainingTab({
@@ -160,14 +163,25 @@ export function TrainingTab({
     (job) => jobStatusFilter === "all" || job.status === jobStatusFilter,
   );
 
+  const selectedMode: TrainingModeKey | null = showDistillSetup
+    ? "distill"
+    : showTrainForm
+      ? (trainForm.mode as TrainingModeKey)
+      : null;
+
+  const selectMode = (mode: TrainingModeKey) => {
+    if (mode === "distill") {
+      setShowTrainForm(false);
+      setShowDistillSetup(true);
+      return;
+    }
+    setShowDistillSetup(false);
+    setTrainForm((prev) => ({ ...prev, mode }));
+    setShowTrainForm(true);
+  };
+
   return (
     <div>
-      <div className="mb-6">
-        <TrainingModesExplainer
-          defaultCollapsed={allTrainingJobs.length > 0}
-        />
-      </div>
-
       <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <p className="text-sm text-zinc-500">
           {hasApprovedDatasets
@@ -200,7 +214,7 @@ export function TrainingTab({
                 : "Upload documents first — the teacher writes its training data from them"
             }
           >
-            Distill a Larger Model
+            Distill from a Teacher
           </Button>
           <Button
             variant={showTrainForm ? "primary" : "secondary"}
@@ -215,13 +229,13 @@ export function TrainingTab({
                 : "Approve a dataset first to start fine-tuning"
             }
           >
-            New Fine-Tuning Job
+            Train a Model
           </Button>
         </div>
       </div>
 
       {showDistillSetup && (
-        <div className="mb-4">
+        <div className="mb-6">
           <DistillSetup
             projectId={projectId}
             taskType={taskType}
@@ -235,25 +249,8 @@ export function TrainingTab({
         </div>
       )}
 
-      {allTrainingJobs.length > 3 && (
-        <div className="mb-3 flex gap-2">
-          <select
-            value={jobStatusFilter}
-            onChange={(e) => setJobStatusFilter(e.target.value)}
-            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
-          >
-            <option value="all">All statuses</option>
-            <option value="pending">Pending</option>
-            <option value="training">Training</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </div>
-      )}
-
       {showTrainForm && (
-        <div className="mb-4 space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="mb-6 space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
           {trainingPresets.length > 0 && (
             <div>
               <label className="mb-2 block text-xs text-zinc-500">
@@ -481,6 +478,33 @@ export function TrainingTab({
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      <div className="mb-6">
+        <TrainingModesExplainer
+          defaultCollapsed={allTrainingJobs.length > 0}
+          selected={selectedMode}
+          onSelect={selectMode}
+          canTrain={hasApprovedDatasets}
+          canDistill={canDistill}
+        />
+      </div>
+
+      {allTrainingJobs.length > 3 && (
+        <div className="mb-3 flex gap-2">
+          <select
+            value={jobStatusFilter}
+            onChange={(e) => setJobStatusFilter(e.target.value)}
+            className="rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white"
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="training">Training</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
         </div>
       )}
 

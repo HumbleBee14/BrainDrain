@@ -322,9 +322,9 @@ pub trait TrainingJobRepository: Send + Sync {
         reservation: Option<TeacherSpendReservation>,
     ) -> BoxFuture<'_, AppResult<TrainingJob>>;
 
-    /// Atomic create with plan limit enforcement.
-    /// Inserts only if current model count for tenant < max_models.
-    /// Returns None if limit exceeded.
+    /// Atomic create with plan limit enforcement. Inserts only if the tenant's
+    /// count of jobs that still hold a model slot (failed and cancelled runs
+    /// release theirs) is below `max_models`. Returns None if the limit is hit.
     fn create_with_limit(
         &self,
         tenant_id: Uuid,

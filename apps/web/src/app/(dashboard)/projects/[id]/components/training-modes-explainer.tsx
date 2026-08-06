@@ -4,8 +4,16 @@ import { useEffect, useState } from "react";
 
 const COLLAPSE_KEY = "ft-modes-explainer-collapsed";
 
+export type TrainingModeKey =
+  | "quick"
+  | "aligned"
+  | "reasoning"
+  | "iterative"
+  | "distill";
+
 const MODES = [
   {
+    key: "quick",
     name: "Quick",
     pipeline: "SFT",
     detail:
@@ -13,6 +21,7 @@ const MODES = [
     bestFor: "first runs, style & knowledge transfer",
   },
   {
+    key: "aligned",
     name: "Aligned",
     pipeline: "SFT + DPO",
     detail:
@@ -20,6 +29,7 @@ const MODES = [
     bestFor: "tone, helpfulness, response quality",
   },
   {
+    key: "reasoning",
     name: "Reasoning",
     pipeline: "SFT + GRPO",
     detail:
@@ -27,6 +37,7 @@ const MODES = [
     bestFor: "math, logic, multi-step tasks",
   },
   {
+    key: "iterative",
     name: "Iterative",
     pipeline: "Multi-Round SFT",
     detail:
@@ -34,18 +45,27 @@ const MODES = [
     bestFor: "squeezing quality from small datasets",
   },
   {
+    key: "distill",
     name: "Distill",
     pipeline: "Distillation",
     detail:
       "A large teacher model trains a small one you own — from its answers, its token distributions, or live on-policy feedback.",
     bestFor: "matching a big model at a fraction of the cost",
   },
-] as const;
+] as const satisfies ReadonlyArray<{ key: TrainingModeKey; [k: string]: string }>;
 
 export function TrainingModesExplainer({
   defaultCollapsed = false,
+  selected,
+  onSelect,
+  canTrain,
+  canDistill,
 }: {
   defaultCollapsed?: boolean;
+  selected: TrainingModeKey | null;
+  onSelect: (mode: TrainingModeKey) => void;
+  canTrain: boolean;
+  canDistill: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
@@ -67,7 +87,7 @@ export function TrainingModesExplainer({
         onClick={() => toggle(false)}
         className="text-sm font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
       >
-        What do the fine-tuning modes mean?
+        Show the fine-tuning modes
       </button>
     );
   }
@@ -76,7 +96,7 @@ export function TrainingModesExplainer({
     <div>
       <div className="flex items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">
-          Fine-tuning modes this platform supports
+          Pick a mode to set up a run
         </h3>
         <button
           onClick={() => toggle(true)}
@@ -86,27 +106,45 @@ export function TrainingModesExplainer({
         </button>
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {MODES.map((mode) => (
-          <div
-            key={mode.name}
-            className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <h4 className="font-mono text-base font-bold text-violet-700 dark:text-violet-400">
-                {mode.pipeline}
-              </h4>
-              <span className="text-xs text-zinc-400 dark:text-zinc-600">
-                {mode.name}
-              </span>
-            </div>
-            <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
-              {mode.detail}
-            </p>
-            <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-600">
-              Best for {mode.bestFor}
-            </p>
-          </div>
-        ))}
+        {MODES.map((mode) => {
+          const enabled = mode.key === "distill" ? canDistill : canTrain;
+          const isSelected = selected === mode.key;
+          return (
+            <button
+              key={mode.key}
+              type="button"
+              onClick={() => onSelect(mode.key)}
+              disabled={!enabled}
+              title={
+                enabled
+                  ? undefined
+                  : mode.key === "distill"
+                    ? "Upload documents first — the teacher writes its training data from them"
+                    : "Approve a dataset first to start fine-tuning"
+              }
+              className={`rounded-lg border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                isSelected
+                  ? "border-violet-500 bg-violet-50/50 ring-1 ring-violet-500 dark:bg-violet-950/20"
+                  : "border-zinc-200 enabled:hover:border-zinc-400 dark:border-zinc-800 dark:enabled:hover:border-zinc-600"
+              }`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <h4 className="font-mono text-base font-bold text-violet-700 dark:text-violet-400">
+                  {mode.pipeline}
+                </h4>
+                <span className="text-xs text-zinc-400 dark:text-zinc-600">
+                  {isSelected ? "Selected" : mode.name}
+                </span>
+              </div>
+              <p className="mt-1.5 text-sm text-zinc-600 dark:text-zinc-400">
+                {mode.detail}
+              </p>
+              <p className="mt-2 text-xs text-zinc-400 dark:text-zinc-600">
+                Best for {mode.bestFor}
+              </p>
+            </button>
+          );
+        })}
         <div className="rounded-lg border border-dashed border-zinc-200 p-4 dark:border-zinc-800">
           <h4 className="font-medium text-zinc-900 dark:text-white">
             Every mode, three methods

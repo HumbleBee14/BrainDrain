@@ -159,7 +159,10 @@ impl TrainingJobRepository for PgTrainingJobRepo {
                 INSERT INTO training_jobs
                     (tenant_id, project_id, dataset_id, base_model, method, mode, hyperparams, gpu_class, cost_estimate, teacher_config, parent_model_id)
                 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-                WHERE (SELECT COUNT(*) FROM training_jobs WHERE tenant_id = $1) < $12
+                WHERE (
+                    SELECT COUNT(*) FROM training_jobs
+                    WHERE tenant_id = $1 AND status NOT IN ('failed', 'cancelled')
+                ) < $12
                 RETURNING *
                 "#,
             )

@@ -3,8 +3,9 @@
 /**
  * Resource limits for each subscription plan.
  *
- * Computed from the plan name string. The `plan_limits` JSONB column
- * in the database is reserved for potential future per-tenant overrides.
+ * The values below are the defaults; `PLAN_LIMIT_OVERRIDES` raises or lowers
+ * any of them per deployment. The `plan_limits` JSONB column in the database
+ * is reserved for potential future per-tenant overrides.
  */
 export type PlanLimits = { max_projects: number, max_models: number, max_team_members: number, max_training_pairs: number, max_storage_gb: number, 
 /**

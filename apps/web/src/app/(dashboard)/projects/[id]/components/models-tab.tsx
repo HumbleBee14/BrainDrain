@@ -49,7 +49,9 @@ export function ModelsTab({
         </div>
       ) : (
         <p className="text-sm text-zinc-400 dark:text-zinc-600">
-          No models yet — each completed training job produces one.
+          No models in this project yet — each completed fine-tuning run here
+          produces one. Models trained in another project stay with that
+          project.
         </p>
       )}
     </div>
