@@ -75,6 +75,27 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # Bitnami's image serves without a custom command (service containers
+      # cannot override one) and creates the bucket on start.
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          MINIO_DEFAULT_BUCKETS: platform-test
+        ports:
+          - 9000:9000
+
     env:
       DATABASE_URL: postgresql://platform:platform@localhost:5432/platform_test
 
@@ -105,6 +126,30 @@ jobs:
         env:
           DATABASE_RLS_URL: postgresql://app_rls:app_rls_dev_password@localhost:5432/platform_test
         run: cargo test -p platform-db --test rls_isolation -- --ignored --nocapture
+
+      - name: Wait for MinIO
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 2
+          done
+          echo "::error::MinIO did not become ready"; exit 1
+
+      # Proves deleting a project or model really removes both the rows and the
+      # stored objects. Needs Postgres + Redis + MinIO, so it stays #[ignore]d
+      # and runs only here and on demand.
+      - name: Deletion purge integration test
+        env:
+          DATABASE_RLS_URL: postgresql://app_rls:app_rls_dev_password@localhost:5432/platform_test
+          REDIS_URL: redis://localhost:6379
+          S3_ENDPOINT: http://localhost:9000
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+          S3_BUCKET: platform-test
+          ENVIRONMENT: development
+          CLERK_SECRET_KEY: sk_test_ci
+          CLERK_JWKS_URL: http://localhost/jwks
+        run: cargo test -p platform-api purge_integration -- --ignored --nocapture --test-threads=1
 
       # `cargo test --all` runs the ts-rs export tests, which (re)write the
       # generated TypeScript into apps/web/src/lib/generated. If a DTO changed
