@@ -1,3 +1,4 @@
+use crate::services::idle_backoff::IdleBackoff;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -74,6 +75,7 @@ impl DeliveryWorker {
         http_client: reqwest::Client,
         email_provider: Arc<dyn EmailProvider>,
         poll_interval: Duration,
+        idle_backoff_max: Duration,
     ) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -82,6 +84,7 @@ impl DeliveryWorker {
             http_client,
             email_provider,
             poll_interval,
+            idle_backoff_max,
             shutdown_rx,
         ));
 
@@ -117,20 +120,25 @@ async fn poll_loop(
     http_client: reqwest::Client,
     email_provider: Arc<dyn EmailProvider>,
     poll_interval: Duration,
+    idle_backoff_max: Duration,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let mut interval = tokio::time::interval(poll_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut backoff = IdleBackoff::new(poll_interval, idle_backoff_max);
 
     tracing::info!(
         poll_interval_secs = poll_interval.as_secs(),
+        idle_backoff_max_secs = idle_backoff_max.as_secs(),
         "Delivery worker started"
     );
 
     loop {
         tokio::select! {
-            _ = interval.tick() => {
-                process_pending(&*repo, &http_client, &*email_provider).await;
+            _ = tokio::time::sleep(backoff.interval()) => {
+                if process_pending(&*repo, &http_client, &*email_provider).await > 0 {
+                    backoff.saw_work();
+                } else {
+                    backoff.saw_idle();
+                }
             }
             _ = &mut shutdown_rx => {
                 // Process one final batch before exiting
@@ -147,7 +155,7 @@ async fn process_pending(
     repo: &dyn NotificationRepository,
     http_client: &reqwest::Client,
     email_provider: &dyn EmailProvider,
-) {
+) -> usize {
     let deliveries = match repo
         .claim_pending_deliveries(MAX_DELIVERY_ATTEMPTS, BATCH_SIZE, CLAIM_LEASE_SECS)
         .await
@@ -155,13 +163,15 @@ async fn process_pending(
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(error = %e, "Failed to fetch pending deliveries");
-            return;
+            return 0;
         }
     };
 
     if deliveries.is_empty() {
-        return;
+        return 0;
     }
+
+    let claimed = deliveries.len();
 
     tracing::debug!(count = deliveries.len(), "Processing pending deliveries");
 
@@ -215,6 +225,8 @@ async fn process_pending(
             }
         }
     }
+
+    claimed
 }
 
 /// Dispatch a single webhook delivery with SSRF protection and timeout.

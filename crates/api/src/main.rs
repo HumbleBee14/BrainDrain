@@ -28,6 +28,7 @@ use services::feature_flags::{
     BILLING_OUTBOX_ENABLED, DEPLOYMENTS_MULTI_INSTANCE_ENABLED, FlagContext, IDEMPOTENCY_ENFORCED,
     INFERENCE_BACKEND_TGI_ENABLED, NOTIFICATIONS_DELIVERY_WORKER_ENABLED,
 };
+use services::idle_backoff::IdleBackoff;
 use services::inference_instance_service::InferenceInstanceService;
 
 #[tokio::main]
@@ -107,30 +108,40 @@ async fn main() -> anyhow::Result<()> {
     {
         let control_state = state.clone();
         let health_interval_secs = config.inference_instance_health_poll_interval_secs;
+        let idle_backoff_max = std::time::Duration::from_secs(config.db_idle_backoff_max_secs);
         let reconcile_interval_secs = config.inference_instance_reconcile_interval_secs;
         tokio::spawn(async move {
-            let mut health_interval =
-                tokio::time::interval(std::time::Duration::from_secs(health_interval_secs));
-            let mut reconcile_interval =
-                tokio::time::interval(std::time::Duration::from_secs(reconcile_interval_secs));
-            health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            reconcile_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut health_backoff = IdleBackoff::new(
+                std::time::Duration::from_secs(health_interval_secs),
+                idle_backoff_max,
+            );
+            let mut reconcile_backoff = IdleBackoff::new(
+                std::time::Duration::from_secs(reconcile_interval_secs),
+                idle_backoff_max,
+            );
 
             loop {
                 tokio::select! {
-                    _ = health_interval.tick() => {
-                        if let Err(e) = InferenceInstanceService::run_health_probes(&control_state).await {
-                            tracing::warn!(error = %e, "Inference instance health loop failed");
+                    _ = tokio::time::sleep(health_backoff.interval()) => {
+                        match InferenceInstanceService::run_health_probes(&control_state).await {
+                            Ok(0) => health_backoff.saw_idle(),
+                            Ok(_) => health_backoff.saw_work(),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Inference instance health loop failed");
+                                health_backoff.saw_idle();
+                            }
                         }
                     }
-                    _ = reconcile_interval.tick() => {
+                    _ = tokio::time::sleep(reconcile_backoff.interval()) => {
                         match control_state.inference_instance_repo().reconcile_adapter_counts().await {
                             Ok(repaired) if repaired > 0 => {
                                 tracing::warn!(repaired, "Reconciled inference instance adapter counts");
+                                reconcile_backoff.saw_work();
                             }
-                            Ok(_) => {}
+                            Ok(_) => reconcile_backoff.saw_idle(),
                             Err(e) => {
-                            tracing::warn!(error = %e, "Inference instance reconciliation failed");
+                                tracing::warn!(error = %e, "Inference instance reconciliation failed");
+                                reconcile_backoff.saw_idle();
                             }
                         }
                     }
@@ -148,52 +159,62 @@ async fn main() -> anyhow::Result<()> {
     {
         let reaper_state = state.clone();
         let poll_secs = config.reaper_poll_interval_secs;
+        let reaper_idle_backoff_max =
+            std::time::Duration::from_secs(config.db_idle_backoff_max_secs);
         let training_stuck = config.training_stuck_timeout_secs;
         let parsing_stuck = config.parsing_stuck_timeout_secs;
         let deploying_stuck = config.deploying_stuck_timeout_secs;
         let idle_instance_timeout = config.inference_instance_idle_timeout_secs;
         let orphan_sweep_secs = config.orphaned_document_sweep_secs;
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(poll_secs));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut backoff = IdleBackoff::new(
+                std::time::Duration::from_secs(poll_secs),
+                reaper_idle_backoff_max,
+            );
             loop {
                 tokio::select! {
-                    _ = interval.tick() => {
+                    _ = tokio::time::sleep(backoff.interval()) => {
                         let orch = reaper_state.orchestrator();
+                        let mut reaped = 0usize;
                         match services::reaper::reap_stuck_training_jobs(
                             reaper_state.db(), orch, training_stuck,
                         ).await {
-                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck training jobs"),
+                            Ok(n) if n > 0 => { reaped += n; tracing::warn!(count = n, "Reaped stuck training jobs") }
                             Err(e) => tracing::warn!(error = %e, "Stuck-training reaper failed"),
                             _ => {}
                         }
                         match services::reaper::reap_stuck_parsing_documents(
                             reaper_state.db(), parsing_stuck,
                         ).await {
-                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck parsing documents"),
+                            Ok(n) if n > 0 => { reaped += n as usize; tracing::warn!(count = n, "Reaped stuck parsing documents") }
                             Err(e) => tracing::warn!(error = %e, "Stuck-parsing reaper failed"),
                             _ => {}
                         }
                         match services::reaper::reap_stuck_deploying_models(
                             reaper_state.db(), deploying_stuck,
                         ).await {
-                            Ok(n) if n > 0 => tracing::warn!(count = n, "Reaped stuck deploying models"),
+                            Ok(n) if n > 0 => { reaped += n; tracing::warn!(count = n, "Reaped stuck deploying models") }
                             Err(e) => tracing::warn!(error = %e, "Stuck-deploy reaper failed"),
                             _ => {}
                         }
                         match services::reaper::reap_idle_instances(
                             reaper_state.db(), idle_instance_timeout,
                         ).await {
-                            Ok(n) if n > 0 => tracing::warn!(count = n, "Scaled idle serving instances to zero"),
+                            Ok(n) if n > 0 => { reaped += n; tracing::warn!(count = n, "Scaled idle serving instances to zero") }
                             Err(e) => tracing::warn!(error = %e, "Idle-instance reaper failed"),
                             _ => {}
                         }
                         match services::reaper::sweep_orphaned_document_objects(
                             reaper_state.db(), reaper_state.storage(), orphan_sweep_secs,
                         ).await {
-                            Ok(n) if n > 0 => tracing::info!(count = n, "Reclaimed orphaned document objects"),
+                            Ok(n) if n > 0 => { reaped += n; tracing::info!(count = n, "Reclaimed orphaned document objects") }
                             Err(e) => tracing::warn!(error = %e, "Orphaned-object sweep failed"),
                             _ => {}
+                        }
+                        if reaped > 0 {
+                            backoff.saw_work();
+                        } else {
+                            backoff.saw_idle();
                         }
                     }
                     _ = &mut reaper_shutdown_rx => {

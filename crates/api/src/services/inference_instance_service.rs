@@ -110,7 +110,7 @@ impl InferenceInstanceService {
         Ok(())
     }
 
-    pub async fn run_health_probes(state: &AppState) -> AppResult<()> {
+    pub async fn run_health_probes(state: &AppState) -> AppResult<usize> {
         let instances = state
             .inference_instance_repo()
             .list_for_healthcheck()
@@ -144,7 +144,7 @@ impl InferenceInstanceService {
             }
         }
 
-        Ok(())
+        Ok(instances.len())
     }
 
     pub async fn get_routable_instance(

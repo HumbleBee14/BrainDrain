@@ -370,6 +370,7 @@ impl AppState {
             Some(Arc::new(BillingOutboxRelay::new(
                 db.clone(),
                 Duration::from_secs(config.billing_flush_interval_secs),
+                Duration::from_secs(config.db_idle_backoff_max_secs),
                 config.billing_outbox_retention_days,
             )))
         } else {
@@ -428,6 +429,7 @@ impl AppState {
                 webhook_http_client,
                 Arc::clone(&email_provider),
                 Duration::from_secs(config.delivery_poll_interval_secs),
+                Duration::from_secs(config.db_idle_backoff_max_secs),
             ))
         } else {
             tracing::warn!(

@@ -17,6 +17,7 @@ pub mod evaluation_service;
 pub mod export_service;
 pub mod feature_flags;
 pub mod idempotency;
+pub mod idle_backoff;
 pub mod inference_backend;
 pub mod inference_instance_service;
 pub mod inference_sample_service;

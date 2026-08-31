@@ -153,6 +153,11 @@ pub struct Config {
     #[serde(default = "default_delivery_poll_interval_secs")]
     pub delivery_poll_interval_secs: u64,
 
+    /// Ceiling for background DB poll loops when idle. Long enough that a
+    /// scale-to-zero Postgres can suspend instead of billing compute 24/7.
+    #[serde(default = "default_db_idle_backoff_max_secs")]
+    pub db_idle_backoff_max_secs: u64,
+
     /// Billing outbox: prune delivered rows older than this many days. The relay
     /// runs the prune on a coarse cadence. Set to 0 to disable pruning.
     #[serde(default = "default_billing_outbox_retention_days")]
@@ -628,6 +633,9 @@ fn default_billing_flush_interval_secs() -> u64 {
 }
 fn default_delivery_poll_interval_secs() -> u64 {
     10
+}
+fn default_db_idle_backoff_max_secs() -> u64 {
+    900
 }
 fn default_billing_outbox_retention_days() -> i32 {
     30

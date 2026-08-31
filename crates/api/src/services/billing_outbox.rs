@@ -32,6 +32,7 @@
 //! keeps its claim, and only a closed or vanished run's leftover is deleted —
 //! never billed (`reap_stale_teacher_reservations`).
 
+use crate::services::idle_backoff::IdleBackoff;
 use sqlx::PgPool;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -283,9 +284,20 @@ enum BatchResult {
 }
 
 impl BillingOutboxRelay {
-    pub fn new(db: PgPool, poll_interval: Duration, retention_days: i32) -> Self {
+    pub fn new(
+        db: PgPool,
+        poll_interval: Duration,
+        idle_backoff_max: Duration,
+        retention_days: i32,
+    ) -> Self {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let handle = tokio::spawn(relay_loop(db, poll_interval, retention_days, shutdown_rx));
+        let handle = tokio::spawn(relay_loop(
+            db,
+            poll_interval,
+            idle_backoff_max,
+            retention_days,
+            shutdown_rx,
+        ));
         Self {
             shutdown: Mutex::new(Some(ShutdownHandle {
                 signal: shutdown_tx,
@@ -314,11 +326,11 @@ impl BillingOutboxRelay {
 async fn relay_loop(
     db: PgPool,
     poll_interval: Duration,
+    idle_backoff_max: Duration,
     retention_days: i32,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let mut interval = tokio::time::interval(poll_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut backoff = IdleBackoff::new(poll_interval, idle_backoff_max);
 
     // Coarse cadence for pruning delivered rows. Consume the immediate first
     // tick so we don't prune the instant the process boots.
@@ -341,18 +353,27 @@ async fn relay_loop(
                     Err(e) => tracing::warn!(error = %e, "Billing outbox cleanup failed"),
                 }
             }
-            _ = interval.tick() => {
+            _ = tokio::time::sleep(backoff.interval()) => {
                 // Drain all pending batches per tick (not just one)
+                let mut relayed = 0u64;
                 loop {
                     match process_batch(&db).await {
                         Ok(BatchResult::Processed(0)) => break,
-                        Ok(BatchResult::Processed(_)) => continue,
+                        Ok(BatchResult::Processed(n)) => {
+                            relayed += n as u64;
+                            continue;
+                        }
                         Ok(BatchResult::LockHeld) => break,
                         Err(e) => {
                             tracing::warn!(error = %e, "Billing outbox relay batch failed");
                             break;
                         }
                     }
+                }
+                if relayed > 0 {
+                    backoff.saw_work();
+                } else {
+                    backoff.saw_idle();
                 }
             }
             _ = &mut shutdown_rx => {
