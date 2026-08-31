@@ -60,7 +60,7 @@ pub async fn health() -> Json<HealthResponse> {
         (status = 503, description = "Service degraded"),
     )
 )]
-pub async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>, StatusCode> {
+pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<ReadyResponse>) {
     // Probe the three backing services concurrently — they are independent.
     let (db_ok, redis_ok, storage_ok) = tokio::join!(
         async { sqlx::query("SELECT 1").execute(state.db()).await.is_ok() },
@@ -81,10 +81,10 @@ pub async fn ready(State(state): State<AppState>) -> Result<Json<ReadyResponse>,
         storage: storage_ok,
     };
 
-    if all_ok {
-        Ok(Json(response))
+    let code = if all_ok {
+        StatusCode::OK
     } else {
-        // Return 503 but still include the body
-        Err(StatusCode::SERVICE_UNAVAILABLE)
-    }
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, Json(response))
 }
