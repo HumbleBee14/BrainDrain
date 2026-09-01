@@ -1,17 +1,22 @@
 # Deploy box (OCI)
 
-Terraform + docker-compose for the single production box. The box is
-**disposable**: all state lives in managed services (Postgres, Redis, object
-storage) and all configuration lives in OCI Vault — destroying and recreating
-the instance loses nothing.
+Terraform + docker-compose for the single production box. Configuration lives
+in OCI Vault, and Redis/object storage stay managed (Upstash/R2).
+
+**The box holds state.** Postgres runs here, so its data volume
+(`app_postgres_data`) is the one thing a rebuild would destroy. Recreating the
+instance costs whatever has not been backed up — see
+[Backups](#backups) below. Everything else on the box is still disposable.
 
 ## Topology
 
 - **Instance:** Always-Free ARM (`VM.Standard.A1.Flex`), Ubuntu 22.04,
   provisioned by Terraform in this directory. A **reserved public IP** is
   attached separately so the address (and DNS) survives instance recreation.
-- **Services on the box:** API + workers + Temporal via
-  [docker-compose.yml](docker-compose.yml), TLS terminated by Caddy.
+- **Services on the box:** Postgres (app + Temporal), API, workers, Temporal
+  via [docker-compose.yml](docker-compose.yml), TLS terminated by Caddy.
+  Postgres is self-hosted because metered managed tiers bill for compute the
+  app's background loops hold awake continuously.
 - **First boot:** [cloud-init.yaml](cloud-init.yaml) installs Docker and the
   OCI CLI. Nothing app-specific — app config comes from Vault at deploy time.
 
@@ -103,3 +108,41 @@ terraform output -raw env_secret_ocid | \
 - Terraform + `set-env-secret.sh`: `~/.oci/config` `[DEFAULT]` profile.
 - The box: instance-principal (no credentials stored on it).
 - Cloudflare DNS record: API token in `terraform.tfvars` (gitignored).
+
+
+## Backups
+
+Postgres lives on the box, so backups are not optional.
+
+[backup-db.sh](backup-db.sh) dumps the app database, gzips it, and uploads to
+`s3://$S3_BUCKET/backups/postgres/`. It refuses to upload an empty dump and
+prunes local copies older than `BACKUP_RETAIN_DAYS` (default 14).
+
+Install the nightly job once per box:
+
+```bash
+(crontab -l 2>/dev/null; echo "17 3 * * * ~/ekcron/infra/deploy/oracle/backup-db.sh >> ~/db-backup.log 2>&1") | crontab -
+```
+
+Restore, from a local file or an object key:
+
+```bash
+./restore-db.sh backups/postgres/platform-20260901T031700Z.sql.gz
+```
+
+Verify a restore actually works before you need it — an untested backup is a
+guess.
+
+## Required vault variables
+
+Postgres credentials are the only database configuration; the connection URLs
+are built in compose so they cannot drift from the running container.
+
+| Variable | Purpose |
+|---|---|
+| `APP_DB_PASSWORD` | `platform` superuser — migrations and the app's main pool |
+| `APP_RLS_PASSWORD` | `app_rls` least-privilege role used for tenant traffic |
+
+`APP_RLS_PASSWORD` is applied by [initdb/01-app-rls-role.sh](initdb/01-app-rls-role.sh)
+when the data volume is first created, so the role never keeps the dev password
+that migration 017 falls back to.
