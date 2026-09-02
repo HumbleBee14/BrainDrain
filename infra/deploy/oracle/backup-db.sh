@@ -5,12 +5,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "backup-db: .env missing (run render-env.sh first)"; exit 1; }
-set -a && . ./.env && set +a
 
-: "${APP_DB_PASSWORD:?set APP_DB_PASSWORD}"
-: "${S3_ENDPOINT:?}" "${S3_ACCESS_KEY:?}" "${S3_SECRET_KEY:?}" "${S3_BUCKET:?}"
+# Read individual keys rather than sourcing: .env holds unquoted JSON values
+# that the shell would try to execute.
+env_get() { sed -n "s/^$1=//p" .env | head -1; }
 
-RETAIN_DAYS=${BACKUP_RETAIN_DAYS:-14}
+APP_DB_PASSWORD=$(env_get APP_DB_PASSWORD)
+S3_ENDPOINT=$(env_get S3_ENDPOINT)
+S3_ACCESS_KEY=$(env_get S3_ACCESS_KEY)
+S3_SECRET_KEY=$(env_get S3_SECRET_KEY)
+S3_BUCKET=$(env_get S3_BUCKET)
+S3_REGION=$(env_get S3_REGION)
+RETAIN_DAYS=$(env_get BACKUP_RETAIN_DAYS)
+
+for v in APP_DB_PASSWORD S3_ENDPOINT S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET; do
+    eval "[ -n \"\${$v}\" ]" || { echo "backup-db: $v missing from .env"; exit 1; }
+done
+RETAIN_DAYS=${RETAIN_DAYS:-14}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 OUT_DIR=${BACKUP_DIR:-$HOME/db-backups}
 FILE="$OUT_DIR/platform-$STAMP.sql.gz"

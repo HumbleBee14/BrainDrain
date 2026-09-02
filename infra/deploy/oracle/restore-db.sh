@@ -6,8 +6,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 [ $# -eq 1 ] || { echo "usage: $0 <local-dump.sql.gz | backups/postgres/NAME.sql.gz>"; exit 1; }
 [ -f .env ] || { echo "restore-db: .env missing (run render-env.sh first)"; exit 1; }
-set -a && . ./.env && set +a
-: "${APP_DB_PASSWORD:?set APP_DB_PASSWORD}"
+
+env_get() { sed -n "s/^$1=//p" .env | head -1; }
+APP_DB_PASSWORD=$(env_get APP_DB_PASSWORD)
+S3_ENDPOINT=$(env_get S3_ENDPOINT)
+S3_ACCESS_KEY=$(env_get S3_ACCESS_KEY)
+S3_SECRET_KEY=$(env_get S3_SECRET_KEY)
+S3_BUCKET=$(env_get S3_BUCKET)
+S3_REGION=$(env_get S3_REGION)
+[ -n "$APP_DB_PASSWORD" ] || { echo "restore-db: APP_DB_PASSWORD missing from .env"; exit 1; }
 
 SRC=$1
 if [ ! -f "$SRC" ]; then
