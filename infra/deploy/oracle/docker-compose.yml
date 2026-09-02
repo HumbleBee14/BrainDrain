@@ -24,7 +24,7 @@ services:
       POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
       APP_RLS_PASSWORD: ${APP_RLS_PASSWORD:?set APP_RLS_PASSWORD}
     volumes:
-      - app_postgres_data:/var/lib/postgresql/data
+      - app_postgres_data_pg18:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
@@ -195,7 +195,8 @@ services:
         condition: service_healthy
 
 volumes:
-  app_postgres_data:
+  # Major upgrades get a new volume; PG18 cannot start on a PG16 data dir.
+  app_postgres_data_pg18:
   temporal_postgres_data:
   caddy_data:
   caddy_config:
