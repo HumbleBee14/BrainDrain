@@ -86,7 +86,7 @@ docker compose -f docker-compose.prod.yml up -d api workers
 - **RDS PostgreSQL / Aurora**: Enable "automated backups" + set backup
   retention to 7–35 days. PITR is point-and-click in the console.
 - **Supabase**: PITR available on Pro plan.
-- **Neon**: Branching gives instant PITR with no extra config.
+- **Self-hosted**: nightly logical dumps to object storage; PITR needs WAL archiving, which is not configured.
 
 ### RTO / RPO targets
 

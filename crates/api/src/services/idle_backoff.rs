@@ -2,9 +2,9 @@ use std::time::Duration;
 
 /// Adaptive poll interval for background DB loops.
 ///
-/// Polling at a fixed short cadence keeps a scale-to-zero Postgres (Neon,
-/// Aurora Serverless) permanently awake, which bills compute time around the
-/// clock. Backing off while there is no work lets the compute suspend.
+/// Polling at a fixed short cadence keeps a scale-to-zero Postgres permanently
+/// awake, which bills compute time around the clock. Backing off while there is
+/// no work lets the compute suspend.
 pub struct IdleBackoff {
     base: Duration,
     max: Duration,

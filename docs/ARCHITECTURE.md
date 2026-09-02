@@ -1489,7 +1489,7 @@ Format: PDF                   Format: JSON                     Format: JSONL
 
 | Component | Cost | Notes |
 |-----------|------|-------|
-| PostgreSQL (managed) | $50-200 | Neon / Supabase / RDS |
+| PostgreSQL | $0 | self-hosted on the deploy box |
 | Redis (managed) | $30-100 | Upstash / ElastiCache |
 | Qdrant (cloud) | $50-150 | Qdrant Cloud |
 | S3/R2 storage (1TB) | $15-25 | R2: $0.015/GB |

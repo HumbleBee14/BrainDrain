@@ -14,7 +14,7 @@ DATABASE_URL=postgres://…/ekcron_scratch cargo run -p platform-db --bin migrat
 
 Check that the column, the partial index and the `ON DELETE SET NULL` behaviour all landed, and that a second run is a no-op (every statement is `IF NOT EXISTS`).
 
-**`make migrate` uses `.env`, which points at the production Neon database.** Never use it to try a new migration.
+**`make migrate` uses `.env`, which points at the production database.** Never use it to try a new migration.
 
 ## 1. The question the topology decision could not answer
 
